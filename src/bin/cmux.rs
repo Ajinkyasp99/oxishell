@@ -57,7 +57,7 @@ enum Cmd {
         message: Option<String>,
         #[arg(long)]
         session: Option<String>,
-        /// Read the hook's JSON payload from stdin (Claude Code, Gemini, Qoder)
+        /// Read the hook's JSON payload from stdin (Claude Code, Codex, Gemini, Qoder)
         #[arg(long)]
         stdin_json: bool,
         /// Treat the last argument as a Codex `notify` JSON payload
@@ -325,7 +325,13 @@ fn main() -> ExitCode {
                         let mut out = vec![];
                         for a in targets {
                             match agents::install(&a, &home, &me) {
-                                Ok(p) => out.push(json!({"agent": a, "file": p.display().to_string()})),
+                                Ok(p) => {
+                                    let mut installed = json!({"agent": a, "file": p.display().to_string()});
+                                    if a == "codex" {
+                                        installed["note"] = json!("Requires Codex lifecycle hooks. Restart Codex, then open /hooks to review and trust the cmux hooks. Existing features.hooks = false settings are preserved.");
+                                    }
+                                    out.push(installed);
+                                }
                                 Err(e) => return fail(&format!("{a}: {e}")),
                             }
                         }

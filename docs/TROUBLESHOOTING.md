@@ -13,7 +13,8 @@ Normally a second launch just focuses the first window. Close the other instance
 **Agent notifications do not appear**
 1. `cmux hooks list` — is the agent on `PATH`? Then `cmux hooks install <agent>`.
 2. Start the agent *inside* a cmux-linux pane (`echo $CMUX_PANE_ID` must print a number).
-3. Restart the agent after installing hooks.
+3. Restart the agent after installing hooks. For Codex, open `/hooks` and review and trust the cmux
+   hooks. Use a CLI with lifecycle hook support and check that `[features] hooks` is not disabled.
 4. `CMUX_DEBUG=1 cmux agent-event --agent claude --state waiting` prints connection errors.
 5. Desktop pop-ups need a notification daemon (GNOME/KDE provide one). In-app rings, badges and the
    notifications panel work without one.
