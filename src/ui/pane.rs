@@ -186,6 +186,12 @@ impl App {
         term.set_mouse_autohide(true);
         term.set_scroll_on_keystroke(true);
         term.set_scroll_on_output(false);
+        // GtkScrolledWindow owns history scrolling and touchpad inertia. Its
+        // adjustment must use pixels; VTE still handles application mouse input
+        // and alternate-screen arrow scrolling before propagating history events.
+        term.set_scroll_unit_is_pixels(true);
+        term.set_enable_fallback_scrolling(false);
+        super::scroll::attach(&term);
         {
             let i = self.inner.borrow();
             style_terminal(&term, &i.config, i.font_scale, &i.theme);

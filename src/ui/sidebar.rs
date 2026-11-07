@@ -32,39 +32,40 @@ pub fn connect(app: &AppRc) {
     });
 }
 
-pub fn rebuild(app: &AppRc) {
-    let list = &app.sidebar_list;
-    app.suppress_select.set(true);
-    // Remove rows only: popovers parented to the list are children too, and
-    // ListBox::remove ignores them, so a first_child() loop would never end.
-    while let Some(c) = list.row_at_index(0) {
-        list.remove(&c);
-    }
-    let i = app.inner.borrow();
-    let mut active_row = None;
-    for ws in &i.state.workspaces {
-        let focused = i.panes.get(&ws.focused);
-        let row = gtk4::ListBoxRow::new();
-        row.set_widget_name(&ws.id.to_string());
+/// Keep row and button identity across metadata refreshes so an in-flight
+/// click, double click, or drag is not cancelled by replacing its widget.
+pub(super) struct Row {
+    widget: gtk4::ListBoxRow,
+    name: gtk4::Label,
+    badge: gtk4::Label,
+    context: gtk4::Label,
+    ports: gtk4::Label,
+    agent: gtk4::Label,
+    attention: gtk4::Label,
+}
 
+impl Row {
+    fn new(app: &AppRc, id: WorkspaceId) -> Self {
+        let widget = gtk4::ListBoxRow::new();
+        widget.set_widget_name(&id.to_string());
         let v = gtk4::Box::new(Orientation::Vertical, 2);
         let top = gtk4::Box::new(Orientation::Horizontal, 6);
+        let handle = gtk4::Image::from_icon_name("list-drag-handle-symbolic");
+        handle.add_css_class("dim-label");
+        handle.set_tooltip_text(Some("Drag to reorder workspace"));
+        handle.set_cursor_from_name(Some("grab"));
+        top.append(&handle);
         let name = gtk4::Label::builder()
-            .label(&ws.name)
             .xalign(0.0)
             .hexpand(true)
             .ellipsize(gtk4::pango::EllipsizeMode::End)
             .build();
         name.add_css_class("ws-name");
         top.append(&name);
-        let unread = i.notes.unread_for_workspace(ws.id);
-        if unread > 0 {
-            let badge = gtk4::Label::new(Some(&unread.to_string()));
-            badge.add_css_class("badge");
-            badge.set_valign(gtk4::Align::Center);
-            top.append(&badge);
-        }
-        // Close button; asks for confirmation before closing.
+        let badge = gtk4::Label::new(None);
+        badge.add_css_class("badge");
+        badge.set_valign(gtk4::Align::Center);
+        top.append(&badge);
         let close = gtk4::Button::builder()
             .icon_name("window-close-symbolic")
             .tooltip_text("Close workspace")
@@ -73,21 +74,75 @@ pub fn rebuild(app: &AppRc) {
         close.add_css_class("flat");
         close.add_css_class("circular");
         close.add_css_class("ws-close");
-        {
-            let w = app.weak();
-            let id = ws.id;
-            close.connect_clicked(move |_| {
-                if let Some(a) = w.upgrade() {
-                    // Defer: the dialog must not open while the sidebar is mid-rebuild.
-                    gtk4::glib::idle_add_local_once(move || {
-                        let _ = a.close_workspace(id, false, true);
-                    });
-                }
-            });
-        }
+        let w = app.weak();
+        close.connect_clicked(move |_| {
+            if let Some(a) = w.upgrade() {
+                glib::idle_add_local_once(move || {
+                    let _ = a.close_workspace(id, false, true);
+                });
+            }
+        });
         top.append(&close);
         v.append(&top);
+        let label = |class, ellipsize| {
+            let l = gtk4::Label::builder().xalign(0.0).ellipsize(ellipsize).build();
+            l.add_css_class(class);
+            v.append(&l);
+            l
+        };
+        let context = label("ws-sub", gtk4::pango::EllipsizeMode::Middle);
+        let ports = label("ws-sub", gtk4::pango::EllipsizeMode::None);
+        let agent = label("ws-agent", gtk4::pango::EllipsizeMode::End);
+        let attention = label("ws-attention", gtk4::pango::EllipsizeMode::End);
+        widget.set_child(Some(&v));
+        attach_dnd(app, &widget, id);
+        attach_menu(app, &widget, id);
+        Self {
+            widget,
+            name,
+            badge,
+            context,
+            ports,
+            agent,
+            attention,
+        }
+    }
+}
 
+fn set_optional_label(label: &gtk4::Label, text: &str) {
+    if label.text() != text {
+        label.set_label(text);
+    }
+    label.set_visible(!text.is_empty());
+}
+
+pub fn rebuild(app: &AppRc) {
+    let list = &app.sidebar_list;
+    app.suppress_select.set(true);
+    let i = app.inner.borrow();
+    let mut rows = app.sidebar_rows.borrow_mut();
+    rows.retain(|id, row| {
+        if i.state.workspace(*id).is_some() {
+            true
+        } else {
+            list.remove(&row.widget);
+            false
+        }
+    });
+    let mut active_row = None;
+    for (index, ws) in i.state.workspaces.iter().enumerate() {
+        let row = rows.entry(ws.id).or_insert_with(|| Row::new(app, ws.id));
+        // Only additions and explicit reordering reparent rows.
+        if list.row_at_index(index as i32).as_ref() != Some(&row.widget) {
+            if row.widget.parent().is_some() {
+                list.remove(&row.widget);
+            }
+            list.insert(&row.widget, index as i32);
+        }
+        let focused = i.panes.get(&ws.focused);
+        set_optional_label(&row.name, &ws.name);
+        let unread = i.notes.unread_for_workspace(ws.id);
+        set_optional_label(&row.badge, &if unread > 0 { unread.to_string() } else { String::new() });
         let mut sub = Vec::new();
         if let Some(g) = focused.and_then(|p| p.git.as_ref()) {
             let mut s = format!("⎇ {}", g.branch);
@@ -99,78 +154,52 @@ pub fn rebuild(app: &AppRc) {
         if let Some(c) = focused.and_then(|p| p.cwd.as_ref()) {
             sub.push(crate::meta::display_path(c));
         }
-        if !sub.is_empty() {
-            let l = gtk4::Label::builder()
-                .label(sub.join("  ·  "))
-                .xalign(0.0)
-                .ellipsize(gtk4::pango::EllipsizeMode::Middle)
-                .build();
-            l.add_css_class("ws-sub");
-            v.append(&l);
-        }
-        let ports: Vec<u16> = {
-            let mut p: Vec<u16> = ws
-                .layout
-                .panes()
-                .iter()
-                .filter_map(|id| i.panes.get(id))
-                .flat_map(|p| p.ports.clone())
-                .collect();
-            p.sort_unstable();
-            p.dedup();
-            p
+        set_optional_label(&row.context, &sub.join("  ·  "));
+        let mut ports: Vec<u16> = ws
+            .layout
+            .panes()
+            .iter()
+            .filter_map(|id| i.panes.get(id))
+            .flat_map(|p| p.ports.clone())
+            .collect();
+        ports.sort_unstable();
+        ports.dedup();
+        let ports = if ports.is_empty() {
+            String::new()
+        } else {
+            format!("ports {}", ports.iter().map(|p| format!(":{p}")).collect::<Vec<_>>().join(" "))
         };
-        if !ports.is_empty() {
-            let l = gtk4::Label::builder()
-                .label(format!(
-                    "ports {}",
-                    ports.iter().map(|p| format!(":{p}")).collect::<Vec<_>>().join(" ")
-                ))
-                .xalign(0.0)
-                .build();
-            l.add_css_class("ws-sub");
-            v.append(&l);
-        }
-        // Agent status for any pane in the workspace (first one with a label).
-        if let Some(label) = ws
+        set_optional_label(&row.ports, &ports);
+        let agent = ws
             .layout
             .panes()
             .iter()
             .filter_map(|id| i.panes.get(id))
             .find_map(|p| p.agent_label())
-        {
-            let l = gtk4::Label::builder()
-                .label(label)
-                .xalign(0.0)
-                .ellipsize(gtk4::pango::EllipsizeMode::End)
-                .build();
-            l.add_css_class("ws-agent");
-            v.append(&l);
-        }
-        if let Some(n) = i.notes.latest_for_workspace(ws.id) {
-            let text = if n.body.is_empty() {
-                n.title.clone()
-            } else {
-                format!("{}: {}", n.title, n.body)
-            };
-            let l = gtk4::Label::builder()
-                .label(text.lines().next().unwrap_or(""))
-                .xalign(0.0)
-                .ellipsize(gtk4::pango::EllipsizeMode::End)
-                .build();
-            l.add_css_class("ws-attention");
-            v.append(&l);
-        }
-        row.set_child(Some(&v));
-        row.set_tooltip_text(Some(&format!("{} — {} pane(s)", ws.name, ws.layout.panes().len())));
-
-        attach_dnd(app, &row, ws.id);
-        attach_menu(app, &row, ws.id);
-        list.append(&row);
+            .unwrap_or_default();
+        set_optional_label(&row.agent, &agent);
+        let attention = i
+            .notes
+            .latest_for_workspace(ws.id)
+            .map(|n| {
+                if n.body.is_empty() {
+                    n.title.clone()
+                } else {
+                    format!("{}: {}", n.title, n.body)
+                }
+            })
+            .unwrap_or_default();
+        set_optional_label(&row.attention, attention.lines().next().unwrap_or(""));
+        row.widget.set_tooltip_text(Some(&format!(
+            "{} — {} pane(s)\nClick to switch · Drag to reorder · Double-click to rename",
+            ws.name,
+            ws.layout.panes().len()
+        )));
         if i.state.active == Some(ws.id) {
-            active_row = Some(row);
+            active_row = Some(row.widget.clone());
         }
     }
+    drop(rows);
     drop(i);
     if let Some(r) = active_row {
         list.select_row(Some(&r));

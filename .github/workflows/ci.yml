@@ -15,7 +15,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
-            xvfb dbus-x11 git python3 dpkg-dev appstream desktop-file-utils
+            xvfb xdotool dbus-x11 git python3 dpkg-dev appstream desktop-file-utils
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -27,7 +27,7 @@ jobs:
       - name: Unit tests
         run: cargo test --lib --bins
       - name: End-to-end tests (real GTK app under Xvfb)
-        run: dbus-run-session -- xvfb-run -a cargo test --test e2e -- --test-threads=1
+        run: dbus-run-session -- xvfb-run -a cargo test --test e2e --test interactions -- --test-threads=1
         env:
           GTK_A11Y: none
       - name: Validate desktop metadata
