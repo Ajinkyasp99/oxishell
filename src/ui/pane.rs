@@ -39,9 +39,9 @@ pub struct Pane {
     pub suggest: super::suggest::Suggest,
 }
 
-const PCRE2_CASELESS: u32 = 0x0000_0008;
-const PCRE2_MULTILINE: u32 = 0x0000_0400;
-const PCRE2_UTF: u32 = 0x0008_0000;
+pub(super) const PCRE2_CASELESS: u32 = 0x0000_0008;
+pub(super) const PCRE2_MULTILINE: u32 = 0x0000_0400;
+pub(super) const PCRE2_UTF: u32 = 0x0008_0000;
 
 fn regex_escape(s: &str) -> String {
     let mut o = String::with_capacity(s.len() * 2);
@@ -151,7 +151,12 @@ pub fn style_terminal(t: &vte4::Terminal, cfg: &Config, scale: f64, theme: &crat
     let c = |c: crate::theme::Rgb, a: f32| gdk::RGBA::new(c.0 as f32 / 255.0, c.1 as f32 / 255.0, c.2 as f32 / 255.0, a);
     // Gradient/image themes paint the window background; the terminal stays transparent over it.
     let bg_alpha = if theme.layered_background() { 0.0 } else { 1.0 };
-    let pal: Vec<gdk::RGBA> = theme.normal.iter().chain(theme.bright.iter()).map(|x| c(*x, 1.0)).collect();
+    let (normal, bright) = if cfg.terminal.vivid_colors {
+        theme.vivid_palette()
+    } else {
+        (theme.normal, theme.bright)
+    };
+    let pal: Vec<gdk::RGBA> = normal.iter().chain(bright.iter()).map(|x| c(*x, 1.0)).collect();
     let refs: Vec<&gdk::RGBA> = pal.iter().collect();
     t.set_colors(
         Some(&c(theme.foreground, 1.0)),
@@ -265,6 +270,7 @@ impl App {
         overlay.set_child(Some(&scroll));
         let suggest = super::suggest::Suggest::new(&overlay);
         super::suggest::attach(self, id, &term, &suggest);
+        super::history_panel::attach(self, id, &term);
         frame.append(&overlay);
 
         // Pane context menu.
@@ -291,6 +297,7 @@ impl App {
         menu.append_section(None, &agent);
         menu.append_section(None, &close);
         term.set_context_menu_model(Some(&menu));
+        super::links::attach(self, &term, &menu);
 
         let pid_cell: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
         let pending: Rc<std::cell::RefCell<Option<Vec<u8>>>> = Rc::new(std::cell::RefCell::new(Some(Vec::new())));
@@ -378,6 +385,9 @@ impl App {
         env.push(format!("CMUX_ENV_FILE={}", env_file.display()));
         if self.inner.borrow().config.terminal.compact_prompt {
             env.push("CMUX_COMPACT_PROMPT=1".to_string());
+        }
+        if self.inner.borrow().config.terminal.highlight_commands {
+            env.push("CMUX_HIGHLIGHT_CMD=1".to_string());
         }
         if crate::shellint::shell_name(&argv[0]) == "bash" {
             env.push(format!("PROMPT_COMMAND={}", crate::shellint::BASH_PROMPT_COMMAND));

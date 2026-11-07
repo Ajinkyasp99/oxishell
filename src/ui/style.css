@@ -227,3 +227,68 @@
 .ghost {
   color: alpha(@window_fg_color, 0.4);
 }
+
+/* Link popover: click a URL in terminal output. */
+.link-popover > contents {
+  padding: 10px;
+  border-radius: 10px;
+}
+.link-url {
+  color: @accent_color;
+  font-size: 0.9em;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background-color: alpha(@accent_color, 0.08);
+}
+.link-hint {
+  font-size: 0.78em;
+  opacity: 0.55;
+}
+
+/* Warp-style history panel (↑ at the prompt). */
+.history-panel > contents {
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid alpha(@window_fg_color, 0.12);
+}
+.history-header {
+  padding: 6px 12px;
+  border-bottom: 1px solid alpha(@window_fg_color, 0.08);
+}
+.history-title {
+  font-size: 0.75em;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.history-hint {
+  font-size: 0.75em;
+  opacity: 0.5;
+}
+.history-list {
+  background: transparent;
+  padding: 4px;
+}
+.history-list > row {
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+.history-list > row:selected {
+  background-color: alpha(@accent_color, 0.22);
+}
+.history-mark {
+  color: @accent_color;
+  font-weight: 800;
+}
+.history-cmd {
+  font-family: monospace;
+}
+.history-age {
+  font-size: 0.8em;
+  opacity: 0.5;
+}
+.history-empty {
+  padding: 12px;
+  opacity: 0.6;
+}

@@ -41,18 +41,53 @@ impl Suggest {
     }
 }
 
-/// Row of the cursor within the visible screen: the last non-blank line of the
-/// screen. Valid at a shell prompt, where nothing is printed below the input line.
-fn cursor_screen_row(term: &vte4::Terminal) -> Option<i64> {
+/// Row of the cursor within the visible screen: the last display row of the
+/// last non-blank line. Valid at a shell prompt, where nothing is printed
+/// below the input line.
+///
+/// (The absolute cursor row can't be used: the scroll adjustment is relative
+/// to the retained scrollback, and `clear` drops scrollback rows.)
+pub(super) fn cursor_screen_row(term: &vte4::Terminal) -> Option<i64> {
     let text = term.text_format(vte4::Format::Text)?;
-    text.lines()
-        .enumerate()
-        .filter(|(_, l)| !l.trim().is_empty())
-        .map(|(i, _)| i as i64)
-        .last()
+    last_line_row(&text, term.column_count().max(1) as usize).map(|r| r as i64)
 }
 
-fn at_bottom(term: &vte4::Terminal) -> bool {
+/// Display row of the end of the last non-blank line of `screen` text, where
+/// each line takes as many rows as it wraps to (VTE joins soft-wrapped rows
+/// into one line of text).
+pub(super) fn last_line_row(screen: &str, cols: usize) -> Option<usize> {
+    let mut row = 0;
+    let mut last = None;
+    for line in screen.split('\n') {
+        let width: usize = line.chars().map(cell_width).sum();
+        let rows = width.div_ceil(cols).max(1);
+        if !line.trim().is_empty() {
+            last = Some(row + rows - 1);
+        }
+        row += rows;
+    }
+    last
+}
+
+/// Terminal cells taken by `c` (common wide and zero-width ranges).
+fn cell_width(c: char) -> usize {
+    match c as u32 {
+        0x300..=0x36F | 0x200B..=0x200F | 0xFE00..=0xFE0F => 0,
+        0x1100..=0x115F
+        | 0x2E80..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1F64F
+        | 0x1F900..=0x1F9FF
+        | 0x20000..=0x3FFFD => 2,
+        _ => 1,
+    }
+}
+
+pub(super) fn at_bottom(term: &vte4::Terminal) -> bool {
     term.vadjustment().is_none_or(|a| a.value() + a.page_size() >= a.upper() - 0.5)
 }
 
@@ -179,4 +214,23 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, s: &Suggest) {
         }
     });
     term.add_controller(keys);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::last_line_row;
+
+    #[test]
+    fn prompt_row_counts_wrapped_lines() {
+        // 10 columns: the 25-char line wraps to 3 rows (0..=2), prompt on row 3.
+        let screen = format!("{}\n❯ git\n\n\n", "x".repeat(25));
+        assert_eq!(last_line_row(&screen, 10), Some(3));
+        // A line of exactly the width takes one row.
+        assert_eq!(last_line_row("0123456789\n❯ ", 10), Some(1));
+        // Blank lines in between count; trailing blanks don't.
+        assert_eq!(last_line_row("a\n\n\n❯ ls\n\n", 80), Some(3));
+        // Wide characters take two cells.
+        assert_eq!(last_line_row("日本語日本\n❯", 8), Some(2));
+        assert_eq!(last_line_row("\n\n", 80), None);
+    }
 }

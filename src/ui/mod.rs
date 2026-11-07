@@ -4,7 +4,9 @@
 mod chips;
 mod dialogs;
 mod fonts;
+mod history_panel;
 mod ipc_handler;
+mod links;
 mod meta_worker;
 mod pane;
 mod scroll;
