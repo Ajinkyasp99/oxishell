@@ -171,11 +171,15 @@ Use it from scripts, git hooks or your own agent tooling. Reference: [docs/CLI.m
 | Claude Code | ✓ | ✓ | ✓ |
 | Gemini CLI | ✓ | — | ✓ |
 | OpenCode¹ | ✓ | ✓ | ✓ |
-| Codex CLI | — | — | ✓ |
+| Codex CLI² | ✓ | ✓ | ✓ |
 | Qoder CLI | — | — | ✓ |
 | Anything else | `cmux agent-event` / `cmux notify` from your own scripts | | |
 
 ¹ OpenCode support is implemented as a plugin but has not yet been tested against a live OpenCode.
+² Codex requires a CLI with lifecycle hooks: run `cmux hooks install codex`, restart Codex, then review
+and trust the cmux hooks in `/hooks`. Needs input covers approval requests and `request_user_input`
+questions. Older Codex versions can still use the completion-only `notify` integration; see [agent setup](docs/AGENTS.md).
+
 After a restart, sessions whose hooks reported a session id (Claude Code, Gemini, Qoder, and Codex when it
 sends a thread id) can be resumed from the pane menu or the palette.
 

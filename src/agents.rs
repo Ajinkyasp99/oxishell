@@ -10,7 +10,7 @@
 //! | Claude Code | ~/.claude/settings.json           | UserPromptSubmit, Notification, Stop, SessionEnd |
 //! | Gemini CLI  | ~/.gemini/settings.json           | BeforeAgent, AfterAgent, SessionEnd               |
 //! | Qoder CLI   | ~/.qoder/settings.json            | Stop, SessionEnd                                  |
-//! | Codex CLI   | ~/.codex/config.toml (`notify`)   | agent-turn-complete                               |
+//! | Codex CLI   | ~/.codex/config.toml (`hooks`)    | UserPromptSubmit, PermissionRequest, Stop, ...     |
 //! | OpenCode    | ~/.config/opencode/plugins/*.js   | session.idle, session.status, permission.*        |
 //!
 //! Event names follow upstream cmux's hook catalog (CLI/CMUXCLI+AgentHookCatalog.swift).
@@ -86,6 +86,16 @@ fn nested_events(agent: &str) -> &'static [(&'static str, &'static str)] {
         ],
         "gemini" => &[("BeforeAgent", "running"), ("AfterAgent", "idle"), ("SessionEnd", "ended")],
         "qoder" => &[("Stop", "idle"), ("SessionEnd", "ended")],
+        "codex" => &[
+            ("UserPromptSubmit", "running"),
+            ("PreModelRequest", "running"),
+            ("PermissionRequest", "waiting"),
+            ("PreToolUse", "waiting"),
+            ("PostToolUse", "running"),
+            ("Stop", "idle"),
+            ("Interrupt", "ended"),
+            ("SessionEnd", "ended"),
+        ],
         _ => &[],
     }
 }
@@ -128,7 +138,7 @@ pub fn shell_quote(s: &str) -> String {
     }
 }
 
-/// Add our hooks to a Claude/Gemini/Qoder settings object. Idempotent:
+/// Add our hooks to a settings object. Idempotent:
 /// existing cmux-linux entries are replaced, user entries are preserved.
 pub fn install_nested(settings: &mut Value, agent: &str, cmux: &str) -> Result<(), String> {
     uninstall_nested(settings);
@@ -138,7 +148,17 @@ pub fn install_nested(settings: &mut Value, agent: &str, cmux: &str) -> Result<(
     for (event, state) in nested_events(agent) {
         let groups = hooks.entry(event.to_string()).or_insert_with(|| json!([]));
         let groups = groups.as_array_mut().ok_or_else(|| format!("hooks.{event} is not an array"))?;
-        groups.push(json!({"hooks": [{"type": "command", "command": hook_command(cmux, agent, state), "timeout": 10}]}));
+        let timeout = if agent == "codex" && matches!(*event, "Interrupt" | "SessionEnd") {
+            3
+        } else {
+            10
+        };
+        let mut group = json!({"hooks": [{"type": "command", "command": hook_command(cmux, agent, state), "timeout": timeout}]});
+        if agent == "codex" && *event == "PreToolUse" {
+            // Only an explicit question means waiting; other tools are still work.
+            group["matcher"] = json!("^request_user_input$");
+        }
+        groups.push(group);
     }
     Ok(())
 }
@@ -164,33 +184,40 @@ pub fn uninstall_nested(settings: &mut Value) {
     }
 }
 
-/// Codex: set top-level `notify` in config.toml. Refuses to overwrite a
-/// user-defined notify program.
+/// Codex lifecycle hooks use the same nested format in an inline TOML table.
+/// Preserve user hooks and notify programs, migrating our legacy notify entry
+/// so completion isn't reported twice.
 pub fn install_codex(toml_text: &str, cmux: &str) -> Result<String, String> {
     let mut doc: toml::Table = toml::from_str(toml_text).map_err(|e| format!("config.toml: {e}"))?;
-    if let Some(existing) = doc.get("notify") {
-        let ours = existing.as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some(MARKER)));
-        if !ours {
-            return Err(
-                "config.toml already has a `notify` program; remove it first or call `cmux agent-event --agent codex --codex-json` from it"
-                    .into(),
-            );
-        }
+    let mut settings = json!({});
+    if let Some(hooks) = doc.get("hooks") {
+        settings["hooks"] = serde_json::to_value(hooks).map_err(|e| e.to_string())?;
     }
+    install_nested(&mut settings, "codex", cmux)?;
     doc.insert(
-        "notify".into(),
-        toml::Value::Array(
-            [cmux, "agent-event", "--agent", "codex", "--marker", MARKER, "--codex-json"]
-                .iter()
-                .map(|s| toml::Value::String(s.to_string()))
-                .collect(),
-        ),
+        "hooks".into(),
+        toml::Value::try_from(&settings["hooks"]).map_err(|e| e.to_string())?,
     );
+    remove_codex_notify(&mut doc);
     toml::to_string(&doc).map_err(|e| e.to_string())
 }
 
 pub fn uninstall_codex(toml_text: &str) -> Result<String, String> {
     let mut doc: toml::Table = toml::from_str(toml_text).map_err(|e| format!("config.toml: {e}"))?;
+    if let Some(hooks) = doc.get("hooks") {
+        let mut settings = json!({"hooks": serde_json::to_value(hooks).map_err(|e| e.to_string())?});
+        uninstall_nested(&mut settings);
+        if let Some(hooks) = settings.get("hooks") {
+            doc.insert("hooks".into(), toml::Value::try_from(hooks).map_err(|e| e.to_string())?);
+        } else {
+            doc.remove("hooks");
+        }
+    }
+    remove_codex_notify(&mut doc);
+    toml::to_string(&doc).map_err(|e| e.to_string())
+}
+
+fn remove_codex_notify(doc: &mut toml::Table) {
     if doc
         .get("notify")
         .and_then(|v| v.as_array())
@@ -198,7 +225,6 @@ pub fn uninstall_codex(toml_text: &str) -> Result<String, String> {
     {
         doc.remove("notify");
     }
-    toml::to_string(&doc).map_err(|e| e.to_string())
 }
 
 pub fn opencode_plugin(cmux: &str) -> String {
@@ -285,7 +311,15 @@ pub fn parse_hook_payload(agent: &str, v: &Value) -> (Option<String>, Option<Str
     let s = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
     let session = s("session_id").or_else(|| s("sessionId")).or_else(|| s("thread-id"));
     let message = match agent {
-        "codex" => s("last-assistant-message"),
+        "codex" => s("last_assistant_message")
+            .or_else(|| s("last-assistant-message"))
+            .or_else(|| s("message"))
+            .or_else(|| v.pointer("/tool_input/description").and_then(Value::as_str).map(str::to_string))
+            .or_else(|| {
+                v.pointer("/tool_input/questions/0/question")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }),
         _ => s("message"),
     };
     (session, message)
@@ -341,14 +375,91 @@ mod tests {
     }
 
     #[test]
-    fn codex_notify_install_respects_user_program() {
-        let t = install_codex("model = \"o3\"\n", "/usr/bin/cmux").unwrap();
-        assert!(t.contains("notify") && t.contains("model"));
-        let again = install_codex(&t, "/usr/bin/cmux").unwrap();
+    fn codex_install_preserves_user_config_and_hooks() {
+        let original = r#"
+model = "custom-model"
+notify = ["my-notifier"]
+[features]
+hooks = false
+[[hooks.Stop]]
+matcher = ""
+[[hooks.Stop.hooks]]
+type = "command"
+command = "say done"
+timeout = 20
+"#;
+        let t = install_codex(original, "/my dir/it's/cmux").unwrap();
+        let doc: toml::Table = toml::from_str(&t).unwrap();
+        assert_eq!(doc["model"].as_str(), Some("custom-model"));
+        assert_eq!(doc["notify"].as_array().unwrap()[0].as_str(), Some("my-notifier"));
+        assert_eq!(doc["features"]["hooks"].as_bool(), Some(false));
+        let hooks = &doc["hooks"];
+        assert_eq!(hooks["Stop"].as_array().unwrap().len(), 2);
+        for (event, state) in nested_events("codex") {
+            let group = hooks[event].as_array().unwrap().last().unwrap();
+            let command = group["hooks"][0]["command"].as_str().unwrap();
+            assert_eq!(command, hook_command("/my dir/it's/cmux", "codex", state));
+            let timeout = group["hooks"][0]["timeout"].as_integer().unwrap();
+            assert_eq!(timeout, if matches!(*event, "SessionEnd" | "Interrupt") { 3 } else { 10 });
+        }
+        assert_eq!(hooks["PreToolUse"][0]["matcher"].as_str(), Some("^request_user_input$"));
+        let again = install_codex(&t, "/my dir/it's/cmux").unwrap();
         assert_eq!(again, t);
-        assert!(install_codex("notify = [\"my-notifier\"]\n", "cmux").is_err());
         let removed = uninstall_codex(&t).unwrap();
-        assert!(!removed.contains("notify") && removed.contains("model"));
+        assert_eq!(
+            toml::from_str::<toml::Table>(&removed).unwrap(),
+            toml::from_str::<toml::Table>(original).unwrap()
+        );
+        assert!(install_codex("hooks = false", "cmux").is_err());
+        assert!(install_codex("[hooks]\nStop = false", "cmux").is_err());
+        assert!(install_codex("{broken", "cmux").is_err());
+    }
+
+    #[test]
+    fn codex_migrates_legacy_notify_without_duplicate_completion() {
+        let legacy =
+            format!("model = \"custom-model\"\nnotify = [\"cmux\", \"agent-event\", \"--marker\", \"{MARKER}\", \"--codex-json\"]\n");
+        let t = install_codex(&legacy, "cmux").unwrap();
+        let doc: toml::Table = toml::from_str(&t).unwrap();
+        assert!(!doc.contains_key("notify"));
+        assert_eq!(doc["hooks"]["Stop"].as_array().unwrap().len(), 1);
+        let removed: toml::Table = toml::from_str(&uninstall_codex(&t).unwrap()).unwrap();
+        assert!(!removed.contains_key("notify") && !removed.contains_key("hooks"));
+        assert_eq!(removed["model"].as_str(), Some("custom-model"));
+        let old_removed: toml::Table = toml::from_str(&uninstall_codex(&legacy).unwrap()).unwrap();
+        assert_eq!(old_removed, removed);
+        let empty = install_codex("", "cmux").unwrap();
+        assert!(toml::from_str::<toml::Table>(&uninstall_codex(&empty).unwrap()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn codex_payloads_include_completion_approvals_and_questions() {
+        for (payload, session, message) in [
+            (
+                json!({"thread-id": "legacy-1", "last-assistant-message": "Legacy done"}),
+                "legacy-1",
+                "Legacy done",
+            ),
+            (json!({"session_id": "sess-1", "last_assistant_message": "Done"}), "sess-1", "Done"),
+            (
+                json!({"session_id": "sess-1", "tool_input": {"description": "Allow a command?"}}),
+                "sess-1",
+                "Allow a command?",
+            ),
+            (
+                json!({"session_id": "sess-1", "tool_input": {"questions": [{"question": "Which option?"}]}}),
+                "sess-1",
+                "Which option?",
+            ),
+        ] {
+            let (s, m) = parse_hook_payload("codex", &payload);
+            assert_eq!(s.as_deref(), Some(session));
+            assert_eq!(m.as_deref(), Some(message));
+        }
+        assert_eq!(
+            parse_hook_payload("codex", &json!({"tool_input": {"command": "private command"}})),
+            (None, None)
+        );
     }
 
     #[test]

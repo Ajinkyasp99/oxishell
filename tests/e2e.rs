@@ -378,6 +378,119 @@ fn terminal_workspaces_splits_notifications_and_restore() {
 }
 
 #[test]
+fn codex_hooks_install_lifecycle_and_uninstall() {
+    if !have_display() {
+        return;
+    }
+    let e = Env::new("codex");
+    let codex_dir = e.root.join("home/custom-codex");
+    std::fs::create_dir_all(&codex_dir).unwrap();
+    let config = codex_dir.join("config.toml");
+    let original = "model = \"custom-model\"\nnotify = [\"user-notifier\"]\n";
+    std::fs::write(&config, original).unwrap();
+    let manage = |action: &str| {
+        Command::new(env!("CARGO_BIN_EXE_cmux"))
+            .args(["hooks", action, "codex"])
+            .env("CODEX_HOME", &codex_dir)
+            .output()
+            .unwrap()
+    };
+    let installed = manage("install");
+    assert!(installed.status.success(), "{:?}", installed);
+    let report: Value = serde_json::from_slice(&installed.stdout).unwrap();
+    assert!(report["installed"][0]["note"].as_str().unwrap().contains("/hooks"));
+    assert_eq!(report["installed"][0]["file"], config.to_string_lossy().as_ref());
+    assert_eq!(
+        std::fs::read_to_string(config.with_extension("toml.cmux-linux.bak")).unwrap(),
+        original
+    );
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(manage("install").status.success());
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), text);
+    let doc: toml::Table = toml::from_str(&text).unwrap();
+
+    let app = e.start();
+    let pane = first_pane(&e);
+    let send = |event: &str, extra: Value, inside: bool| {
+        let command = doc["hooks"][event][0]["hooks"][0]["command"].as_str().unwrap();
+        let mut payload = json!({"session_id": "codex-session-42", "hook_event_name": event});
+        payload.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", command])
+            .env("CMUX_SOCKET", &e.socket)
+            .env_remove("CMUX_PANE_ID")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if inside {
+            cmd.env("CMUX_PANE_ID", pane.to_string());
+        }
+        let mut child = cmd.spawn().unwrap();
+        use std::io::Write;
+        // Outside cmux the hook can exit before reading stdin.
+        let _ = child.stdin.take().unwrap().write_all(payload.to_string().as_bytes());
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{out:?}");
+    };
+    let assert_state = |state: &str| {
+        let info = e.panes().into_iter().find(|p| p["id"] == pane).unwrap();
+        assert_eq!(info["agent"]["agent"], "codex");
+        assert_eq!(info["agent"]["state"], state);
+    };
+
+    send("UserPromptSubmit", json!({}), true);
+    assert_state("running");
+    assert!(e.ok("notification.list", json!({})).as_array().unwrap().is_empty());
+    send(
+        "PermissionRequest",
+        json!({"tool_name": "Bash", "tool_input": {"description": "Allow this command?"}}),
+        true,
+    );
+    assert_state("waiting");
+    let notes = e.ok("notification.list", json!({}));
+    assert_eq!(notes[0]["title"], "Codex needs input");
+    assert_eq!(notes[0]["body"], "Allow this command?");
+    send("PostToolUse", json!({"tool_name": "Bash"}), true);
+    assert_state("running");
+    send(
+        "PreToolUse",
+        json!({"tool_name": "request_user_input", "tool_input": {"questions": [{"question": "Which option?"}]}}),
+        true,
+    );
+    assert_state("waiting");
+    assert_eq!(e.ok("notification.list", json!({}))[1]["body"], "Which option?");
+    send("PreModelRequest", json!({}), true);
+    assert_state("running");
+    send("Stop", json!({"last_assistant_message": "Implemented the change"}), true);
+    assert_state("idle");
+    let notes = e.ok("notification.list", json!({}));
+    assert_eq!(notes.as_array().unwrap().len(), 3);
+    assert_eq!(notes[2]["title"], "Codex finished");
+    assert_eq!(notes[2]["body"], "Implemented the change");
+    send("UserPromptSubmit", json!({}), false);
+    assert_state("idle");
+    send("UserPromptSubmit", json!({}), true);
+    send("Interrupt", json!({}), true);
+    assert_state("ended");
+    send("SessionEnd", json!({}), true);
+    assert_state("ended");
+    assert_eq!(e.ok("notification.list", json!({})).as_array().unwrap().len(), 3);
+    e.stop(app);
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(e.root.join("state/cmux-linux/session.json")).unwrap()).unwrap();
+    assert_eq!(saved["panes"][pane.to_string()]["agent_session"], "codex-session-42");
+
+    assert!(manage("uninstall").status.success());
+    assert_eq!(
+        toml::from_str::<toml::Table>(&std::fs::read_to_string(&config).unwrap()).unwrap(),
+        toml::from_str::<toml::Table>(original).unwrap()
+    );
+    std::fs::write(&config, "{broken").unwrap();
+    assert!(!manage("install").status.success());
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), "{broken");
+}
+
+#[test]
 fn stress_many_panes_and_heavy_output() {
     if !have_display() {
         return;

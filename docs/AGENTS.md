@@ -25,24 +25,56 @@ cmux hooks uninstall claude
 | Claude Code | `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`) | UserPromptSubmit → running, Notification → waiting, Stop → done, SessionEnd → ended |
 | Gemini CLI | `~/.gemini/settings.json` | BeforeAgent → running, AfterAgent → done, SessionEnd → ended |
 | Qoder CLI | `~/.qoder/settings.json` | Stop → done, SessionEnd → ended |
-| Codex CLI | `~/.codex/config.toml` (`notify` program) | agent-turn-complete → done |
+| Codex CLI | `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`, inline `hooks`) | UserPromptSubmit / PreModelRequest / PostToolUse → running, PermissionRequest / request_user_input PreToolUse → waiting, Stop → done, Interrupt / SessionEnd → ended |
 | OpenCode | `~/.config/opencode/plugins/cmux-linux.js` | session.status busy → running, session.idle → done, permission → waiting |
 
-Event names follow upstream cmux's hook catalog. Notes:
+Event names use each agent's native hook system. Notes:
 
 - Install is idempotent and keeps your existing hooks; only entries tagged `cmux-linux-hook` are added or
   removed. The first install backs up the original file as `*.cmux-linux.bak`. Invalid JSON/TOML is never
   overwritten.
-- Codex supports a single `notify` program. If you already have one, install refuses; call
-  `cmux agent-event --agent codex --codex-json "$1"` from your own script instead.
+- Codex installation preserves user-defined `notify` programs and inline hooks. It replaces the old
+  cmux-managed `notify` entry with lifecycle hooks to avoid duplicate completion alerts.
 - The hook command exits 0 silently when not running inside cmux-linux, or if the app is not reachable, so
   hooks never break the agent.
-- Only states the agent's hook system emits are shown. Codex and Qoder do not report "running", so their
-  state appears when a turn finishes.
+- Only states the agent's hook system emits are shown. Qoder's state appears when a turn finishes.
+
+### Codex setup
+
+Use a Codex CLI with [lifecycle hook support](https://learn.chatgpt.com/docs/hooks) (configuration checked
+with Codex CLI 0.167.0). Run:
+
+```bash
+cmux hooks install codex
+codex
+# In Codex, open /hooks and review and trust the cmux hooks.
+```
+
+Restart an already-running Codex after installation. Codex skips untrusted hooks; cmux does not alter
+hook trust or permission policies. If you explicitly disabled hooks with `[features] hooks = false`,
+that setting is preserved. Hooks in a separate `hooks.json` are preserved too; Codex merges them with
+inline hooks and may warn about using both representations.
+
+The sidebar shows Running while working, Needs input for approvals and `request_user_input` questions,
+and Done with the final response preview when the turn stops. Tool completion or a new model request
+restores Running after input. Interrupting or ending the session clears the hook status without a
+finished notification. Session ids from hooks enable the existing explicit `codex resume` action.
+
+For an older Codex CLI without lifecycle hooks, keep the completion-only integration by adding this at
+the **top level** of `config.toml` instead of installing lifecycle hooks (use your absolute `cmux` path):
+
+```toml
+notify = ["/absolute/path/to/cmux", "agent-event", "--agent", "codex", "--marker", "cmux-linux-hook", "--codex-json"]
+```
+
+If you already have a notify program, keep it and call
+`cmux agent-event --agent codex --codex-json "$1"` from that script. The legacy JSON argument format
+remains supported. CLI/GTK lifecycle tests use hook fixtures; a live authenticated Codex conversation
+is still a manual check.
 
 ## Session resume
 
-When a hook reports a session id (Claude `session_id`, Codex `thread-id`, ...) it is saved with the
+When a hook reports a session id (Claude/Codex `session_id`, legacy Codex `thread-id`, ...) it is saved with the
 session. After a restart, "Resume <agent> session" appears in the pane's context menu and in the command
 palette. Choosing it **types** the resume command (e.g. `claude --resume <id>`) into the pane; you press
 Enter. Session ids are validated (letters, digits, `-`, `_`) before being used in a command. Nothing is

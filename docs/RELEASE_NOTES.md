@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+- Codex lifecycle hooks report running, needs input (approvals and explicit questions), completion,
+  interruption and session end. Installation preserves custom hooks and notification programs and
+  migrates the old cmux notifier. Restart Codex and review and trust the hooks in `/hooks`.
+
 ## 0.1.0 — 2026-11-07 (first release)
 
 Native GTK4/libadwaita terminal workspace manager for Linux, inspired by cmux.
