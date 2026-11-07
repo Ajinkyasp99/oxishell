@@ -3,12 +3,15 @@
 
 mod chips;
 mod dialogs;
+mod fonts;
 mod ipc_handler;
 mod meta_worker;
 mod pane;
 mod sidebar;
 mod suggest;
 mod themes;
+mod usage_footer;
+mod zoom;
 
 use crate::agents::AgentState;
 use crate::config::Config;
@@ -45,6 +48,7 @@ pub struct App {
     pub window: adw::ApplicationWindow,
     pub stack: gtk4::Stack,
     pub sidebar_list: gtk4::ListBox,
+    pub usage_footer: usage_footer::Footer,
     pub split: gtk4::Paned,
     pub status: gtk4::Label,
     pub toasts: adw::ToastOverlay,
@@ -66,6 +70,8 @@ const NARROW_WIDTH: i32 = 640;
 
 /// Entry point used by `main`: activate builds the window once.
 pub fn run() -> glib::ExitCode {
+    // Register before GTK creates its first Pango font map. Build surfaces errors.
+    let _ = fonts::register();
     let mut flags = gio::ApplicationFlags::empty();
     if std::env::var_os("CMUX_NON_UNIQUE").is_some() {
         flags |= gio::ApplicationFlags::NON_UNIQUE;
@@ -90,6 +96,7 @@ pub fn build_window(app: &adw::Application) {
 
 impl App {
     pub fn build(gapp: &adw::Application) -> AppRc {
+        let font_err = fonts::register().err();
         let (config, config_err) = Config::load_from(&Config::path());
 
         let css = gtk4::CssProvider::new();
@@ -177,6 +184,8 @@ impl App {
             .build();
         sidebar_box.append(&heading);
         sidebar_box.append(&sidebar_scroll);
+        let (usage_footer, usage_rx) = usage_footer::Footer::new();
+        sidebar_box.append(&usage_footer.root);
 
         let stack = gtk4::Stack::new();
         stack.set_hexpand(true);
@@ -235,6 +244,7 @@ impl App {
             window,
             stack,
             sidebar_list,
+            usage_footer,
             split,
             status,
             toasts,
@@ -290,6 +300,7 @@ impl App {
         sidebar::connect(&app);
         dialogs::connect_notifications_popover(&app);
         meta_worker::attach(&app, meta_rx);
+        usage_footer::attach(&app, usage_rx);
         app.apply_config();
 
         // Restore or start fresh.
@@ -314,6 +325,9 @@ impl App {
         }
         if let Some(e) = config_err {
             app.toast(&format!("Config error, using defaults: {e}"));
+        }
+        if let Some(e) = font_err {
+            app.toast(&format!("Bundled Hack font unavailable: {e}"));
         }
         let conflicts = app.inner.borrow().config.shortcut_conflicts();
         for (k, actions) in conflicts {
@@ -879,6 +893,7 @@ impl App {
     /// Refresh sidebar, status bar, badges and pane classes from the model.
     pub fn refresh(self: &Rc<Self>) {
         sidebar::rebuild(self);
+        usage_footer::refresh(self);
         let i = self.inner.borrow();
         let focused = i.state.active_workspace().map(|w| w.focused);
         for (id, p) in &i.panes {
@@ -1006,6 +1021,7 @@ impl App {
                 self.toast(&format!("Invalid shortcut {accel:?} for {action}"));
             }
         }
+        zoom::add_key_aliases(&mut map, &self.inner.borrow().config);
         self.inner.borrow_mut().keymap = map;
     }
 

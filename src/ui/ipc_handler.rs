@@ -231,6 +231,15 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
             let id = a.notify(pane, title, body, "cli");
             Ok(json!({"notification": id}))
         }
+        "agent.usage" => {
+            let pane = param_u64(p, "pane")?.ok_or("missing pane")?;
+            if !a.inner.borrow().panes.contains_key(&pane) {
+                return Err(format!("no such pane: {pane}"));
+            }
+            a.usage_footer.claude.borrow_mut().update(pane, crate::usage::claude(p));
+            super::usage_footer::refresh(a);
+            Ok(json!({"pane": pane}))
+        }
         "agent.event" => {
             let pane = param_u64(p, "pane")?.ok_or("missing pane (run inside a cmux-linux pane)")?;
             let agent = require_str(p, "agent")?;

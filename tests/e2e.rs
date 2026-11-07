@@ -491,6 +491,208 @@ fn codex_hooks_install_lifecycle_and_uninstall() {
 }
 
 #[test]
+fn claude_usage_bridge_preserves_output_and_does_not_post_notifications() {
+    if !have_display() {
+        return;
+    }
+    let e = Env::new("usage");
+    let claude_dir = e.root.join("home/custom-claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    let settings = claude_dir.join("settings.json");
+    let original = json!({"model": "custom", "statusLine": {"type": "command", "command": "cat\nprintf ''", "padding": 2}});
+    std::fs::write(&settings, original.to_string()).unwrap();
+    let manage = |action: &str| {
+        Command::new(env!("CARGO_BIN_EXE_cmux"))
+            .args(["hooks", action, "claude"])
+            .env("CLAUDE_CONFIG_DIR", &claude_dir)
+            .output()
+            .unwrap()
+    };
+    assert!(manage("install").status.success());
+    let installed: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    let command = installed["statusLine"]["command"].as_str().unwrap();
+    let app = e.start();
+    let pane = first_pane(&e);
+    let payload = json!({"model": {"display_name": "Claude"}, "rate_limits": {
+        "five_hour": {"used_percentage": 25.5, "resets_at": cmux_linux::usage::now() + 3600},
+        "seven_day": {"used_percentage": 70, "resets_at": cmux_linux::usage::now() + 86400}
+    }})
+    .to_string();
+    for inside in [false, true] {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", command])
+            .env("CMUX_SOCKET", &e.socket)
+            .env_remove("CMUX_PANE_ID")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if inside {
+            cmd.env("CMUX_PANE_ID", pane.to_string());
+        }
+        let mut child = cmd.spawn().unwrap();
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(payload.as_bytes()).unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert!(result.status.success(), "{result:?}");
+        assert_eq!(result.stdout, payload.as_bytes());
+        assert!(result.stderr.is_empty());
+    }
+    assert!(e.ok("notification.list", json!({})).as_array().unwrap().is_empty());
+    assert!(e.panes()[0]["agent"].is_null(), "usage must not change lifecycle state");
+    assert!(e
+        .call("agent.usage", json!({"pane": 999999, "rate_limits": {}}))
+        .unwrap_err()
+        .contains("no such pane"));
+    e.ok("agent.usage", json!({"pane": pane, "rate_limits": null}));
+    e.stop(app);
+    assert!(manage("uninstall").status.success());
+    let restored: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(restored, original);
+}
+
+#[test]
+fn usage_forwarder_preserves_exit_status_without_a_running_app() {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cmux"))
+        .args(["agent-usage", "--forward-command", "cat; exit 7"])
+        .env_remove("CMUX_PANE_ID")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"{\"rate_limits\":null}\n").unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert_eq!(result.status.code(), Some(7));
+    assert_eq!(result.stdout, b"{\"rate_limits\":null}\n");
+    assert!(result.stderr.is_empty());
+}
+
+#[test]
+fn usage_forwarder_keeps_status_line_responsive_when_app_stalls() {
+    use std::io::Write;
+    use std::os::unix::net::UnixListener;
+    let e = Env::new("usage-timeout");
+    std::fs::create_dir_all(e.socket.parent().unwrap()).unwrap();
+    let listener = UnixListener::bind(&e.socket).unwrap();
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        let (_connection, _) = listener.accept().unwrap();
+        let _ = wait.recv_timeout(Duration::from_secs(10));
+    });
+    let start = Instant::now();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cmux"))
+        .args(["agent-usage", "--forward-command", "cat"])
+        .env("CMUX_SOCKET", &e.socket)
+        .env("CMUX_PANE_ID", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = b"{\"rate_limits\":null}\n";
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let result = child.wait_with_output().unwrap();
+    let elapsed = start.elapsed();
+    let _ = release.send(());
+    server.join().unwrap();
+    assert!(elapsed < Duration::from_secs(3), "status line delayed by {elapsed:?}");
+    assert!(result.status.success());
+    assert_eq!(result.stdout, input);
+    assert!(result.stderr.is_empty());
+}
+
+#[test]
+fn keyboard_and_ctrl_wheel_zoom_resize_terminal_grid() {
+    if !have_display() || std::env::var_os("DISPLAY").is_none() || Command::new("xdotool").arg("version").output().is_err() {
+        eprintln!("skipped zoom input test: requires X11 and xdotool");
+        return;
+    }
+    let e = Env::new("zoom");
+    let app = e.start();
+    let pane = first_pane(&e);
+    let output = Command::new("xdotool")
+        .args(["search", "--sync", "--onlyvisible", "--pid", &app.id().to_string()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let window = String::from_utf8(output.stdout).unwrap().lines().next().unwrap().to_string();
+    let xdo = |args: &[&str]| {
+        let result = Command::new("xdotool").args(args).output().unwrap();
+        assert!(result.status.success(), "xdotool {args:?}: {result:?}");
+    };
+    xdo(&["windowfocus", "--sync", &window]);
+    let mut sequence = 0;
+    let mut grid = || -> (u32, u32) {
+        sequence += 1;
+        let marker = format!("ZOOM-SIZE-{sequence}");
+        e.ok(
+            "pane.send",
+            json!({"pane": pane, "text": format!("printf '\\n{marker} '; stty size\r")}),
+        );
+        let start = Instant::now();
+        loop {
+            for line in e.read(pane).lines() {
+                if let Some(size) = line.trim().strip_prefix(&format!("{marker} ")) {
+                    let numbers: Vec<u32> = size.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+                    if numbers.len() == 2 && numbers[0] > 0 && numbers[1] > 0 {
+                        return (numbers[0], numbers[1]);
+                    }
+                }
+            }
+            assert!(start.elapsed() < Duration::from_secs(5), "terminal grid probe timed out");
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    };
+    let original = grid();
+    let mut wait_grid = |check: &dyn Fn((u32, u32)) -> bool| {
+        let start = Instant::now();
+        loop {
+            let size = grid();
+            if check(size) {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "zoom did not resize grid: {size:?}, original {original:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    xdo(&["key", "ctrl+shift+equal"]);
+    wait_grid(&|size| size.0 < original.0);
+    xdo(&["key", "ctrl+0"]);
+    wait_grid(&|size| size == original);
+    xdo(&["key", "ctrl+minus"]);
+    wait_grid(&|size| size.0 > original.0);
+    xdo(&["key", "ctrl+equal"]);
+    wait_grid(&|size| size == original);
+    xdo(&[
+        "mousemove",
+        "--window",
+        &window,
+        "500",
+        "300",
+        "keydown",
+        "ctrl",
+        "click",
+        "4",
+        "keyup",
+        "ctrl",
+    ]);
+    wait_grid(&|size| size.0 < original.0);
+    xdo(&["key", "ctrl+0"]);
+    wait_grid(&|size| size == original);
+    xdo(&["keydown", "ctrl", "click", "5", "keyup", "ctrl"]);
+    wait_grid(&|size| size.0 > original.0);
+    xdo(&["key", "ctrl+0"]);
+    wait_grid(&|size| size == original);
+    xdo(&["click", "4"]);
+    assert_eq!(grid(), original, "ordinary scrolling must not zoom");
+    e.stop(app);
+}
+
+#[test]
 fn stress_many_panes_and_heavy_output() {
     if !have_display() {
         return;

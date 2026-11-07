@@ -73,6 +73,7 @@ pub const METHODS: &[&str] = &[
     "pane.read",
     "notify",
     "agent.event",
+    "agent.usage",
     "notification.list",
     "notification.clear",
     "notification.jump",
@@ -214,9 +215,16 @@ fn handle_conn(stream: UnixStream, tx: async_channel::Sender<Call>) {
 // ---- client -----------------------------------------------------------------
 
 pub fn call_at(path: &Path, method: &str, params: Value) -> Result<Value, String> {
+    call_at_with_timeout(path, method, params, Duration::from_secs(15))
+}
+
+/// A short deadline lets optional status-line updates fail without delaying
+/// the user's existing status-line command when the app is busy.
+pub fn call_at_with_timeout(path: &Path, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
     let mut s =
         UnixStream::connect(path).map_err(|e| format!("cannot connect to cmux-linux at {} ({e}). Is the app running?", path.display()))?;
-    s.set_read_timeout(Some(Duration::from_secs(15))).ok();
+    s.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+    s.set_write_timeout(Some(timeout)).map_err(|e| e.to_string())?;
     let req = Request {
         id: 1,
         method: method.into(),

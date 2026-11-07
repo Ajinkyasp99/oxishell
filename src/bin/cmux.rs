@@ -67,6 +67,12 @@ enum Cmd {
         marker: Option<String>,
         payload: Option<String>,
     },
+    /// Forward Claude status-line usage to the sidebar; silent outside cmux-linux.
+    AgentUsage {
+        /// Existing status-line command to run with the original stdin and output
+        #[arg(long)]
+        forward_command: Option<String>,
+    },
     /// Install or remove agent notification hooks
     #[command(subcommand)]
     Hooks(HooksCmd),
@@ -244,6 +250,38 @@ fn main() -> ExitCode {
             NotifCmd::Clear => call("notification.clear", json!({})),
             NotifCmd::Jump => call("notification.jump", json!({})),
         },
+        Cmd::AgentUsage { forward_command } => {
+            let mut input = Vec::new();
+            if !std::io::stdin().is_terminal() {
+                let _ = std::io::stdin().take(1 << 20).read_to_end(&mut input);
+            }
+            if let Some(pane) = env_pane() {
+                if let Ok(payload) = serde_json::from_slice::<Value>(&input) {
+                    // Only quota fields leave this process, never transcript/context data.
+                    let _ = ipc::call_at_with_timeout(
+                        &socket,
+                        "agent.usage",
+                        json!({"pane": pane, "rate_limits": payload.get("rate_limits")}),
+                        std::time::Duration::from_millis(250),
+                    );
+                }
+            }
+            if let Some(command) = forward_command {
+                use std::io::Write;
+                use std::process::{Command, Stdio};
+                if let Ok(mut child) = Command::new("/bin/sh").args(["-c", &command]).stdin(Stdio::piped()).spawn() {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let _ = stdin.write_all(&input);
+                    }
+                    return match child.wait() {
+                        Ok(status) => ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8),
+                        Err(_) => ExitCode::FAILURE,
+                    };
+                }
+                return ExitCode::FAILURE;
+            }
+            return ExitCode::SUCCESS;
+        }
         Cmd::AgentEvent {
             agent,
             state,

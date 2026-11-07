@@ -101,7 +101,7 @@ impl Default for Appearance {
         Self {
             mode: "system".into(),
             theme: "default".into(),
-            font: "Monospace 11".into(),
+            font: "Hack 11".into(),
             sidebar_width: 230,
             sidebar_visible: true,
             chips: true,
@@ -183,7 +183,11 @@ impl Config {
 
     /// Parse TOML text and validate semantic constraints.
     pub fn parse(text: &str) -> Result<Config, String> {
-        let cfg: Config = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut cfg: Config = toml::from_str(text).map_err(|e| e.to_string())?;
+        // Move existing installations off the previous default typeface.
+        if cfg.appearance.font == "Monospace 11" {
+            cfg.appearance.font = Appearance::default().font;
+        }
         cfg.validate()?;
         Ok(cfg)
     }
@@ -356,5 +360,18 @@ mod tests {
         let conflicts = c.shortcut_conflicts();
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].1, vec!["split-right".to_string(), "split-down".to_string()]);
+    }
+
+    #[test]
+    fn hack_replaces_the_old_default_but_preserves_other_fonts() {
+        assert_eq!(Config::default().appearance.font, "Hack 11");
+        assert_eq!(
+            Config::parse("[appearance]\nfont = 'Monospace 11'").unwrap().appearance.font,
+            "Hack 11"
+        );
+        for font in ["JetBrains Mono 12", "Monospace 14"] {
+            let text = format!("[appearance]\nfont = '{font}'");
+            assert_eq!(Config::parse(&text).unwrap().appearance.font, font);
+        }
     }
 }
