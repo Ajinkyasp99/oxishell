@@ -12,9 +12,17 @@ pub struct Footer {
     pub root: gtk4::Box,
     pub claude: RefCell<ClaudeReports>,
     codex: RefCell<Option<Usage>>,
-    tx: std::sync::mpsc::SyncSender<()>,
+    /// Wake the reader thread: (Codex active, Claude active).
+    tx: std::sync::mpsc::SyncSender<(bool, bool)>,
     codex_row: UsageRow,
     claude_row: UsageRow,
+}
+
+/// What the background thread reads from disk.
+pub struct Polled {
+    codex: Option<Usage>,
+    /// Claude Code's own cached usage: (fetched at, usage).
+    claude_cache: Option<(i64, Usage)>,
 }
 
 #[derive(PartialEq)]
@@ -157,7 +165,7 @@ impl UsageRow {
 }
 
 impl Footer {
-    pub fn new() -> (Self, async_channel::Receiver<Option<Usage>>) {
+    pub fn new() -> (Self, async_channel::Receiver<Polled>) {
         let root = gtk4::Box::new(Orientation::Vertical, 2);
         root.add_css_class("usage-footer");
         root.set_visible(false);
@@ -173,12 +181,27 @@ impl Footer {
             .spawn(move || {
                 let mut last = None;
                 let mut cached = None;
-                while rx.recv().is_ok() {
-                    if last.is_none_or(|t: Instant| t.elapsed() >= Duration::from_secs(15)) {
+                let claude_file = crate::usage::claude_config_file();
+                let mut claude_mtime = None;
+                let mut claude_cache = None;
+                while let Ok((codex, claude)) = rx.recv() {
+                    if codex && last.is_none_or(|t: Instant| t.elapsed() >= Duration::from_secs(15)) {
                         cached = crate::usage::read_codex(&crate::usage::codex_home());
                         last = Some(Instant::now());
                     }
-                    if utx.send_blocking(cached.clone()).is_err() {
+                    if claude {
+                        // Re-read only when Claude Code rewrote its config.
+                        let m = std::fs::metadata(&claude_file).and_then(|m| m.modified()).ok();
+                        if m != claude_mtime {
+                            claude_mtime = m;
+                            claude_cache = crate::usage::read_claude_cache(&claude_file);
+                        }
+                    }
+                    let polled = Polled {
+                        codex: cached.clone(),
+                        claude_cache: claude_cache.clone(),
+                    };
+                    if utx.send_blocking(polled).is_err() {
                         break;
                     }
                 }
@@ -224,12 +247,15 @@ fn active(app: &AppRc) -> (bool, bool) {
     (codex, claude)
 }
 
-pub fn attach(app: &AppRc, rx: async_channel::Receiver<Option<Usage>>) {
+pub fn attach(app: &AppRc, rx: async_channel::Receiver<Polled>) {
     let w = app.weak();
     glib::spawn_future_local(async move {
-        while let Ok(usage) = rx.recv().await {
+        while let Ok(polled) = rx.recv().await {
             let Some(a) = w.upgrade() else { return };
-            *a.usage_footer.codex.borrow_mut() = usage;
+            *a.usage_footer.codex.borrow_mut() = polled.codex;
+            if let Some((fetched_at, usage)) = polled.claude_cache {
+                a.usage_footer.claude.borrow_mut().merge_cache(fetched_at, usage);
+            }
             render(&a);
         }
     });
@@ -247,8 +273,9 @@ pub fn refresh(app: &AppRc) {
         .claude
         .borrow_mut()
         .retain_panes(|pane| app.inner.borrow().panes.contains_key(&pane));
-    if active(app).0 {
-        let _ = app.usage_footer.tx.try_send(());
+    let (codex, claude) = active(app);
+    if codex || claude {
+        let _ = app.usage_footer.tx.try_send((codex, claude));
     }
     render(app);
 }
@@ -298,7 +325,7 @@ fn card(root: &gtk4::Box, name: &str, usage: Option<&Usage>, claude: bool, now: 
         l.set_selectable(true);
         l.set_ellipsize(gtk4::pango::EllipsizeMode::None);
         l.set_tooltip_text(Some(if claude {
-            "Run cmux hooks install claude, then restart Claude. Subscription limits appear after its first response. API-key sessions may not report quotas."
+            "Run cmux hooks install claude, then restart Claude. Limits come from Claude Code's cached usage, and live from its status line after each response. API-key sessions may not report quotas."
         } else {
             "Limits are read from local Codex session logs after a response. API-key sessions may not report subscription quotas."
         }));

@@ -23,6 +23,8 @@ pub struct Usage {
 #[derive(Default)]
 pub struct ClaudeReports {
     pub latest: Usage,
+    /// When `latest` was observed (unix seconds); 0 = never.
+    latest_at: i64,
     reports: std::collections::HashMap<crate::model::PaneId, Usage>,
 }
 
@@ -33,8 +35,19 @@ impl ClaudeReports {
         }
         if usage != Usage::default() {
             self.latest = usage.clone();
+            self.latest_at = now();
         }
         self.reports.insert(pane, usage);
+    }
+
+    /// Claude Code's own usage cache (see [`read_claude_cache`]): used when it
+    /// is newer than any status-line report, e.g. right after a session starts
+    /// and before its first response, or after cmux-linux restarts.
+    pub fn merge_cache(&mut self, fetched_at: i64, usage: Usage) {
+        if usage != Usage::default() && fetched_at > self.latest_at {
+            self.latest = usage;
+            self.latest_at = fetched_at;
+        }
     }
 
     pub fn retain_panes(&mut self, mut exists: impl FnMut(crate::model::PaneId) -> bool) {
@@ -76,6 +89,80 @@ fn codex(limits: &Value) -> Option<Usage> {
         }
     }
     (usage != Usage::default()).then_some(usage)
+}
+
+/// Claude Code's global config file (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`).
+pub fn claude_config_file() -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|v| !v.is_empty())
+        .map(|d| PathBuf::from(d).join(".claude.json"))
+        .unwrap_or_else(|| crate::paths::home().join(".claude.json"))
+}
+
+/// Claude Code caches the subscription usage it last fetched in its config
+/// file (`cachedUsageUtilization`: `utilization` percentages, ISO `resets_at`
+/// times and `fetchedAtMs`). Status lines only carry `rate_limits` after a
+/// session's first response, so this is what can be shown before that.
+/// Only these fields are read. Returns (fetched at, unix seconds; usage).
+pub fn read_claude_cache(path: &Path) -> Option<(i64, Usage)> {
+    let text = std::fs::read(path).ok()?;
+    let config: Value = serde_json::from_slice(&text).ok()?;
+    parse_claude_cache(&config["cachedUsageUtilization"])
+}
+
+pub fn parse_claude_cache(cache: &Value) -> Option<(i64, Usage)> {
+    let fetched_at = cache.get("fetchedAtMs")?.as_f64()? as i64 / 1000;
+    let windows = &cache["utilization"];
+    let window = |key: &str| {
+        let w = &windows[key];
+        let used_percent = w.get("utilization")?.as_f64()?;
+        if !used_percent.is_finite() || !(0.0..=100.0).contains(&used_percent) {
+            return None;
+        }
+        Some(Window {
+            used_percent,
+            resets_at: w.get("resets_at").and_then(Value::as_str).and_then(parse_iso8601),
+        })
+    };
+    let usage = Usage {
+        five_hour: window("five_hour"),
+        weekly: window("seven_day"),
+    };
+    (usage != Usage::default()).then_some((fetched_at, usage))
+}
+
+/// `2026-11-07T16:00:00.175985+00:00` (or `…Z`) → unix seconds.
+pub fn parse_iso8601(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let num = |a: usize, b: usize| s.get(a..b)?.parse::<i64>().ok();
+    if s.len() < 19 || &s[4..5] != "-" || &s[7..8] != "-" || !matches!(&s[10..11], "T" | " ") {
+        return None;
+    }
+    let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+    let (h, mi, sec) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    // Skip fractional seconds, then read the zone.
+    let rest = s[19..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    let offset = match rest {
+        "" | "Z" | "z" => 0,
+        z if (z.starts_with('+') || z.starts_with('-')) && z.len() >= 6 => {
+            let sign = if z.starts_with('-') { -1 } else { 1 };
+            let oh: i64 = z.get(1..3)?.parse().ok()?;
+            let om: i64 = z.get(4..6)?.parse().ok()?;
+            sign * (oh * 3600 + om * 60)
+        }
+        _ => return None,
+    };
+    // Days since 1970-01-01 (Howard Hinnant's days_from_civil).
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + h * 3600 + mi * 60 + sec - offset)
 }
 
 pub fn codex_home() -> PathBuf {
@@ -214,6 +301,42 @@ mod tests {
         assert_eq!(reports.latest, new);
         reports.retain_panes(|pane| pane == 2);
         assert_eq!(reports.reports.len(), 1);
+    }
+
+    #[test]
+    fn parses_iso8601_times() {
+        assert_eq!(parse_iso8601("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_iso8601("2026-11-07T16:00:00.175985+00:00"), Some(1_794_067_200));
+        assert_eq!(parse_iso8601("2026-11-07T21:30:00+05:30"), Some(1_794_067_200));
+        assert_eq!(parse_iso8601("2024-02-29T12:00:00Z"), Some(1_709_208_000));
+        assert_eq!(parse_iso8601("2026-13-07T16:00:00Z"), None);
+        assert_eq!(parse_iso8601("not a date"), None);
+    }
+
+    #[test]
+    fn claude_cache_fills_in_until_a_newer_status_line_report() {
+        let cache = json!({"fetchedAtMs": 1_794_050_636_467_i64, "accountUuid": "x", "utilization": {
+            "five_hour": {"utilization": 7, "resets_at": "2026-11-07T16:00:00.175985+00:00"},
+            "seven_day": {"utilization": 51, "resets_at": "2026-11-09T20:00:00.176003+00:00"},
+            "seven_day_opus": null
+        }});
+        let (fetched, usage) = parse_claude_cache(&cache).unwrap();
+        assert_eq!(fetched, 1_794_050_636);
+        assert_eq!(usage.five_hour.as_ref().unwrap().used_percent, 7.0);
+        assert_eq!(usage.five_hour.as_ref().unwrap().resets_at, Some(1_794_067_200));
+        assert_eq!(usage.weekly.as_ref().unwrap().used_percent, 51.0);
+        assert!(parse_claude_cache(&json!({})).is_none());
+        assert!(parse_claude_cache(&json!({"fetchedAtMs": 1, "utilization": {}})).is_none());
+
+        let mut reports = ClaudeReports::default();
+        reports.merge_cache(fetched, usage.clone());
+        assert_eq!(reports.latest, usage, "shown before any status-line report");
+        // A live report replaces it; an older cache never overrides a live report.
+        let live = claude(&json!({"rate_limits": {"five_hour": {"used_percentage": 9}}}));
+        reports.update(1, live.clone());
+        assert_eq!(reports.latest, live);
+        reports.merge_cache(fetched, usage);
+        assert_eq!(reports.latest, live);
     }
 
     #[test]

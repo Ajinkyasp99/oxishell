@@ -1,6 +1,7 @@
 //! Command history for suggestions: reads bash, zsh and fish history files,
 //! newest first, de-duplicated; plus commands typed in cmux-linux this session.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub const MAX_ENTRIES: usize = 20_000;
@@ -9,6 +10,36 @@ pub const MAX_ENTRIES: usize = 20_000;
 pub struct History {
     /// Newest first, unique.
     entries: Vec<String>,
+    /// When each command was last run (unix seconds), when known: from
+    /// timestamped history files and from commands typed in cmux-linux.
+    times: HashMap<String, i64>,
+}
+
+/// A command and when it ran (unix seconds), if the history file says.
+pub type Timed = (String, Option<i64>);
+
+pub fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// "just now", "5 min ago", "3 h ago", "yesterday", "2 days ago", "4 weeks ago".
+pub fn relative_time(then: i64, now: i64) -> String {
+    let d = (now - then).max(0);
+    match d {
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{} min ago", d / 60),
+        3600..=86_399 => format!("{} h ago", d / 3600),
+        86_400..=172_799 => "yesterday".into(),
+        172_800..=1_209_599 => format!("{} days ago", d / 86_400),
+        _ => format!("{} weeks ago", d / 604_800),
+    }
+}
+
+fn untimed(v: Vec<Timed>) -> Vec<String> {
+    v.into_iter().map(|(c, _)| c).collect()
 }
 
 fn clean(cmd: &str) -> Option<String> {
@@ -21,19 +52,40 @@ fn clean(cmd: &str) -> Option<String> {
 
 /// bash: one command per line; `#<timestamp>` lines (HISTTIMEFORMAT) are skipped.
 pub fn parse_bash(text: &str) -> Vec<String> {
-    text.lines()
-        .filter(|l| !(l.starts_with('#') && l[1..].chars().all(|c| c.is_ascii_digit()) && l.len() > 1))
-        .filter_map(clean)
-        .collect()
+    untimed(parse_bash_timed(text))
+}
+
+/// bash, with a `#<timestamp>` line (written when HISTTIMEFORMAT is set)
+/// attached to the command after it.
+pub fn parse_bash_timed(text: &str) -> Vec<Timed> {
+    let mut out = Vec::new();
+    let mut ts = None;
+    for l in text.lines() {
+        if l.len() > 1 && l.starts_with('#') && l[1..].chars().all(|c| c.is_ascii_digit()) {
+            ts = l[1..].parse().ok();
+            continue;
+        }
+        if let Some(c) = clean(l) {
+            out.push((c, ts.take()));
+        }
+    }
+    out
 }
 
 /// zsh: plain lines or extended `: <time>:<dur>;<cmd>`; trailing `\` joins lines.
 pub fn parse_zsh(text: &str) -> Vec<String> {
+    untimed(parse_zsh_timed(text))
+}
+
+pub fn parse_zsh_timed(text: &str) -> Vec<Timed> {
     let mut out = Vec::new();
     let mut cur = String::new();
+    let mut ts = None;
     for line in text.lines() {
         let body = if cur.is_empty() && line.starts_with(": ") {
-            line.split_once(';').map(|(_, c)| c).unwrap_or("")
+            let (head, cmd) = line.split_once(';').unwrap_or((line, ""));
+            ts = head[2..].split(':').next().and_then(|t| t.trim().parse().ok());
+            cmd
         } else {
             line
         };
@@ -46,9 +98,10 @@ pub fn parse_zsh(text: &str) -> Vec<String> {
         // Multi-line commands are not useful as single-line suggestions.
         if !cur.contains('\n') {
             if let Some(c) = clean(&cur) {
-                out.push(c);
+                out.push((c, ts));
             }
         }
+        ts = None;
         cur.clear();
     }
     out
@@ -56,20 +109,45 @@ pub fn parse_zsh(text: &str) -> Vec<String> {
 
 /// fish: YAML-like `- cmd: <command>` entries with `\\` and `\n` escapes.
 pub fn parse_fish(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|l| l.strip_prefix("- cmd: "))
-        .filter(|c| !c.contains("\\n"))
-        .filter_map(|c| clean(&c.replace("\\\\", "\\")))
-        .collect()
+    untimed(parse_fish_timed(text))
+}
+
+/// fish, with each entry's `when: <timestamp>` line.
+pub fn parse_fish_timed(text: &str) -> Vec<Timed> {
+    let mut out: Vec<Timed> = Vec::new();
+    let mut last_kept = false;
+    for l in text.lines() {
+        if let Some(c) = l.strip_prefix("- cmd: ") {
+            last_kept = false;
+            if c.contains("\\n") {
+                continue;
+            }
+            if let Some(c) = clean(&c.replace("\\\\", "\\")) {
+                out.push((c, None));
+                last_kept = true;
+            }
+        } else if let Some(w) = l.trim_start().strip_prefix("when: ") {
+            if last_kept {
+                if let Some(e) = out.last_mut() {
+                    e.1 = w.trim().parse().ok();
+                }
+            }
+        }
+    }
+    out
 }
 
 impl History {
     /// Build from oldest→newest command lists (later lists are newer).
     pub fn from_oldest(lists: Vec<Vec<String>>) -> History {
+        History::from_oldest_timed(lists.into_iter().map(|l| l.into_iter().map(|c| (c, None)).collect()).collect())
+    }
+
+    pub fn from_oldest_timed(lists: Vec<Vec<Timed>>) -> History {
         let mut h = History::default();
         for list in lists {
-            for c in list {
-                h.push(&c);
+            for (c, t) in list {
+                h.push_at(&c, t);
             }
         }
         h
@@ -90,15 +168,37 @@ impl History {
         let bash = histfile.unwrap_or_else(|| home.join(".bash_history"));
         let zsh = home.join(".zsh_history");
         let fish = data_home.unwrap_or_else(|| home.join(".local/share")).join("fish/fish_history");
-        History::from_oldest(vec![parse_fish(&read(fish)), parse_zsh(&read(zsh)), parse_bash(&read(bash))])
+        History::from_oldest_timed(vec![
+            parse_fish_timed(&read(fish)),
+            parse_zsh_timed(&read(zsh)),
+            parse_bash_timed(&read(bash)),
+        ])
     }
 
-    /// Record a command as the newest entry.
+    /// Record a command run now as the newest entry.
     pub fn push(&mut self, cmd: &str) {
+        self.push_at(cmd, Some(now_secs()));
+    }
+
+    /// Record a command as the newest entry, run at `time` if known.
+    pub fn push_at(&mut self, cmd: &str, time: Option<i64>) {
         let Some(c) = clean(cmd) else { return };
         self.entries.retain(|e| *e != c);
+        match time {
+            Some(t) => self.times.insert(c.clone(), t),
+            None => self.times.remove(&c),
+        };
         self.entries.insert(0, c);
-        self.entries.truncate(MAX_ENTRIES);
+        if self.entries.len() > MAX_ENTRIES {
+            for old in self.entries.drain(MAX_ENTRIES..) {
+                self.times.remove(&old);
+            }
+        }
+    }
+
+    /// When `cmd` was last run (unix seconds), if known.
+    pub fn time_of(&self, cmd: &str) -> Option<i64> {
+        self.times.get(cmd).copied()
     }
 
     pub fn len(&self) -> usize {
@@ -226,6 +326,40 @@ mod tests {
             parse_fish("- cmd: cargo build\n  when: 1\n- cmd: echo a\\nb\n"),
             vec!["cargo build"]
         );
+    }
+
+    #[test]
+    fn parses_timestamps() {
+        let t = |c: &str, ts: Option<i64>| (c.to_string(), ts);
+        assert_eq!(
+            parse_bash_timed("#1700000000\ngit status\nls\n"),
+            vec![t("git status", Some(1_700_000_000)), t("ls", None)]
+        );
+        assert_eq!(
+            parse_zsh_timed(": 1700000100:0;git push\nls\n"),
+            vec![t("git push", Some(1_700_000_100)), t("ls", None)]
+        );
+        assert_eq!(
+            parse_fish_timed("- cmd: cargo build\n  when: 1700000200\n- cmd: ls\n"),
+            vec![t("cargo build", Some(1_700_000_200)), t("ls", None)]
+        );
+        let mut h = History::from_oldest_timed(vec![parse_bash_timed("#100\nmake\n")]);
+        assert_eq!(h.time_of("make"), Some(100));
+        h.push("make");
+        assert!(h.time_of("make").unwrap() > 100, "re-running refreshes the time");
+        h.push_at("make", None);
+        assert_eq!(h.time_of("make"), None);
+    }
+
+    #[test]
+    fn relative_times() {
+        assert_eq!(relative_time(1000, 1030), "just now");
+        assert_eq!(relative_time(0, 19 * 60 + 5), "19 min ago");
+        assert_eq!(relative_time(0, 3 * 3600), "3 h ago");
+        assert_eq!(relative_time(0, 90_000), "yesterday");
+        assert_eq!(relative_time(0, 3 * 86_400), "3 days ago");
+        assert_eq!(relative_time(0, 30 * 86_400), "4 weeks ago");
+        assert_eq!(relative_time(10, 0), "just now", "clock skew is never negative");
     }
 
     #[test]

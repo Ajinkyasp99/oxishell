@@ -49,6 +49,70 @@ impl Rgb {
     pub fn rgba(&self, a: f64) -> String {
         format!("rgba({},{},{},{a:.3})", self.0, self.1, self.2)
     }
+    /// max − min channel, 0..1: how much colour (vs. grey) there is.
+    pub fn chroma(&self) -> f64 {
+        let mx = self.0.max(self.1).max(self.2) as f64;
+        let mn = self.0.min(self.1).min(self.2) as f64;
+        (mx - mn) / 255.0
+    }
+    /// (hue 0..360, saturation 0..1, lightness 0..1)
+    pub fn to_hsl(&self) -> (f64, f64, f64) {
+        let (r, g, b) = (self.0 as f64 / 255.0, self.1 as f64 / 255.0, self.2 as f64 / 255.0);
+        let mx = r.max(g).max(b);
+        let mn = r.min(g).min(b);
+        let l = (mx + mn) / 2.0;
+        let d = mx - mn;
+        if d == 0.0 {
+            return (0.0, 0.0, l);
+        }
+        let s = d / (1.0 - (2.0 * l - 1.0).abs());
+        let h = if mx == r {
+            60.0 * (((g - b) / d).rem_euclid(6.0))
+        } else if mx == g {
+            60.0 * ((b - r) / d + 2.0)
+        } else {
+            60.0 * ((r - g) / d + 4.0)
+        };
+        (h, s.min(1.0), l)
+    }
+    pub fn from_hsl(h: f64, s: f64, l: f64) -> Rgb {
+        let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+        let hp = h.rem_euclid(360.0) / 60.0;
+        let x = c * (1.0 - (hp.rem_euclid(2.0) - 1.0).abs());
+        let (r, g, b) = match hp as u32 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+        let m = l - c / 2.0;
+        let v = |t: f64| ((t + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+        Rgb(v(r), v(g), v(b))
+    }
+}
+
+/// Standard hue of each ANSI slot (black and white are never changed).
+const SLOT_HUE: [f64; 8] = [0.0, 0.0, 120.0, 50.0, 215.0, 300.0, 180.0, 0.0];
+/// Below this chroma an ANSI colour reads as "almost white/grey".
+const WASHED_OUT: f64 = 0.42;
+
+/// Make washed-out (pastel, near-white) colour slots readable as real colours:
+/// they get the slot's standard hue at a saturation and lightness that stand
+/// out from the foreground. Colours that are already vivid are kept.
+pub fn vivid(c: Rgb, slot: usize, bright: bool, dark_bg: bool) -> Rgb {
+    if slot == 0 || slot == 7 || c.chroma() >= WASHED_OUT {
+        return c;
+    }
+    let (_, s, l) = c.to_hsl();
+    let (s_min, lo, hi) = match (dark_bg, bright) {
+        (true, false) => (0.70, 0.50, 0.64),
+        (true, true) => (0.80, 0.60, 0.74),
+        (false, false) => (0.65, 0.30, 0.42),
+        (false, true) => (0.70, 0.38, 0.50),
+    };
+    Rgb::from_hsl(SLOT_HUE[slot], s.max(s_min), l.clamp(lo, hi))
 }
 
 const BLACK: Rgb = Rgb(0, 0, 0);
@@ -286,6 +350,18 @@ impl Theme {
         self.background.average().luminance() < 0.4
     }
 
+    /// The 16 ANSI colours with washed-out slots made vivid (see [`vivid`]).
+    pub fn vivid_palette(&self) -> ([Rgb; 8], [Rgb; 8]) {
+        let dark = self.background.average().luminance() < self.foreground.luminance();
+        let mut n = self.normal;
+        let mut b = self.bright;
+        for i in 0..8 {
+            n[i] = vivid(n[i], i, false, dark);
+            b[i] = vivid(b[i], i, true, dark);
+        }
+        (n, b)
+    }
+
     /// True when the terminal must be transparent so a gradient/image behind it shows.
     pub fn layered_background(&self) -> bool {
         matches!(self.background, Paint::Gradient(..)) || self.background_image.is_some()
@@ -397,6 +473,49 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hsl_round_trip() {
+        for c in [
+            Rgb(255, 130, 114),
+            Rgb(0, 0, 0),
+            Rgb(254, 253, 194),
+            Rgb(18, 52, 86),
+            Rgb(255, 255, 255),
+        ] {
+            let (h, s, l) = c.to_hsl();
+            let back = Rgb::from_hsl(h, s, l);
+            let near = |a: u8, b: u8| (a as i32 - b as i32).abs() <= 1;
+            assert!(near(c.0, back.0) && near(c.1, back.1) && near(c.2, back.2), "{c:?} -> {back:?}");
+        }
+    }
+
+    #[test]
+    fn vivid_palette_fixes_pastel_slots_only() {
+        let t = builtins().iter().find(|t| t.id == "cyber_wave").unwrap();
+        let (n, b) = t.vivid_palette();
+        // Pastel yellow/blue/cyan (#fefdc2, #a5d5fe, #d0d1fe) become real colours.
+        for i in [3, 4, 6] {
+            assert!(n[i].chroma() >= 0.5, "slot {i}: {:?}", n[i]);
+            assert!(n[i] != t.normal[i]);
+        }
+        for (i, c) in b.iter().enumerate().take(7).skip(1) {
+            assert!(c.chroma() >= 0.4, "bright slot {i}: {c:?}");
+        }
+        // Already-vivid colours and black/white are untouched.
+        assert_eq!(n[1], t.normal[1]);
+        assert_eq!(n[0], t.normal[0]);
+        assert_eq!(n[7], t.normal[7]);
+        // Cyan and blue stay distinguishable.
+        let (hc, _, _) = n[6].to_hsl();
+        let (hb, _, _) = n[4].to_hsl();
+        assert!((hc - hb).abs() > 20.0);
+        // Strong Tango colours are unchanged.
+        let d = default_theme(true);
+        for i in [1, 2, 3, 4, 6] {
+            assert_eq!(d.vivid_palette().0[i], d.normal[i]);
+        }
+    }
 
     #[test]
     fn every_bundled_theme_parses() {

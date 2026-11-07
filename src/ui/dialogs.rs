@@ -2,7 +2,7 @@
 //! notifications panel, shortcuts help and about.
 
 use super::AppRc;
-use crate::config::{CustomCommand, DEFAULT_SHORTCUTS};
+use crate::config::{Config, CustomCommand, DEFAULT_SHORTCUTS};
 use crate::model::{PaneId, WorkspaceId};
 use gtk4::prelude::*;
 use gtk4::{glib, Orientation};
@@ -507,6 +507,32 @@ pub fn settings(app: &AppRc) {
         .active(cfg.terminal.compact_prompt)
         .build();
     tg.add(&compact);
+    let highlight = adw::SwitchRow::builder()
+        .title("Highlight typed commands")
+        .subtitle("With the compact prompt, commands you type are bold cyan so they stand apart from output. Applies to new terminals")
+        .active(cfg.terminal.highlight_commands)
+        .build();
+    tg.add(&highlight);
+    let vivid = adw::SwitchRow::builder()
+        .title("Vivid output colours")
+        .subtitle("Turn pastel, near-white theme colours into vivid ones so git, ls, grep and compiler output stands out")
+        .active(cfg.terminal.vivid_colors)
+        .build();
+    tg.add(&vivid);
+    let hist_panel = adw::SwitchRow::builder()
+        .title("History panel on ↑")
+        .subtitle("Press ↑ at the prompt to pick from recent commands; Enter runs, Tab inserts, Esc closes")
+        .active(cfg.terminal.history_panel)
+        .build();
+    tg.add(&hist_panel);
+    let blocks = adw::SwitchRow::builder()
+        .title("Command blocks")
+        .subtitle(
+            "Separate every command with a line and a header showing folder, branch, exit status and duration. Applies to new terminals",
+        )
+        .active(cfg.terminal.command_blocks)
+        .build();
+    tg.add(&blocks);
     let shapes = ["block", "ibeam", "underline"];
     let cursor = adw::ComboRow::builder()
         .title("Cursor shape")
@@ -687,6 +713,21 @@ pub fn settings(app: &AppRc) {
         compact.connect_active_notify(move |r| {
             let v = r.is_active();
             ap(&move |c| c.terminal.compact_prompt = v);
+        });
+    }
+    for (row, set) in [
+        (
+            &highlight,
+            (|c: &mut Config, v: bool| c.terminal.highlight_commands = v) as fn(&mut Config, bool),
+        ),
+        (&vivid, |c: &mut Config, v: bool| c.terminal.vivid_colors = v),
+        (&hist_panel, |c: &mut Config, v: bool| c.terminal.history_panel = v),
+        (&blocks, |c: &mut Config, v: bool| c.terminal.command_blocks = v),
+    ] {
+        let ap = apply.clone();
+        row.connect_active_notify(move |r| {
+            let v = r.is_active();
+            ap(&move |c| set(c, v));
         });
     }
     {

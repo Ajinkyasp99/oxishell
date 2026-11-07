@@ -24,11 +24,19 @@ pub fn env_file(pane: crate::model::PaneId) -> PathBuf {
 /// It remembers the last exit status, reports the active Python/conda env for
 /// the chips (`${var##*/}` keeps the venv's folder name) and, with
 /// `CMUX_COMPACT_PROMPT=1`, sets the prompt to `❯` (green, or red after a
-/// failed command).
+/// failed command). With `CMUX_HIGHLIGHT_CMD=1` as well, the typed command is
+/// bold cyan and `PS0` resets the colour before the command's output. With
+/// `CMUX_BLOCKS=1` the prompt starts with an empty row, where cmux-linux draws
+/// the command block's separator and header.
+///
+/// The env file's third line is the last exit status: its modification time
+/// tells cmux-linux when a command finished, and the status how.
 pub const BASH_PROMPT_COMMAND: &str = concat!(
     r#"__cmux_status=$?; "#,
-    r#"[ -n "$CMUX_ENV_FILE" ] && builtin printf '%s\n%s\n' "${VIRTUAL_ENV##*/}" "$CONDA_DEFAULT_ENV" >| "$CMUX_ENV_FILE" 2>/dev/null; "#,
-    r#"if [ "$CMUX_COMPACT_PROMPT" = 1 ]; then if [ "$__cmux_status" = 0 ]; then PS1='\[\e[1;32m\]❯\[\e[0m\] '; else PS1='\[\e[1;31m\]❯\[\e[0m\] '; fi; fi"#
+    r#"[ -n "$CMUX_ENV_FILE" ] && builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV##*/}" "$CONDA_DEFAULT_ENV" "$__cmux_status" >| "$CMUX_ENV_FILE" 2>/dev/null; "#,
+    r#"if [ "$CMUX_COMPACT_PROMPT" = 1 ]; then if [ "$__cmux_status" = 0 ]; then PS1='\[\e[1;32m\]❯\[\e[0m\] '; else PS1='\[\e[1;31m\]❯\[\e[0m\] '; fi; "#,
+    r#"if [ "$CMUX_BLOCKS" = 1 ]; then PS1='\n'"$PS1"; fi; "#,
+    r#"if [ "$CMUX_HIGHLIGHT_CMD" = 1 ]; then PS1="$PS1"'\[\e[1;36m\]'; PS0='\e[0m'; fi; fi"#
 );
 
 pub fn snippet(shell: &str) -> Option<String> {
@@ -40,23 +48,29 @@ pub fn snippet(shell: &str) -> Option<String> {
         "zsh" => r#"# cmux-linux context chips and compact prompt — add to ~/.zshrc
 if [[ -n "$CMUX_ENV_FILE" ]]; then
   _cmux_precmd() {
-    builtin printf '%s\n%s\n' "${VIRTUAL_ENV:t}" "$CONDA_DEFAULT_ENV" >| "$CMUX_ENV_FILE" 2>/dev/null
+    local s=$?
+    builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV:t}" "$CONDA_DEFAULT_ENV" "$s" >| "$CMUX_ENV_FILE" 2>/dev/null
     [[ "$CMUX_COMPACT_PROMPT" == 1 ]] && PROMPT='%(?.%F{green}.%F{red})%B❯%b%f ' && RPROMPT=''
+    [[ "$CMUX_COMPACT_PROMPT" == 1 && "$CMUX_BLOCKS" == 1 ]] && PROMPT=$'\n'"$PROMPT"
   }
   autoload -Uz add-zsh-hook && add-zsh-hook precmd _cmux_precmd
+  # Typed command in bold cyan (zsh draws the input line itself).
+  [[ "$CMUX_COMPACT_PROMPT" == 1 && "$CMUX_HIGHLIGHT_CMD" == 1 ]] && zle_highlight=(default:fg=cyan,bold)
 fi
 "#
         .to_string(),
         "fish" => r#"# cmux-linux context chips and compact prompt — add to ~/.config/fish/config.fish
 if set -q CMUX_ENV_FILE
     function _cmux_report_env --on-event fish_prompt
+        set -l s $status
         set -l venv ''
         set -q VIRTUAL_ENV; and set venv (path basename $VIRTUAL_ENV)
-        printf '%s\n%s\n' $venv "$CONDA_DEFAULT_ENV" > $CMUX_ENV_FILE 2>/dev/null
+        printf '%s\n%s\n%s\n' "$venv" "$CONDA_DEFAULT_ENV" $s > $CMUX_ENV_FILE 2>/dev/null
     end
     if test "$CMUX_COMPACT_PROMPT" = 1
         function fish_prompt
             set -l s $status
+            test "$CMUX_BLOCKS" = 1; and printf '\n'
             if test $s -eq 0; set_color --bold green; else; set_color --bold red; end
             printf '❯ '
             set_color normal
@@ -85,6 +99,11 @@ pub fn parse_env_file(text: &str) -> Option<String> {
     (!clean.is_empty()).then_some(clean)
 }
 
+/// Exit status of the last command (third line of the env file).
+pub fn parse_status(text: &str) -> Option<i32> {
+    text.lines().nth(2)?.trim().parse().ok()
+}
+
 pub fn read_env(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     parse_env_file(&text)
@@ -106,6 +125,9 @@ mod tests {
         assert_eq!(parse_env_file("\n\n"), None);
         assert_eq!(parse_env_file(""), None);
         assert_eq!(parse_env_file("a\u{1b}b\n"), Some("ab".into()));
+        assert_eq!(parse_status("\n\n1\n"), Some(1));
+        assert_eq!(parse_status("venv\n\n0\n"), Some(0));
+        assert_eq!(parse_status("\n\n"), None);
     }
 
     #[test]
@@ -125,6 +147,16 @@ mod tests {
             .success();
         assert!(ok);
         assert_eq!(read_env(&file), Some("CommonVenv".into()));
+        // The last command's exit status is reported too.
+        let ok = std::process::Command::new("bash")
+            .args(["--norc", "--noprofile", "-c", "(exit 3); eval \"$PROMPT_COMMAND\""])
+            .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
+            .env("CMUX_ENV_FILE", &file)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        assert_eq!(parse_status(&std::fs::read_to_string(&file).unwrap()), Some(3));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -141,6 +173,8 @@ mod tests {
                 .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
                 .env("CMUX_COMPACT_PROMPT", "1")
                 .env_remove("CMUX_ENV_FILE")
+                .env_remove("CMUX_HIGHLIGHT_CMD")
+                .env_remove("CMUX_BLOCKS")
                 .output()
                 .unwrap();
             String::from_utf8(out.stdout).unwrap()
@@ -148,6 +182,35 @@ mod tests {
         let ok = run("true");
         assert!(ok.contains("1;32m") && ok.contains('❯'), "{ok}");
         assert!(run("false").contains("1;31m"), "red after a failed command");
+        // Highlighted command: PS1 ends in bold cyan and PS0 resets before output.
+        let out = std::process::Command::new("bash")
+            .args([
+                "--norc",
+                "--noprofile",
+                "-c",
+                "eval \"$PROMPT_COMMAND\"; printf '%s|%s' \"$PS1\" \"$PS0\"",
+            ])
+            .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
+            .env("CMUX_COMPACT_PROMPT", "1")
+            .env("CMUX_HIGHLIGHT_CMD", "1")
+            .env_remove("CMUX_ENV_FILE")
+            .output()
+            .unwrap();
+        let out = String::from_utf8(out.stdout).unwrap();
+        assert!(out.ends_with(r"\[\e[1;36m\]|\e[0m"), "{out}");
+        assert!(!ok.contains("36m"), "no highlight without the flag");
+        // Command blocks: an empty row above the prompt for the block header.
+        let out = std::process::Command::new("bash")
+            .args(["--norc", "--noprofile", "-c", "eval \"$PROMPT_COMMAND\"; printf %s \"$PS1\""])
+            .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
+            .env("CMUX_COMPACT_PROMPT", "1")
+            .env("CMUX_BLOCKS", "1")
+            .env_remove("CMUX_ENV_FILE")
+            .env_remove("CMUX_HIGHLIGHT_CMD")
+            .output()
+            .unwrap();
+        assert!(String::from_utf8(out.stdout).unwrap().starts_with("\\n\\[\\e[1;32m"));
+        assert!(!ok.starts_with("\\n"), "no spacer without the flag");
         // Without the flag the user's prompt is untouched.
         let out = std::process::Command::new("bash")
             .args([

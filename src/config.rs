@@ -53,6 +53,18 @@ pub struct Terminal {
     /// "block" (solid bar), "ibeam" (vertical line) or "underline" (horizontal line).
     pub cursor_shape: String,
     pub cursor_blink: bool,
+    /// Turn pastel/near-white ANSI colours of the theme into vivid ones so
+    /// coloured program output (git, ls, grep, compilers) stands out.
+    pub vivid_colors: bool,
+    /// Colour the command you type (and keep program output in the normal
+    /// colour) with the compact prompt. Applies to new terminals.
+    pub highlight_commands: bool,
+    /// Pressing ↑ at the shell prompt opens a history panel (Warp style),
+    /// filtered by what is already typed.
+    pub history_panel: bool,
+    /// Warp-style command blocks: a separator and a header (folder, branch,
+    /// exit status, duration) above every command. Applies to new terminals.
+    pub command_blocks: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -118,6 +130,10 @@ impl Default for Terminal {
             compact_prompt: true,
             cursor_shape: "block".into(),
             cursor_blink: true,
+            vivid_colors: true,
+            highlight_commands: true,
+            history_panel: true,
+            command_blocks: true,
         }
     }
 }
