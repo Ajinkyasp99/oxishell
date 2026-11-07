@@ -199,6 +199,26 @@
 .chip-glyph {
   font-weight: 800;
 }
+.chip .chip-copy {
+  min-width: 0;
+  min-height: 0;
+  padding: 1px 2px;
+  margin: 0 -5px 0 0;
+  color: inherit;
+  /* Hidden until the chip is hovered; opacity keeps the chip width stable. */
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.chip:hover .chip-copy {
+  opacity: 0.6;
+}
+.chip .chip-copy:hover,
+.chip .chip-copy.copied {
+  opacity: 1;
+}
+.chip .chip-copy image {
+  -gtk-icon-size: 11px;
+}
 .chip-env { color: @warning_color; }
 .chip-dir { color: @accent_color; }
 .chip-git { color: @success_color; }

@@ -210,14 +210,34 @@ impl App {
             .xalign(0.0)
             .ellipsize(gtk4::pango::EllipsizeMode::End)
             .build();
-        status.add_css_class("statusbar");
+        status.set_hexpand(true);
         status.add_css_class("dim-label");
+        // System CPU / memory usage, right-aligned in the status bar.
+        let sys_label = gtk4::Label::builder().xalign(1.0).build();
+        sys_label.add_css_class("dim-label");
+        sys_label.add_css_class("numeric");
+        let status_bar = gtk4::Box::new(Orientation::Horizontal, 12);
+        status_bar.add_css_class("statusbar");
+        status_bar.append(&status);
+        status_bar.append(&sys_label);
+        {
+            let mut sampler = crate::sysstat::Sampler::default();
+            sys_label.set_label(&sampler.sample());
+            let label = sys_label.downgrade();
+            glib::timeout_add_seconds_local(2, move || match label.upgrade() {
+                Some(l) => {
+                    l.set_label(&sampler.sample());
+                    glib::ControlFlow::Continue
+                }
+                None => glib::ControlFlow::Break,
+            });
+        }
 
         let root = gtk4::Box::new(Orientation::Vertical, 0);
         root.add_css_class("cmux-root");
         root.append(&header);
         root.append(&split);
-        root.append(&status);
+        root.append(&status_bar);
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&root));
 

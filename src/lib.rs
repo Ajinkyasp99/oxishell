@@ -11,6 +11,7 @@ pub mod notify;
 pub mod paths;
 pub mod session;
 pub mod shellint;
+pub mod sysstat;
 pub mod theme;
 mod theme_builtin;
 pub mod ui;
