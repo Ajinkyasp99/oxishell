@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.cmux.Linux</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>cmux</name>
+  <summary>Terminal workspaces and split panes for AI coding agents</summary>
+  <description>
+    <p>
+      A native GTK terminal for developers who run several shells and
+      terminal coding agents at once. Inspired by cmux for macOS.
+    </p>
+    <ul>
+      <li>Vertical workspace sidebar with git branch, working directory and listening ports</li>
+      <li>Nested horizontal and vertical split panes with keyboard navigation</li>
+      <li>Notification rings, unread badges and jump-to-unread for Claude Code, Codex, Gemini CLI, Qoder and OpenCode hooks</li>
+      <li>Command palette, configurable shortcuts, themes and fonts</li>
+      <li>CLI and local Unix-socket API for automation</li>
+      <li>Workspace and layout restoration, optional tmux-backed persistent sessions</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">dev.cmux.Linux.desktop</launchable>
+  <url type="homepage">https://github.com/manaflow-ai/cmux</url>
+  <developer id="dev.cmux">
+    <name>cmux-linux contributors</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>cmux-linux</binary>
+    <binary>cmux</binary>
+  </provides>
+  <categories>
+    <category>System</category>
+    <category>TerminalEmulator</category>
+  </categories>
+  <releases>
+    <release version="0.1.0" date="2026-11-07">
+      <description>
+        <p>First release: terminals, workspaces, splits, notifications, agent hooks, CLI, sessions.</p>
+      </description>
+    </release>
+  </releases>
+</component>

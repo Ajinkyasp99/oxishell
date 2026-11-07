@@ -1,0 +1,83 @@
+/* cmux-linux styling. Uses libadwaita named colors so light/dark both work. */
+
+.pane {
+  border: 2px solid transparent;
+  border-radius: 6px;
+  margin: 2px;
+}
+.pane.focused {
+  border-color: alpha(@accent_bg_color, 0.45);
+}
+/* Attention ring: an agent or program asked for the user. */
+.pane.attention {
+  border-color: #3584e4;
+  box-shadow: 0 0 0 1px #3584e4, 0 0 8px alpha(#3584e4, 0.6);
+}
+
+.sidebar-pane {
+  background-color: @sidebar_bg_color;
+}
+.sidebar-heading {
+  font-size: 0.75em;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+  margin: 10px 14px 4px 14px;
+}
+.ws-list {
+  background: transparent;
+}
+.ws-list > row {
+  border-radius: 8px;
+  margin: 2px 6px;
+  padding: 7px 9px;
+}
+.ws-list > row:selected {
+  background-color: alpha(@accent_bg_color, 0.18);
+  color: inherit;
+}
+.ws-name {
+  font-weight: 700;
+}
+.ws-sub {
+  font-size: 0.82em;
+  opacity: 0.7;
+}
+.ws-agent {
+  font-size: 0.82em;
+  color: @accent_color;
+}
+.ws-attention {
+  font-size: 0.82em;
+  color: #3584e4;
+  font-weight: 600;
+}
+.badge {
+  background-color: #3584e4;
+  color: white;
+  border-radius: 9px;
+  padding: 0 6px;
+  min-width: 10px;
+  font-size: 0.75em;
+  font-weight: 800;
+}
+
+.statusbar {
+  padding: 3px 12px;
+  font-size: 0.85em;
+  border-top: 1px solid alpha(currentColor, 0.1);
+}
+
+.palette-list > row {
+  padding: 6px 10px;
+}
+.palette-accel {
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+.notif-row {
+  padding: 6px 8px;
+}
+.notif-unread .ws-name {
+  color: #3584e4;
+}

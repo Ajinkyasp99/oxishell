@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
+            xvfb dbus-x11 git python3 dpkg-dev appstream desktop-file-utils
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --lib --bins
+      - name: End-to-end tests (real GTK app under Xvfb)
+        run: dbus-run-session -- xvfb-run -a cargo test --test e2e -- --test-threads=1
+        env:
+          GTK_A11Y: none
+      - name: Validate desktop metadata
+        run: |
+          desktop-file-validate data/dev.cmux.Linux.desktop
+          appstreamcli validate --no-net data/dev.cmux.Linux.metainfo.xml
+      - name: Build .deb
+        run: scripts/build-deb.sh
+      - name: Benchmark (informational)
+        run: dbus-run-session -- xvfb-run -a scripts/bench.sh | tee bench.txt
+        env:
+          GTK_A11Y: none
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmux-linux-deb
+          path: |
+            dist/*.deb
+            bench.txt

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=cmux
+GenericName=Terminal Workspace Manager
+Comment=Terminal workspaces and split panes for AI coding agents
+Exec=cmux-linux
+Icon=dev.cmux.Linux
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupWMClass=dev.cmux.Linux
+Keywords=terminal;shell;agent;

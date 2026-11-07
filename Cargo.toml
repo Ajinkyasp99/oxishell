@@ -1,0 +1,36 @@
+[package]
+name = "cmux-linux"
+version = "0.1.0"
+edition = "2021"
+description = "Native Linux terminal workspace manager for AI coding agents, inspired by cmux"
+license = "GPL-3.0-or-later"
+rust-version = "1.87"
+
+[lib]
+name = "cmux_linux"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cmux-linux"
+path = "src/main.rs"
+
+[[bin]]
+name = "cmux"
+path = "src/bin/cmux.rs"
+
+[dependencies]
+gtk4 = { version = "0.9", features = ["v4_14"] }
+libadwaita = { version = "0.7", features = ["v1_5"] }
+vte4 = { version = "0.8", features = ["v0_76"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+libc = "0.2"
+async-channel = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
