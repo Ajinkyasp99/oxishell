@@ -14,3 +14,4 @@ pub mod shellint;
 pub mod theme;
 mod theme_builtin;
 pub mod ui;
+pub mod usage;

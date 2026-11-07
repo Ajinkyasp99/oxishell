@@ -8,7 +8,7 @@ in the window and the app falls back to defaults instead of failing.
 [appearance]
 mode = "system"          # system | light | dark
 theme = "default"        # "default" or any theme id, e.g. warp_dark, cyber_wave, tokyo_night (see THEMES.md)
-font = "Monospace 11"    # any Pango font description
+font = "Hack 11"         # bundled Hack font; any Pango font description is accepted
 sidebar_width = 230
 sidebar_visible = true   # also hidden automatically below 640 px window width
 chips = true             # context chips (Python env, folder, git) above each terminal

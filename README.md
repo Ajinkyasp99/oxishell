@@ -35,6 +35,7 @@ input.
 | 🗂 **Workspaces** | Vertical sidebar with git branch, uncommitted-change count, working directory, listening ports, agent status and unread badges. Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). |
 | ⊞ **Split panes** | Split right or down, nest them, drag dividers, move focus with <kbd>Alt</kbd>+arrows. Each pane is an independent shell. |
 | 🔔 **Agent notifications** | Hooks for **Claude Code, Codex, Gemini CLI, Qoder, OpenCode**. A blue ring on the pane, a badge on the workspace, a desktop notification, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> jumps to it. |
+| 📊 **Agent limits** | Open Codex and Claude Code sessions show **5-hour and weekly** usage percentages, progress bars and local reset dates/times in AM/PM format at the bottom of the sidebar. Uses local CLI data. |
 | 🎨 **Warp themes** | 41 built-in themes from [Warp](https://github.com/warpdotdev/themes), including gradients. They colour the whole window, not just the text. Drop any Warp `.yaml` theme in to add your own. |
 | 💡 **Command suggestions** | As you type, the newest matching command from your bash/zsh/fish history appears dimmed after the cursor. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> searches your whole history. |
 | 🏷 **Context chips** | Warp-style chips above each terminal: active Python venv/conda env, folder, git branch and changes. The prompt becomes a clean `❯` (red after a failed command). |
@@ -148,9 +149,14 @@ See [docs/THEMES.md](docs/THEMES.md).
 | Notifications panel | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> |
 | Toggle sidebar | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> |
 | Font size | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>0</kbd> |
+| Font zoom alternatives | <kbd>Ctrl</kbd>+<kbd>+</kbd> / keypad <kbd>+</kbd> or <kbd>-</kbd>; hold <kbd>Ctrl</kbd> and scroll up/down over a terminal |
 | Settings | <kbd>Ctrl</kbd>+<kbd>,</kbd> |
 
 All shortcuts can be changed in Settings → Shortcuts. Right-click a workspace or a terminal for more actions.
+
+The default terminal typeface is **Hack**, bundled with regular, bold, italic and bold-italic faces from
+Warp's font assets. Existing `Monospace 11` defaults switch to `Hack 11`; other configured fonts are preserved.
+Zoom applies to all panes, and <kbd>Ctrl</kbd>+<kbd>0</kbd> returns to the configured font size.
 
 ## Command line
 
@@ -185,6 +191,25 @@ sends a thread id) can be resumed from the pane menu or the palette.
 
 cmux-linux only shows states that the agent's own hooks report; it never guesses. Hooks are silent no-ops
 outside cmux-linux, so installing them never breaks your agents. Details: [docs/AGENTS.md](docs/AGENTS.md).
+
+### Codex and Claude usage limits
+
+When either agent is open in any workspace, a compact row appears below the workspace list, for example
+`Codex  5h 21%  Wk 4%`. Both values show **percentage used** over horizontal usage fills. Small AM/PM reset
+times appear directly below each value, with the weekly date (and the 5-hour date when it is on another day).
+Hover for full reset details, or click the row to open usage bars and setup details. Unavailable limits show `—`.
+Rows disappear when the sessions close. Limits are account-wide snapshots, refreshed from data
+reported after agent responses; usage from other devices can lag until the CLI reports again.
+
+Codex works automatically from local session logs (`CODEX_HOME` is respected). For Claude, run
+`cmux hooks install claude` once with the updated cmux binary, then restart Claude. This also installs
+a status-line bridge to forward Claude's quota data to cmux. Any existing status-line command keeps
+its input, output and settings, and is restored by `cmux hooks uninstall claude`. A project-level
+`statusLine` override can take precedence over this user-level bridge.
+
+Missing limits remain unavailable (including API-key sessions that do not report subscription quotas).
+Expired snapshots wait for updated data instead of assuming the allowance was replenished. No API keys,
+credentials or network requests are used by cmux for this feature.
 
 ## Configuration
 
@@ -231,6 +256,7 @@ tests and guidelines.
   implementation and contains no cmux source code.
 - Themes from [warpdotdev/themes](https://github.com/warpdotdev/themes) (Apache-2.0), with credit to Warp and
   the original theme authors ([NOTICE](data/themes/NOTICE.md)).
+- Hack font assets from Warp, by Source Foundry and Bitstream ([license](data/fonts/LICENSE.md), [source and checksums](data/fonts/NOTICE.md)).
 - Built on [GTK](https://gtk.org), [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/) and
   [VTE](https://gitlab.gnome.org/GNOME/vte).
 

@@ -26,6 +26,8 @@ install -Dm644 docs/RELEASE_NOTES.md "$R/usr/share/doc/$PKG/RELEASE_NOTES.md"
 install -Dm644 docs/TROUBLESHOOTING.md "$R/usr/share/doc/$PKG/TROUBLESHOOTING.md"
 install -Dm644 data/themes/LICENSE-warp-themes "$R/usr/share/doc/$PKG/LICENSE-warp-themes"
 install -Dm644 data/themes/NOTICE.md "$R/usr/share/doc/$PKG/THEMES-NOTICE.md"
+install -Dm644 data/fonts/LICENSE.md "$R/usr/share/doc/$PKG/LICENSE-Hack.md"
+install -Dm644 data/fonts/NOTICE.md "$R/usr/share/doc/$PKG/FONTS-NOTICE.md"
 cat > "$R/usr/share/doc/$PKG/copyright" <<C
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: cmux-linux
@@ -40,6 +42,12 @@ Copyright: Warp and the original theme authors
 License: Apache-2.0
  Theme data compiled into the binary comes from https://github.com/warpdotdev/themes.
  See /usr/share/doc/cmux-linux/LICENSE-warp-themes.
+
+Files: data/fonts/*
+Copyright: 2018 Source Foundry Authors; 2003 Bitstream Inc.
+License: MIT and Bitstream-Vera
+ Unmodified Hack fonts, bundled in the binary.
+ See /usr/share/doc/cmux-linux/LICENSE-Hack.md and FONTS-NOTICE.md.
 C
 
 chmod 644 "$R/usr/share/doc/$PKG/copyright"

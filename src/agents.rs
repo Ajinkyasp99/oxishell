@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 pub const MARKER: &str = "cmux-linux-hook";
+const CLAUDE_USAGE_MARKER: &str = " # cmux-linux-hook statusLine=";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -160,11 +161,52 @@ pub fn install_nested(settings: &mut Value, agent: &str, cmux: &str) -> Result<(
         }
         groups.push(group);
     }
+    if agent == "claude" {
+        install_claude_usage(settings, cmux)?;
+    }
+    Ok(())
+}
+
+/// Wrap the user's status line so the same stdin and output are preserved.
+/// Keep its full settings object for lossless uninstall/reinstall.
+fn install_claude_usage(settings: &mut Value, cmux: &str) -> Result<(), String> {
+    let original = settings.get("statusLine").cloned().unwrap_or(Value::Null);
+    let mut command = format!("{} agent-usage", shell_quote(cmux));
+    if !original.is_null() {
+        if original["type"] != "command" {
+            return Err("cannot forward a Claude statusLine whose type is not command".into());
+        }
+        let forward = original["command"].as_str().ok_or("statusLine.command is not a string")?;
+        command.push_str(&format!(" --forward-command {}", shell_quote(forward)));
+    }
+    // Store restoration data in a shell comment, keeping Claude's settings
+    // object within its documented schema. JSON escapes embedded newlines.
+    command.push_str(CLAUDE_USAGE_MARKER);
+    command.push_str(&serde_json::to_string(&original).unwrap());
+    let mut status = if original.is_object() { original.clone() } else { json!({}) };
+    status["type"] = json!("command");
+    status["command"] = json!(command);
+    settings["statusLine"] = status;
     Ok(())
 }
 
 /// Remove every hook entry whose command carries our marker.
 pub fn uninstall_nested(settings: &mut Value) {
+    let original = settings["statusLine"]["command"].as_str().and_then(|command| {
+        if !command.contains(" agent-usage") {
+            return None;
+        }
+        command
+            .match_indices(CLAUDE_USAGE_MARKER)
+            .find_map(|(index, _)| serde_json::from_str::<Value>(&command[index + CLAUDE_USAGE_MARKER.len()..]).ok())
+    });
+    if let Some(original) = original {
+        if original.is_null() {
+            settings.as_object_mut().unwrap().remove("statusLine");
+        } else {
+            settings["statusLine"] = original;
+        }
+    }
     let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
         return;
     };
@@ -360,6 +402,20 @@ mod tests {
             v,
             json!({"model": "x", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}})
         );
+    }
+
+    #[test]
+    fn claude_usage_preserves_status_line_and_restores_it_on_uninstall() {
+        let original = json!({"statusLine": {"type": "command", "command": "printf '%s' \"$(cat)\"", "padding": 2}, "model": "custom"});
+        let mut settings = original.clone();
+        install_nested(&mut settings, "claude", "/my dir/cmux").unwrap();
+        let installed = settings.clone();
+        assert_eq!(settings["statusLine"]["padding"], 2);
+        assert!(settings["statusLine"]["command"].as_str().unwrap().contains("--forward-command"));
+        install_nested(&mut settings, "claude", "/my dir/cmux").unwrap();
+        assert_eq!(settings, installed);
+        uninstall_nested(&mut settings);
+        assert_eq!(settings, original);
     }
 
     #[test]

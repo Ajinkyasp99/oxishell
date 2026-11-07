@@ -27,6 +27,88 @@
 .ws-list {
   background: transparent;
 }
+.usage-footer {
+  border-top: 1px solid alpha(currentColor, 0.12);
+  padding: 6px 8px;
+}
+.usage-heading {
+  font-size: 0.68em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+  margin: 0 4px 2px;
+}
+.usage-summary > button {
+  color: inherit;
+  padding: 3px 4px;
+  min-height: 0;
+  border-radius: 5px;
+  background: transparent;
+  box-shadow: none;
+}
+.usage-summary > button:hover {
+  background-color: alpha(currentColor, 0.07);
+}
+.usage-agent {
+  font-size: 0.85em;
+  font-weight: 600;
+}
+.usage-chip {
+  border-radius: 4px;
+  background-color: alpha(currentColor, 0.06);
+}
+.usage-chip-text {
+  font-family: monospace;
+  font-size: 0.78em;
+  padding: 1px 4px;
+}
+.usage-chip progressbar,
+.usage-chip progressbar trough,
+.usage-chip progressbar progress {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+.usage-chip progressbar trough {
+  min-height: 16px;
+  background: transparent;
+  border: none;
+}
+.usage-chip progressbar progress {
+  min-height: 16px;
+  background-color: alpha(@accent_bg_color, 0.3);
+  border: none;
+  border-radius: 4px;
+}
+.usage-chip.usage-low {
+  color: @warning_color;
+  background-color: alpha(@warning_color, 0.12);
+}
+.usage-chip.usage-low progressbar progress {
+  background-color: alpha(@warning_color, 0.3);
+}
+.usage-reset {
+  font-size: 0.66em;
+  opacity: 0.65;
+}
+.usage-details {
+  padding: 8px;
+}
+.usage-limit {
+  font-size: 0.82em;
+}
+.usage-details progressbar trough,
+.usage-details progressbar progress {
+  min-height: 4px;
+  border-radius: 3px;
+}
+.usage-details progressbar progress {
+  background-color: @accent_bg_color;
+}
+.usage-details progressbar.usage-low progress {
+  background-color: @warning_color;
+}
 .ws-list > row {
   border-radius: 8px;
   margin: 2px 6px;

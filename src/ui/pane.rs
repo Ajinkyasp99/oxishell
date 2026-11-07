@@ -197,6 +197,7 @@ impl App {
             .hexpand(true)
             .vexpand(true)
             .build();
+        super::zoom::attach_scroll(self, &scroll);
 
         let entry = gtk4::SearchEntry::builder()
             .placeholder_text("Search scrollback")
