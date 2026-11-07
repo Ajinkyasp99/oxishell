@@ -1,0 +1,35 @@
+# Release notes
+
+## 0.1.0 — 2026-11-07 (first release)
+
+Native GTK4/libadwaita terminal workspace manager for Linux, inspired by cmux.
+
+**Terminal** — VTE-based: real PTYs, your login shell (bash, zsh, fish, …), 256-color/truecolor, Unicode
+and emoji, mouse, hyperlinks, copy/paste (Ctrl+Shift+C/V), scrollback search (Ctrl+Shift+F), font
+zoom, full-screen programs (vi/vim, top), interactive ssh prompts. Closing a pane with a running program asks first; shells
+that ignore SIGHUP are killed after 3 s.
+
+**Workspaces & splits** — sidebar with git branch/dirty count, cwd, listening ports, agent status and
+unread badges; create, rename (double-click), reorder (drag), close; nested right/down splits with
+draggable dividers and Alt+Arrow navigation.
+
+**Notifications & agents** — attention rings, workspace badges, notifications panel, jump-to-unread,
+desktop notifications; hooks for Claude Code, Codex, Gemini CLI, Qoder CLI and OpenCode (`cmux hooks
+install`); bell-as-attention; foreground agent detection; explicit, user-confirmed agent session resume.
+
+**Productivity** — command palette with custom commands, configurable shortcuts, four color themes,
+light/dark/system mode, settings dialog, auto-hiding sidebar in narrow windows.
+
+**Automation** — `cmux` CLI and newline-JSON Unix socket API (0600, peer-uid checked); text injection
+disabled unless enabled.
+
+**Sessions** — workspaces, layouts, directories, display-only scrollback and agent session ids restored
+on start; graceful save on SIGTERM/SIGINT/SIGHUP; corrupt session files are set aside; optional tmux
+backend for processes that survive restarts.
+
+### Known limitations
+- OSC 9/99/777 desktop-notification sequences are not available with Ubuntu's VTE build.
+- Arbitrary running processes are not restored without the tmux backend.
+- Codex and Qoder hooks do not report a "running" state.
+- Tested on X11 (Xvfb) and headless GNOME Shell Wayland; not yet on physical multi-monitor/HiDPI setups.
+- In-app browser, cloud features and remote daemons from cmux are out of scope.
