@@ -10,4 +10,5 @@ pub mod notify;
 pub mod paths;
 pub mod session;
 pub mod theme;
+mod theme_builtin;
 pub mod ui;

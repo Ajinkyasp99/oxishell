@@ -4,7 +4,7 @@
 
 `scripts/build-deb.sh` builds `dist/cmux-linux_<version>_<arch>.deb`:
 - `Depends` is computed by `dpkg-shlibdeps` from the binaries (GTK 4, libadwaita, VTE-GTK4, glib, libc).
-- `Recommends: git`, `Suggests: tmux`.
+- `Recommends: git`.
 - Installs binaries, desktop entry, scalable icon, AppStream metainfo and docs; postinst/postrm only
   refresh desktop and icon caches. Removal deletes every installed file; user data in `~/.config` and
   `~/.local/state` is left alone (standard Debian behaviour; see INSTALL.md to remove it).

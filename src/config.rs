@@ -27,7 +27,8 @@ pub struct Config {
 pub struct Appearance {
     /// "system", "light" or "dark".
     pub mode: String,
-    /// Terminal color theme name, see [`crate::theme`].
+    /// Theme id (Warp theme file name without extension, or "default"); see [`crate::theme`].
+    /// Unknown themes fall back to "default" with a warning.
     pub theme: String,
     /// Pango font description.
     pub font: String,
@@ -56,8 +57,10 @@ pub struct Ipc {
 #[serde(default, deny_unknown_fields)]
 pub struct Session {
     pub restore: bool,
-    /// "none" or "tmux". With tmux, pane processes survive app restarts.
-    pub backend: String,
+    /// Removed setting (older versions offered a tmux backend). Accepted and
+    /// ignored so existing config files keep loading; never written back.
+    #[serde(default, rename = "backend", skip_serializing)]
+    pub legacy_backend: Option<toml::Value>,
     /// Lines of scrollback saved per pane for display-only restoration (0 = off).
     pub scrollback_lines: usize,
 }
@@ -109,7 +112,7 @@ impl Default for Session {
     fn default() -> Self {
         Self {
             restore: true,
-            backend: "none".into(),
+            legacy_backend: None,
             scrollback_lines: 500,
         }
     }
@@ -169,21 +172,11 @@ impl Config {
                 self.appearance.mode
             ));
         }
-        if crate::theme::by_name(&self.appearance.theme).is_none() {
-            return Err(format!(
-                "unknown theme {:?}; available: {}",
-                self.appearance.theme,
-                crate::theme::names().join(", ")
-            ));
-        }
         if !(120..=600).contains(&self.appearance.sidebar_width) {
             return Err("appearance.sidebar_width must be between 120 and 600".into());
         }
         if !(0..=1_000_000).contains(&self.terminal.scrollback_lines) {
             return Err("terminal.scrollback_lines must be between 0 and 1000000".into());
-        }
-        if !["none", "tmux"].contains(&self.session.backend.as_str()) {
-            return Err("session.backend must be none or tmux".into());
         }
         for k in self.shortcuts.keys() {
             if !DEFAULT_SHORTCUTS.iter().any(|(a, _, _)| a == k) {
@@ -279,12 +272,17 @@ mod tests {
     }
 
     #[test]
+    fn legacy_backend_key_is_accepted_and_dropped() {
+        let c = Config::parse("[session]\nrestore = true\nbackend = \"none\"\n").unwrap();
+        assert!(!toml::to_string(&c).unwrap().contains("backend"));
+    }
+
+    #[test]
     fn invalid_values_rejected() {
         assert!(Config::parse("[appearance]\nmode = \"purple\"").is_err());
-        assert!(Config::parse("[appearance]\ntheme = \"nope\"").is_err());
         assert!(Config::parse("[appearance]\nmodee = \"dark\"").is_err());
         assert!(Config::parse("[shortcuts]\nfly = \"<Ctrl>x\"").is_err());
-        assert!(Config::parse("[session]\nbackend = \"screen\"").is_err());
+        assert!(Config::parse("[session]\nrestored = true").is_err());
         assert!(Config::parse("not toml [[[").is_err());
     }
 

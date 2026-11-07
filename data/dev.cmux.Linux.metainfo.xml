@@ -14,15 +14,27 @@
       <li>Vertical workspace sidebar with git branch, working directory and listening ports</li>
       <li>Nested horizontal and vertical split panes with keyboard navigation</li>
       <li>Notification rings, unread badges and jump-to-unread for Claude Code, Codex, Gemini CLI, Qoder and OpenCode hooks</li>
-      <li>Command palette, configurable shortcuts, themes and fonts</li>
+      <li>41 built-in Warp themes with gradients, plus any Warp theme file you add</li>
+      <li>Command palette, configurable shortcuts and fonts</li>
       <li>CLI and local Unix-socket API for automation</li>
-      <li>Workspace and layout restoration, optional tmux-backed persistent sessions</li>
+      <li>Workspace, layout and directory restoration</li>
     </ul>
   </description>
   <launchable type="desktop-id">dev.cmux.Linux.desktop</launchable>
-  <url type="homepage">https://github.com/manaflow-ai/cmux</url>
+  <url type="homepage">https://github.com/Ajinkyasp99/cmux_linux</url>
+  <url type="bugtracker">https://github.com/Ajinkyasp99/cmux_linux/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Workspaces, split panes and agent notifications</caption>
+      <image>https://raw.githubusercontent.com/Ajinkyasp99/cmux_linux/main/docs/assets/hero.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>41 built-in Warp themes</caption>
+      <image>https://raw.githubusercontent.com/Ajinkyasp99/cmux_linux/main/docs/assets/themes.png</image>
+    </screenshot>
+  </screenshots>
   <developer id="dev.cmux">
-    <name>cmux-linux contributors</name>
+    <name>Ajinkya Patil</name>
   </developer>
   <content_rating type="oars-1.1"/>
   <provides>

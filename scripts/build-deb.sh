@@ -24,14 +24,22 @@ install -Dm644 data/icons/dev.cmux.Linux.svg "$R/usr/share/icons/hicolor/scalabl
 install -Dm644 README.md "$R/usr/share/doc/$PKG/README.md"
 install -Dm644 docs/RELEASE_NOTES.md "$R/usr/share/doc/$PKG/RELEASE_NOTES.md"
 install -Dm644 docs/TROUBLESHOOTING.md "$R/usr/share/doc/$PKG/TROUBLESHOOTING.md"
+install -Dm644 data/themes/LICENSE-warp-themes "$R/usr/share/doc/$PKG/LICENSE-warp-themes"
+install -Dm644 data/themes/NOTICE.md "$R/usr/share/doc/$PKG/THEMES-NOTICE.md"
 cat > "$R/usr/share/doc/$PKG/copyright" <<C
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: cmux-linux
-Comment: Linux-native reimplementation inspired by cmux (https://github.com/manaflow-ai/cmux).
+Comment: Linux-native terminal inspired by cmux (https://github.com/manaflow-ai/cmux).
 Files: *
-Copyright: cmux-linux contributors
+Copyright: Ajinkya Patil and cmux-linux contributors
 License: GPL-3.0-or-later
  On Debian systems, the full text is in /usr/share/common-licenses/GPL-3.
+
+Files: data/themes/*
+Copyright: Warp and the original theme authors
+License: Apache-2.0
+ Theme data compiled into the binary comes from https://github.com/warpdotdev/themes.
+ See /usr/share/doc/cmux-linux/LICENSE-warp-themes.
 C
 
 chmod 644 "$R/usr/share/doc/$PKG/copyright"
@@ -48,14 +56,13 @@ cat > "$R/DEBIAN/control" <<C
 Package: $PKG
 Version: $VERSION
 Architecture: $ARCH
-Maintainer: cmux-linux contributors <noreply@cmux-linux.invalid>
+Maintainer: Ajinkya Patil <Ajinkyasp99@users.noreply.github.com>
 Installed-Size: $SIZE
 Depends: $DEPS
 Recommends: git
-Suggests: tmux
 Section: x11
 Priority: optional
-Homepage: https://github.com/manaflow-ai/cmux
+Homepage: https://github.com/Ajinkyasp99/cmux_linux
 Description: terminal workspaces and split panes for AI coding agents
  Native GTK4/libadwaita terminal (VTE) with a vertical workspace sidebar,
  nested split panes, git/port metadata, notification rings for coding agents

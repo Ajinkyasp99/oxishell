@@ -1,7 +1,7 @@
 # Phase Progress
 
 Status rules: **Completed** only with test evidence; **In Progress** = implemented but not fully
-verified; **Blocked** = cannot be verified in this environment (reason given).
+verified; **Manual (maintainer)** = verified by hand by the maintainer; **Removed** = dropped from scope.
 
 Evidence keys: **U** = unit tests (`cargo test --lib`, 37 tests), **E** = end-to-end tests
 (`tests/e2e.rs`, real app + real shells; passed on Xvfb/X11 and on headless GNOME Shell Wayland),
@@ -25,6 +25,7 @@ Evidence keys: **U** = unit tests (`cargo test --lib`, 37 tests), **E** = end-to
 | 2.5 | Resize | Completed | S (bash rewraps after splits) | |
 | 2.6 | Colors, Unicode | Completed | E (`é中`, ANSI stripped in reads), S (emoji, colors) | |
 | 2.7 | Copy/paste, selection, scrollback | Completed | E (scrollback read past 10k lines), K (search bar) | clipboard copy/paste not asserted automatically |
+| 2.0 | Shells | Completed | bash (E), zsh 5.9 (installed app, `ZSH_VERSION` echoed) | fish not installed here, untested |
 | 2.8 | vim/top/ssh/completion | Completed | M (vi saved file, top, tab completion, ssh password prompt) | full ssh login not tested (would use your keys) |
 | 2.9 | Exit & cleanup | Completed | E (exit closes pane, pids reaped), M (SIGHUP-ignoring shell SIGKILLed after 3 s) | |
 | 3.1 | Workspace model | Completed | U | |
@@ -34,13 +35,14 @@ Evidence keys: **U** = unit tests (`cargo test --lib`, 37 tests), **E** = end-to
 | 3.8 | Keyboard navigation | Completed | K (Ctrl+PageUp, Alt+2), U (config) | |
 | 4.1 | Pane layout model | Completed | U | |
 | 4.2–4.4 | Splits, nested | Completed | E, K | |
-| 4.5 | Draggable resize | In Progress | S | dividers render; drag→ratio persistence not exercised by a test |
+| 4.5 | Draggable resize | Completed | K (drag divider → ratio 0.337 saved), E-style restart check (ratio kept) | |
 | 4.6 | Pane focus navigation | Completed | U, K (Alt+Left) | |
 | 4.7 | Safe pane close | Completed | E, K (Ctrl+Shift+W) | |
 | 4.8 | Independent shells | Completed | E (distinct pids, output isolated) | |
 | 5.1 | Toolbar/sidebar styling | Completed | S | |
-| 5.2 | Theme selection | In Progress | U (validation), S (dialog) | live theme switch not screenshot-verified |
-| 5.3 | Font settings | In Progress | S (dialog) | font change not exercised by a test |
+| 5.2 | Theme selection | Completed | S (terminal background pixel = Dracula #282a36 after `theme = "dracula"`) | applied from config at start; live switch via dialog uses the same apply path |
+| 5.2b | Warp themes (whole-window, gradients, user themes, gallery) | Completed | U (41 bundled parse, gradients, user dir, images, aliases), S (6 themes + gallery screenshots), K (switch via palette) | background images of Warp's bundled themes not shipped |
+| 5.3 | Font settings | Completed | S (`Monospace 16` visibly applied) | |
 | 5.4 | Sidebar collapse | Completed | S (auto-hide < 640 px), K | |
 | 5.5 | Context menus | Completed | K (workspace Close/Move Down, pane Split Right executed) | found and fixed a hang (ListBox row removal) |
 | 5.6 | Shortcut settings | Completed | U (parse, conflicts), M (invalid config reported) | |
@@ -52,7 +54,7 @@ Evidence keys: **U** = unit tests (`cargo test --lib`, 37 tests), **E** = end-to
 | 6.6 | Listening ports | Completed | U, E (port 38419 detected, background workspace too) | own processes only |
 | 6.7 | Efficient refresh | Completed | PERFORMANCE.md (idle CPU 1.2 % at 20 panes) | |
 | 7.1–7.2 | Notification model, CLI notify | Completed | U, E | |
-| 7.3 | Desktop notifications | In Progress | code path only | disabled in tests to avoid popping on the host desktop; not visually verified |
+| 7.3 | Desktop notifications | Completed | D-Bus monitor: `Notify` call with the title sent when the window/pane is not focused | pop-up appearance on a real desktop not observed (tests avoid popping on your desktop) |
 | 7.4–7.5 | Badges, attention rings | Completed | E (unread counts), S | |
 | 7.6 | Notifications panel | Completed | K (Ctrl+Shift+I), S (lists title, workspace, time, source, body) | |
 | 7.7 | Jump to unread | Completed | E | |
@@ -74,8 +76,8 @@ Evidence keys: **U** = unit tests (`cargo test --lib`, 37 tests), **E** = end-to
 | 10.1–10.2 | Config schema, persistence | Completed | U | |
 | 10.3–10.6 | Save/restore workspaces, layout, cwd | Completed | E (restart restores names, layout, `/tmp` cwd) | |
 | 10.7 | Scrollback restoration | Completed | E (display-only, ran once, escapes stripped) | |
-| 10.8 | tmux/zellij backend | Blocked | — | tmux backend implemented but tmux is not installed here; zellij not implemented |
-| 10.9 | Agent resume | In Progress | U (command validation), M (restore toast) | resume action not exercised end to end |
+| 10.8 | tmux/zellij detach & reattach | Removed | — | dropped from scope at the maintainer's request; the old `[session] backend` key is still accepted and ignored |
+| 10.9 | Agent resume | Completed | K (pane menu typed `claude --resume sess-77`, not executed), restart + palette typed it from the saved session | |
 | 10.10 | Interrupted shutdown, corrupt files | Completed | U, E (SIGTERM save, corrupt file set aside) | |
 | 11.1–11.3 | Startup, idle CPU, memory | Completed | scripts/bench.sh → PERFORMANCE.md | Xvfb/software rendering |
 | 11.4–11.7 | Output volume, 16–20 panes, switching, churn | Completed | E (stress test) | |
@@ -86,7 +88,7 @@ Evidence keys: **U** = unit tests (`cargo test --lib`, 37 tests), **E** = end-to
 | 12.2 | .deb | Completed | `apt install` on the dev machine (Ubuntu 24.04): installed, binaries on PATH, desktop entry + icon present | apt prints a harmless note when the .deb is in a home dir (`_apt` sandbox) |
 | 12.3 | Icons & metadata | Completed | appstreamcli, desktop-file-validate | |
 | 12.4 | Installation guide | Completed | docs/INSTALL.md | |
-| 12.5 | Clean uninstall | Blocked | — | needs sudo to run `apt remove`; package lists every file it installs |
+| 12.5 | Clean uninstall | Manual (maintainer) | — | maintainer tests `sudo apt remove cmux-linux`; package installs only the files listed in INSTALL.md |
 | 12.6 | Flatpak/AppImage evaluation | Completed | docs/PACKAGING.md | |
 | 12.7 | GitHub Actions | In Progress | every step run locally | workflows not executed on GitHub yet |
 | 12.8 | Release notes & troubleshooting | Completed | docs/RELEASE_NOTES.md, docs/TROUBLESHOOTING.md | |

@@ -2,16 +2,19 @@
 
 ## From the .deb (Ubuntu 24.04 and newer)
 
+Download the latest package from [Releases](https://github.com/Ajinkyasp99/cmux_linux/releases/latest) and install it:
+
 ```bash
-sudo apt install ./cmux-linux_0.1.0_amd64.deb
+wget https://github.com/Ajinkyasp99/cmux_linux/releases/latest/download/cmux-linux_amd64.deb
+sudo apt install ./cmux-linux_amd64.deb
 ```
+
+Each release also lists `SHA256SUMS`; verify with `sha256sum -c SHA256SUMS --ignore-missing`.
 
 `apt` pulls in the runtime libraries (GTK 4, libadwaita, VTE-GTK4). Then start **cmux** from the
 application menu, or run `cmux-linux` in a terminal. The `cmux` command-line tool is installed too.
 
-Optional:
-- `git` (recommended) — branch and status in the sidebar.
-- `tmux` — set `session.backend = "tmux"` to keep programs running across app restarts.
+Optional: `git` (recommended) — branch and status in the sidebar.
 
 Then enable agent notifications (optional):
 
@@ -44,7 +47,6 @@ Rust 1.87+ is required. To build the package yourself: `scripts/build-deb.sh` (n
    ```bash
    rm -rf ~/.config/cmux-linux ~/.local/state/cmux-linux
    ```
-4. If you used the tmux backend, end leftover sessions with `tmux ls` / `tmux kill-session -t cmux-linux-<id>`.
 
 The package installs only: `/usr/bin/cmux-linux`, `/usr/bin/cmux`, the desktop entry, icon, AppStream
 metadata and docs under `/usr/share/doc/cmux-linux`.

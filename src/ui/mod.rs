@@ -6,6 +6,7 @@ mod ipc_handler;
 mod meta_worker;
 mod pane;
 mod sidebar;
+mod themes;
 
 use crate::agents::AgentState;
 use crate::config::Config;
@@ -31,6 +32,8 @@ pub struct Inner {
     pub pages: HashMap<WorkspaceId, gtk4::Box>,
     pub keymap: HashMap<(u32, gdk::ModifierType), String>,
     pub font_scale: f64,
+    /// The resolved theme (see `crate::theme`).
+    pub theme: crate::theme::Theme,
 }
 
 pub struct App {
@@ -43,6 +46,8 @@ pub struct App {
     pub toasts: adw::ToastOverlay,
     pub notif_button: gtk4::MenuButton,
     pub notif_badge: gtk4::Label,
+    /// Generated CSS for the current theme (whole-window colours, gradients).
+    pub theme_css: gtk4::CssProvider,
     pub inner: RefCell<Inner>,
     pub meta_tx: std::sync::mpsc::Sender<meta_worker::Job>,
     suppress_select: Cell<bool>,
@@ -89,6 +94,13 @@ impl App {
             &gdk::Display::default().expect("display"),
             &css,
             gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        // Generated per-theme CSS sits above the static stylesheet.
+        let theme_css = gtk4::CssProvider::new();
+        gtk4::style_context_add_provider_for_display(
+            &gdk::Display::default().expect("display"),
+            &theme_css,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
         );
 
         // Header bar
@@ -187,6 +199,7 @@ impl App {
         status.add_css_class("dim-label");
 
         let root = gtk4::Box::new(Orientation::Vertical, 0);
+        root.add_css_class("cmux-root");
         root.append(&header);
         root.append(&split);
         root.append(&status);
@@ -223,6 +236,7 @@ impl App {
             toasts,
             notif_button,
             notif_badge,
+            theme_css,
             inner: RefCell::new(Inner {
                 state: AppState::default(),
                 config,
@@ -231,6 +245,7 @@ impl App {
                 pages: HashMap::new(),
                 keymap: HashMap::new(),
                 font_scale: 1.0,
+                theme: crate::theme::default_theme(true),
             }),
             meta_tx,
             suppress_select: Cell::new(false),
@@ -893,21 +908,46 @@ impl App {
 
     /// Apply appearance, fonts, colors and shortcuts from the current config.
     pub fn apply_config(self: &Rc<Self>) {
-        let mode = self.inner.borrow().config.appearance.mode.clone();
+        let (mode, name) = {
+            let c = &self.inner.borrow().config.appearance;
+            (c.mode.clone(), c.theme.clone())
+        };
         let sm = adw::StyleManager::default();
-        sm.set_color_scheme(match mode.as_str() {
-            "light" => adw::ColorScheme::ForceLight,
-            "dark" => adw::ColorScheme::ForceDark,
-            _ => adw::ColorScheme::Default,
-        });
+        let (theme, found) = crate::theme::resolve(&name, sm.is_dark());
+        if !found {
+            self.toast(&format!("Theme {name:?} not found; using the default theme"));
+        }
+        let theme = if theme.native {
+            // The default theme follows the Style setting / the system.
+            sm.set_color_scheme(match mode.as_str() {
+                "light" => adw::ColorScheme::ForceLight,
+                "dark" => adw::ColorScheme::ForceDark,
+                _ => adw::ColorScheme::Default,
+            });
+            crate::theme::default_theme(sm.is_dark())
+        } else {
+            // Other themes decide light/dark themselves, like Warp.
+            sm.set_color_scheme(if theme.is_dark() {
+                adw::ColorScheme::ForceDark
+            } else {
+                adw::ColorScheme::ForceLight
+            });
+            theme
+        };
+        self.theme_css.load_from_string(&theme.css());
+        self.inner.borrow_mut().theme = theme;
         {
             let w = self.weak();
-            // Re-apply terminal colors when the system switches light/dark.
+            // The default theme re-colours terminals when the system switches light/dark.
             thread_local!(static HOOKED: Cell<bool> = const { Cell::new(false) });
             if !HOOKED.with(|h| h.replace(true)) {
-                sm.connect_dark_notify(move |_| {
+                sm.connect_dark_notify(move |sm| {
                     if let Some(a) = w.upgrade() {
-                        a.apply_terminal_style();
+                        let native = a.inner.borrow().theme.native;
+                        if native {
+                            a.inner.borrow_mut().theme = crate::theme::default_theme(sm.is_dark());
+                            a.apply_terminal_style();
+                        }
                     }
                 });
             }
@@ -916,10 +956,17 @@ impl App {
         self.rebuild_keymap();
     }
 
+    /// Switch theme by id, persist it and apply it to the whole window.
+    pub fn set_theme(self: &Rc<Self>, id: &str) {
+        self.inner.borrow_mut().config.appearance.theme = id.to_string();
+        self.save_config();
+        self.apply_config();
+    }
+
     pub fn apply_terminal_style(&self) {
         let i = self.inner.borrow();
         for p in i.panes.values() {
-            pane::style_terminal(&p.term, &i.config, i.font_scale);
+            pane::style_terminal(&p.term, &i.config, i.font_scale, &i.theme);
         }
     }
 
@@ -1225,9 +1272,9 @@ impl App {
     }
 
     pub fn save_session(&self, with_scrollback: bool) {
-        let (restore, lines, tmux) = {
+        let (restore, lines) = {
             let c = &self.inner.borrow().config;
-            (c.session.restore, c.session.scrollback_lines, c.session.backend == "tmux")
+            (c.session.restore, c.session.scrollback_lines)
         };
         if !restore {
             return;
@@ -1235,7 +1282,7 @@ impl App {
         if let Err(e) = self.snapshot().save(&crate::session::session_path()) {
             eprintln!("cmux-linux: saving session failed: {e}");
         }
-        if with_scrollback && lines > 0 && !tmux {
+        if with_scrollback && lines > 0 {
             let i = self.inner.borrow();
             for (id, p) in &i.panes {
                 if let Err(e) = crate::session::save_scrollback(*id, &p.scrollback_text(lines), lines) {
@@ -1247,7 +1294,6 @@ impl App {
 
     fn restore(self: &Rc<Self>, snap: Snapshot) {
         let lines = self.inner.borrow().config.session.scrollback_lines;
-        let tmux = self.inner.borrow().config.session.backend == "tmux";
         let active = snap.state.active;
         let workspaces: Vec<_> = snap.state.workspaces.iter().map(|w| (w.id, w.layout.panes())).collect();
         self.inner.borrow_mut().state = snap.state;
@@ -1256,7 +1302,7 @@ impl App {
             for p in panes {
                 let ps = snap.panes.get(&p).cloned().unwrap_or_default();
                 let cwd = ps.cwd.map(PathBuf::from).filter(|d| d.is_dir());
-                let text = if tmux || lines == 0 {
+                let text = if lines == 0 {
                     None
                 } else {
                     crate::session::load_scrollback(p, lines)
@@ -1283,12 +1329,8 @@ impl App {
 
     fn shutdown_panes(&self) {
         let panes: Vec<_> = self.inner.borrow_mut().panes.drain().collect();
-        let tmux = self.inner.borrow().config.session.backend == "tmux";
         for (_, p) in panes {
-            // With tmux the session must survive; otherwise end the shell.
-            if !tmux {
-                p.hangup();
-            }
+            p.hangup();
         }
     }
 }

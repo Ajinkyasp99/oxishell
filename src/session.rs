@@ -141,11 +141,6 @@ pub fn prune_scrollback(live: &[PaneId]) {
     }
 }
 
-/// tmux session name for a pane when the tmux backend is enabled.
-pub fn tmux_session_name(pane: PaneId) -> String {
-    format!("cmux-linux-{pane}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

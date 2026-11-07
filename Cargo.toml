@@ -5,6 +5,12 @@ edition = "2021"
 description = "Native Linux terminal workspace manager for AI coding agents, inspired by cmux"
 license = "GPL-3.0-or-later"
 rust-version = "1.87"
+authors = ["Ajinkya Patil"]
+repository = "https://github.com/Ajinkyasp99/cmux_linux"
+homepage = "https://github.com/Ajinkyasp99/cmux_linux"
+readme = "README.md"
+keywords = ["terminal", "gtk", "linux", "ai-agents", "workspace"]
+categories = ["command-line-utilities"]
 
 [lib]
 name = "cmux_linux"
@@ -29,6 +35,7 @@ toml = "0.8"
 anyhow = "1"
 libc = "0.2"
 async-channel = "2"
+yaml-rust2 = "0.10"
 
 [profile.release]
 lto = true

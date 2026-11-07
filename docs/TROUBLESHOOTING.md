@@ -27,8 +27,8 @@ Normally a second launch just focuses the first window. Close the other instance
 "restored output above (not live)"). Disable with `[session] scrollback_lines = 0`, or disable restore
 entirely with `restore = false`. A broken session file is moved to `session.json.corrupt`.
 
-**Processes are gone after restarting the app** — expected with the default backend: closing the
-app ends its shells. Use `[session] backend = "tmux"` for sessions that survive restarts.
+**Processes are gone after restarting the app** — expected: closing the app ends its shells. Workspaces,
+layouts, directories and recent output come back; running programs do not.
 
 **Notifications from `OSC 9 / 777` escape sequences are ignored** — Ubuntu's VTE build does not expose
 them (see docs/TECH_STACK.md). Use `cmux notify`, hooks, or the terminal bell.

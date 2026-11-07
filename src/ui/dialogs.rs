@@ -62,6 +62,7 @@ enum Item {
     Command(String),
     Resume(PaneId),
     Hook(&'static str),
+    Theme(String),
 }
 
 /// Case-insensitive subsequence match.
@@ -110,6 +111,11 @@ fn palette_items(app: &AppRc) -> Vec<(String, String, Item)> {
             ));
         }
     }
+    let current = i.theme.id.clone();
+    for t in crate::theme::all(i.theme.is_dark()) {
+        let mark = if t.id == current { "current" } else { "" };
+        items.push((format!("Theme: {}", t.name), mark.to_string(), Item::Theme(t.id)));
+    }
     for a in crate::agents::SUPPORTED {
         items.push((
             format!("Show hook setup for {}", crate::agents::display_name(a)),
@@ -140,6 +146,7 @@ fn run_item(app: &AppRc, item: Item) {
             }
         }
         Item::Resume(p) => app.resume_agent(p),
+        Item::Theme(id) => app.set_theme(&id),
         Item::Hook(a) => app.toast(&format!(
             "Run `cmux hooks install {a}` in a terminal to enable {} notifications",
             crate::agents::display_name(a)
@@ -272,6 +279,13 @@ pub fn command_palette(app: &AppRc) {
     v.append(&entry);
     v.append(&scroll);
     d.set_child(Some(&v));
+    {
+        // The search entry consumes Escape (stop-search), so close the palette from there.
+        let d = d.clone();
+        entry.connect_stop_search(move |_| {
+            d.close();
+        });
+    }
     d.present(Some(&app.window));
     entry.grab_focus();
 }
@@ -445,15 +459,10 @@ pub fn settings(app: &AppRc) {
     let modes = ["system", "light", "dark"];
     let mode = adw::ComboRow::builder()
         .title("Style")
+        .subtitle("Light/dark for the Default theme; other themes set their own")
         .model(&gtk4::StringList::new(&["Follow system", "Light", "Dark"]))
         .build();
     mode.set_selected(modes.iter().position(|m| *m == cfg.appearance.mode).unwrap_or(0) as u32);
-    let themes = crate::theme::names();
-    let theme = adw::ComboRow::builder()
-        .title("Terminal colors")
-        .model(&gtk4::StringList::new(&themes))
-        .build();
-    theme.set_selected(themes.iter().position(|t| *t == cfg.appearance.theme).unwrap_or(0) as u32);
     let font_btn = gtk4::FontDialogButton::new(Some(gtk4::FontDialog::builder().title("Terminal font").build()));
     font_btn.set_font_desc(&gtk4::pango::FontDescription::from_string(&cfg.appearance.font));
     font_btn.set_valign(gtk4::Align::Center);
@@ -464,10 +473,10 @@ pub fn settings(app: &AppRc) {
         .active(cfg.appearance.sidebar_visible)
         .build();
     g.add(&mode);
-    g.add(&theme);
     g.add(&font);
     g.add(&sidebar);
     page.add(&g);
+    page.add(&super::themes::gallery(app));
 
     // Terminal & behaviour
     let tg = adw::PreferencesGroup::builder().title("Terminal").build();
@@ -496,25 +505,17 @@ pub fn settings(app: &AppRc) {
     ng.add(&bell);
     page.add(&ng);
 
-    let sg = adw::PreferencesGroup::builder().title("Sessions & Automation").build();
+    let sg = adw::PreferencesGroup::builder().title("Sessions and Automation").build();
     let restore = adw::SwitchRow::builder()
         .title("Restore workspaces and layouts on start")
         .active(cfg.session.restore)
         .build();
-    let backends = ["none", "tmux"];
-    let backend = adw::ComboRow::builder()
-        .title("Session backend")
-        .subtitle("tmux keeps programs running across restarts (applies to new panes)")
-        .model(&gtk4::StringList::new(&["Plain shell", "tmux"]))
-        .build();
-    backend.set_selected(backends.iter().position(|b| *b == cfg.session.backend).unwrap_or(0) as u32);
     let allow_send = adw::SwitchRow::builder()
         .title("Allow `cmux send` to type into panes")
         .subtitle("Off by default; only same-user local clients can connect")
         .active(cfg.ipc.allow_send)
         .build();
     sg.add(&restore);
-    sg.add(&backend);
     sg.add(&allow_send);
     page.add(&sg);
     d.add(&page);
@@ -526,7 +527,7 @@ pub fn settings(app: &AppRc) {
         .build();
     let kg = adw::PreferencesGroup::builder()
         .title("Keyboard Shortcuts")
-        .description("GTK accelerator syntax, e.g. <Ctrl><Shift>e. Empty disables. Press Enter to apply.")
+        .description("GTK accelerator syntax, e.g. &lt;Ctrl&gt;&lt;Shift&gt;e. Empty disables. Press Enter to apply.")
         .build();
     let mut rows = Vec::new();
     for (action, accel) in cfg.effective_shortcuts() {
@@ -605,13 +606,6 @@ pub fn settings(app: &AppRc) {
     }
     {
         let ap = apply.clone();
-        theme.connect_selected_notify(move |r| {
-            let t = themes.get(r.selected() as usize).copied().unwrap_or("default").to_string();
-            ap(&move |c| c.appearance.theme = t.clone());
-        });
-    }
-    {
-        let ap = apply.clone();
         font_btn.connect_font_desc_notify(move |b| {
             if let Some(fd) = b.font_desc() {
                 let s = fd.to_string();
@@ -659,13 +653,6 @@ pub fn settings(app: &AppRc) {
         restore.connect_active_notify(move |r| {
             let v = r.is_active();
             ap(&move |c| c.session.restore = v);
-        });
-    }
-    {
-        let ap = apply.clone();
-        backend.connect_selected_notify(move |r| {
-            let v = backends[(r.selected() as usize).min(1)].to_string();
-            ap(&move |c| c.session.backend = v.clone());
         });
     }
     {
@@ -773,9 +760,11 @@ pub fn about(app: &AppRc) {
         .application_name("cmux-linux")
         .application_icon(crate::APP_ID)
         .version(env!("CARGO_PKG_VERSION"))
-        .comments("Native Linux terminal workspaces and split panes for AI coding agents. Inspired by cmux (manaflow-ai/cmux).")
+        .comments("Native Linux terminal workspaces and split panes for AI coding agents. Inspired by cmux (manaflow-ai/cmux). Themes from warpdotdev/themes (Apache-2.0).")
         .license_type(gtk4::License::Gpl30)
-        .website("https://github.com/manaflow-ai/cmux")
+        .website("https://github.com/Ajinkyasp99/cmux_linux")
+        .issue_url("https://github.com/Ajinkyasp99/cmux_linux/issues")
+        .developer_name("Ajinkya Patil")
         .build();
     d.present(Some(&app.window));
 }

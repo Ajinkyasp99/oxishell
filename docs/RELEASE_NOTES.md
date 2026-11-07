@@ -17,19 +17,22 @@ draggable dividers and Alt+Arrow navigation.
 desktop notifications; hooks for Claude Code, Codex, Gemini CLI, Qoder CLI and OpenCode (`cmux hooks
 install`); bell-as-attention; foreground agent detection; explicit, user-confirmed agent session resume.
 
-**Productivity** — command palette with custom commands, configurable shortcuts, four color themes,
-light/dark/system mode, settings dialog, auto-hiding sidebar in narrow windows.
+**Themes** — 41 built-in Warp themes (Apache-2.0, warpdotdev/themes) that colour the whole window,
+including gradient backgrounds and accents; a visual theme gallery in Settings; "Theme: …" entries in the
+command palette; any Warp `.yaml` theme (with background image) can be added to `~/.config/cmux-linux/themes/`.
+
+**Productivity** — command palette with custom commands, configurable shortcuts, light/dark/system mode
+for the default theme, settings dialog, auto-hiding sidebar in narrow windows.
 
 **Automation** — `cmux` CLI and newline-JSON Unix socket API (0600, peer-uid checked); text injection
 disabled unless enabled.
 
 **Sessions** — workspaces, layouts, directories, display-only scrollback and agent session ids restored
-on start; graceful save on SIGTERM/SIGINT/SIGHUP; corrupt session files are set aside; optional tmux
-backend for processes that survive restarts.
+on start; graceful save on SIGTERM/SIGINT/SIGHUP; corrupt session files are set aside.
 
 ### Known limitations
 - OSC 9/99/777 desktop-notification sequences are not available with Ubuntu's VTE build.
-- Arbitrary running processes are not restored without the tmux backend.
+- Running programs are not restored after the app restarts (layouts, directories and output are).
 - Codex and Qoder hooks do not report a "running" state.
 - Tested on X11 (Xvfb) and headless GNOME Shell Wayland; not yet on physical multi-monitor/HiDPI setups.
 - In-app browser, cloud features and remote daemons from cmux are out of scope.

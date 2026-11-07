@@ -31,7 +31,6 @@ pub struct Pane {
     /// (agent, session id) reported by hooks, offered for explicit resume.
     pub agent_session: Option<(String, String)>,
     pub last_bell: Cell<Option<Instant>>,
-    pub tmux: Option<String>,
     /// Input sent before the shell finished spawning; flushed once it has.
     pub pending_input: Rc<std::cell::RefCell<Option<Vec<u8>>>>,
 }
@@ -68,9 +67,6 @@ impl Pane {
     /// True when a program other than the shell holds the terminal's foreground.
     pub fn has_running_child(&self) -> bool {
         let Some(pid) = self.pid.get() else { return false };
-        if self.tmux.is_some() {
-            return false; // tmux keeps programs alive across detach
-        }
         match crate::meta::foreground_pgrp(self.pty_fd()) {
             Some(pg) => pg != pid,
             None => false,
@@ -96,14 +92,8 @@ impl Pane {
     }
 
     /// End the pane's processes: SIGHUP the process group, then SIGKILL after
-    /// 3 s if anything ignored the hangup. With tmux, kill the tmux session.
+    /// 3 s if anything ignored the hangup.
     pub fn terminate(&self) {
-        if let Some(name) = &self.tmux {
-            let _ = std::process::Command::new("tmux")
-                .args(["kill-session", "-t", name])
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
         self.hangup();
         if let Some(pid) = self.pid.get() {
             glib::timeout_add_local_once(Duration::from_secs(3), move || unsafe {
@@ -150,27 +140,21 @@ pub fn detach(w: &impl IsA<gtk4::Widget>) {
     }
 }
 
-fn rgba(hex: &str) -> gdk::RGBA {
-    gdk::RGBA::parse(hex).unwrap_or(gdk::RGBA::BLACK)
-}
-
-pub fn style_terminal(t: &vte4::Terminal, cfg: &Config, scale: f64) {
+pub fn style_terminal(t: &vte4::Terminal, cfg: &Config, scale: f64, theme: &crate::theme::Theme) {
     t.set_font_desc(Some(&gtk4::pango::FontDescription::from_string(&cfg.appearance.font)));
     t.set_font_scale(scale);
     t.set_scrollback_lines(cfg.terminal.scrollback_lines);
-    let theme = crate::theme::by_name(&cfg.appearance.theme).unwrap_or(&crate::theme::THEMES[0]);
-    let (fg, bg) = if libadwaita::StyleManager::default().is_dark() {
-        theme.dark
-    } else {
-        theme.light
-    };
-    let pal: Vec<gdk::RGBA> = theme.palette.iter().map(|c| rgba(c)).collect();
+    let c = |c: crate::theme::Rgb, a: f32| gdk::RGBA::new(c.0 as f32 / 255.0, c.1 as f32 / 255.0, c.2 as f32 / 255.0, a);
+    // Gradient/image themes paint the window background; the terminal stays transparent over it.
+    let bg_alpha = if theme.layered_background() { 0.0 } else { 1.0 };
+    let pal: Vec<gdk::RGBA> = theme.normal.iter().chain(theme.bright.iter()).map(|x| c(*x, 1.0)).collect();
     let refs: Vec<&gdk::RGBA> = pal.iter().collect();
-    t.set_colors(Some(&rgba(fg)), Some(&rgba(bg)), &refs);
-}
-
-fn which(prog: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(prog).is_file()))
+    t.set_colors(
+        Some(&c(theme.foreground, 1.0)),
+        Some(&c(theme.background.average(), bg_alpha)),
+        &refs,
+    );
+    t.set_color_cursor(theme.cursor.map(|x| c(x, 1.0)).as_ref());
 }
 
 impl App {
@@ -187,7 +171,7 @@ impl App {
         term.set_scroll_on_output(false);
         {
             let i = self.inner.borrow();
-            style_terminal(&term, &i.config, i.font_scale);
+            style_terminal(&term, &i.config, i.font_scale, &i.theme);
         }
 
         let scroll = gtk4::ScrolledWindow::builder()
@@ -342,29 +326,11 @@ impl App {
             term.feed(&buf);
         }
 
-        // Spawn the shell (or a tmux session that survives app restarts).
-        let (shell, use_tmux) = {
-            let c = &self.inner.borrow().config;
-            (c.shell(), c.session.backend == "tmux")
-        };
-        let tmux_name = (use_tmux && which("tmux")).then(|| crate::session::tmux_session_name(id));
-        if use_tmux && tmux_name.is_none() {
-            self.toast("session.backend is tmux but tmux is not installed; using a plain shell");
-        }
+        // Spawn the user's shell.
+        let shell = self.inner.borrow().config.shell();
         let cwd = cwd.filter(|d| d.is_dir()).unwrap_or_else(crate::paths::home);
         let cwd_s = cwd.display().to_string();
-        let argv: Vec<String> = match &tmux_name {
-            Some(n) => vec![
-                "tmux".into(),
-                "new-session".into(),
-                "-A".into(),
-                "-s".into(),
-                n.clone(),
-                "-c".into(),
-                cwd_s.clone(),
-            ],
-            None => vec![shell],
-        };
+        let argv: Vec<String> = vec![shell];
         let mut env = vec![
             format!("CMUX_PANE_ID={id}"),
             format!("CMUX_WORKSPACE_ID={wid}"),
@@ -459,7 +425,6 @@ impl App {
                 agent: None,
                 agent_session: None,
                 last_bell: Cell::new(None),
-                tmux: tmux_name,
                 pending_input: pending,
             },
         );

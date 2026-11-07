@@ -7,7 +7,7 @@ in the window and the app falls back to defaults instead of failing.
 ```toml
 [appearance]
 mode = "system"          # system | light | dark
-theme = "default"        # default | solarized | dracula | gruvbox
+theme = "default"        # "default" or any theme id, e.g. warp_dark, cyber_wave, tokyo_night (see THEMES.md)
 font = "Monospace 11"    # any Pango font description
 sidebar_width = 230
 sidebar_visible = true   # also hidden automatically below 640 px window width
@@ -23,7 +23,6 @@ bell_attention = true    # terminal bell marks the pane for attention (max once 
 
 [session]
 restore = true           # restore workspaces, layouts and directories on start
-backend = "none"         # none | tmux  (tmux keeps programs alive across restarts)
 scrollback_lines = 500   # lines of output saved per pane, shown read-only on restore (0 = off)
 
 [ipc]
