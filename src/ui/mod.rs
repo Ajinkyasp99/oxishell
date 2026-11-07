@@ -7,6 +7,7 @@ mod fonts;
 mod ipc_handler;
 mod meta_worker;
 mod pane;
+mod scroll;
 mod sidebar;
 mod suggest;
 mod themes;
@@ -48,6 +49,7 @@ pub struct App {
     pub window: adw::ApplicationWindow,
     pub stack: gtk4::Stack,
     pub sidebar_list: gtk4::ListBox,
+    sidebar_rows: RefCell<HashMap<WorkspaceId, sidebar::Row>>,
     pub usage_footer: usage_footer::Footer,
     pub split: gtk4::Paned,
     pub status: gtk4::Label,
@@ -244,6 +246,7 @@ impl App {
             window,
             stack,
             sidebar_list,
+            sidebar_rows: RefCell::new(HashMap::new()),
             usage_footer,
             split,
             status,
