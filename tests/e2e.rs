@@ -39,7 +39,9 @@ impl Env {
     fn write_config(&self, ipc_extra: &str) {
         std::fs::write(
             self.root.join("config/cmux-linux/config.toml"),
-            format!("[ipc]\n{ipc_extra}\n[notifications]\ndesktop = false\n[terminal]\nshell = \"/bin/bash\"\n[session]\nscrollback_lines = 200\n"),
+            format!(
+                "[ipc]\n{ipc_extra}\n[notifications]\ndesktop = false\n[terminal]\nshell = \"/bin/bash\"\n[session]\nreplay_lines = 200\n"
+            ),
         )
         .unwrap();
     }

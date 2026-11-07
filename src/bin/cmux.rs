@@ -70,6 +70,12 @@ enum Cmd {
     /// Install or remove agent notification hooks
     #[command(subcommand)]
     Hooks(HooksCmd),
+    /// Print the shell snippet that reports the active Python/conda env for context chips
+    /// (bash: automatic; zsh/fish: add the output to your shell config)
+    ShellIntegration {
+        /// bash, zsh or fish
+        shell: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -282,6 +288,13 @@ fn main() -> ExitCode {
             }
             return ExitCode::SUCCESS;
         }
+        Cmd::ShellIntegration { shell } => match cmux_linux::shellint::snippet(&shell) {
+            Some(s) => {
+                print!("{s}");
+                return ExitCode::SUCCESS;
+            }
+            None => Err(format!("unsupported shell {shell:?}; use bash, zsh or fish")),
+        },
         Cmd::Hooks(c) => {
             let home = cmux_linux::paths::home();
             let me = std::env::current_exe()

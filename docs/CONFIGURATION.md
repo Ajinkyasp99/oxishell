@@ -11,11 +11,16 @@ theme = "default"        # "default" or any theme id, e.g. warp_dark, cyber_wave
 font = "Monospace 11"    # any Pango font description
 sidebar_width = 230
 sidebar_visible = true   # also hidden automatically below 640 px window width
+chips = true             # context chips (Python env, folder, git) above each terminal
 
 [terminal]
 shell = ""               # empty: $SHELL, then your passwd shell, then /bin/sh
 scrollback_lines = 10000
 confirm_close_running = true
+suggestions = true       # ghost-text suggestions from shell history; accept with → or End
+compact_prompt = true    # prompt is just ❯ (red after a failed command) inside cmux-linux; new terminals
+cursor_shape = "block"   # block (solid bar) | ibeam (vertical line) | underline (horizontal line)
+cursor_blink = true
 
 [notifications]
 desktop = true           # desktop notification when the window/pane is not focused
@@ -23,7 +28,8 @@ bell_attention = true    # terminal bell marks the pane for attention (max once 
 
 [session]
 restore = true           # restore workspaces, layouts and directories on start
-scrollback_lines = 500   # lines of output saved per pane, shown read-only on restore (0 = off)
+replay_lines = 0         # replay N lines of each pane's old output after restart (0 = off: clean prompt at the top,
+                         # nothing written to disk). Replayed output moves down when the window is resized.
 
 [ipc]
 enabled = true
@@ -40,7 +46,7 @@ command = "cargo test"
 Shortcut actions: `new-workspace`, `close-workspace`, `rename-workspace`, `next-workspace`,
 `prev-workspace`, `split-right`, `split-down`, `close-pane`, `focus-left|right|up|down`, `copy`, `paste`,
 `search`, `command-palette`, `toggle-sidebar`, `jump-unread`, `notifications`, `zoom-in`, `zoom-out`,
-`zoom-reset`, `settings`. Conflicting bindings are reported when the app starts.
+`zoom-reset`, `command-history`, `settings`. Conflicting bindings are reported when the app starts.
 
 Environment variables: `CMUX_SOCKET` (socket path), `CMUX_GEOMETRY=WxH` (initial window size),
 `CMUX_NON_UNIQUE=1` (allow a second independent instance, used by tests).
@@ -51,7 +57,7 @@ Environment variables: `CMUX_SOCKET` (socket path), `CMUX_GEOMETRY=WxH` (initial
 |---|---|
 | `~/.config/cmux-linux/config.toml` | settings (mode 0600) |
 | `~/.local/state/cmux-linux/session.json` | workspaces, layouts, pane directories, agent session ids |
-| `~/.local/state/cmux-linux/scrollback/*.txt` | sanitized plain-text output per pane |
+| `~/.local/state/cmux-linux/scrollback/*.txt` | sanitized plain-text output per pane (only when `replay_lines > 0`) |
 | `$XDG_RUNTIME_DIR/cmux-linux/cmux.sock` | control socket (0600, directory 0700) |
 
 A corrupt `session.json` is renamed to `session.json.corrupt` and the app starts fresh. Restoring never

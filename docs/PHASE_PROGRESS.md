@@ -42,6 +42,10 @@ Evidence keys: **U** = unit tests (`cargo test --lib`, 37 tests), **E** = end-to
 | 5.1 | Toolbar/sidebar styling | Completed | S | |
 | 5.2 | Theme selection | Completed | S (terminal background pixel = Dracula #282a36 after `theme = "dracula"`) | applied from config at start; live switch via dialog uses the same apply path |
 | 5.2b | Warp themes (whole-window, gradients, user themes, gallery) | Completed | U (41 bundled parse, gradients, user dir, images, aliases), S (6 themes + gallery screenshots), K (switch via palette) | background images of Warp's bundled themes not shipped |
+| 5.2c | Context chips (env, folder, git) | Completed | U (bash hook reports real venv, env parsing, snippets), K+S (CommonVenv chip after `source …/activate`, branch chip updates) | zsh/fish need a one-line snippet |
+| 5.2d | Command suggestions + history search | Completed | U (bash/zsh/fish history parsing, ranking, line tracker), K+S (ghost text for `git ch`, → ran `git checkout -b feature/chips`; Ctrl+Shift+H popup) | pauses after Tab/arrows/paste by design |
+| 5.2e | Compact ❯ prompt | Completed | U (real bash: green, red after failure, untouched when off), S (overrides Ubuntu default .bashrc) | bash automatic; zsh/fish via snippet |
+| 5.2f | Cursor shape + blink | Completed | U (config validation), S (block/I-beam/underline rendered; blink on → frames differ, off → identical) | programs like vim may change the shape temporarily |
 | 5.3 | Font settings | Completed | S (`Monospace 16` visibly applied) | |
 | 5.4 | Sidebar collapse | Completed | S (auto-hide < 640 px), K | |
 | 5.5 | Context menus | Completed | K (workspace Close/Move Down, pane Split Right executed) | found and fixed a hang (ListBox row removal) |
@@ -75,7 +79,7 @@ Evidence keys: **U** = unit tests (`cargo test --lib`, 37 tests), **E** = end-to
 | 9.10 | Socket security | Completed | U, E (0600/0700, peer uid, method allow-list, size limits) | |
 | 10.1–10.2 | Config schema, persistence | Completed | U | |
 | 10.3–10.6 | Save/restore workspaces, layout, cwd | Completed | E (restart restores names, layout, `/tmp` cwd) | |
-| 10.7 | Scrollback restoration | Completed | E (display-only, ran once, escapes stripped) | |
+| 10.7 | Scrollback restoration | Completed (opt-in) | E (display-only, ran once, escapes stripped) | |
 | 10.8 | tmux/zellij detach & reattach | Removed | — | dropped from scope at the maintainer's request; the old `[session] backend` key is still accepted and ignored |
 | 10.9 | Agent resume | Completed | K (pane menu typed `claude --resume sess-77`, not executed), restart + palette typed it from the saved session | |
 | 10.10 | Interrupted shutdown, corrupt files | Completed | U, E (SIGTERM save, corrupt file set aside) | |

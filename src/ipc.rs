@@ -295,7 +295,16 @@ mod tests {
         let sock = dir.join("s.sock");
         drop(bind(&sock).unwrap()); // listener closed, file remains
         assert!(sock.exists());
-        assert!(bind(&sock).is_ok());
+        // Other tests fork processes; for a moment a child can hold a copy of the
+        // closed listener (between fork and exec), so allow a short retry.
+        let ok = (0..50).any(|_| {
+            let r = bind(&sock).is_ok();
+            if !r {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            r
+        });
+        assert!(ok);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

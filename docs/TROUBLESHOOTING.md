@@ -23,9 +23,10 @@ Normally a second launch just focuses the first window. Close the other instance
 
 **Wrong shell** — set `[terminal] shell = "/usr/bin/fish"`. Otherwise `$SHELL` is used.
 
-**Restored panes show old output** — that is the read-only replay of the last session (marked
-"restored output above (not live)"). Disable with `[session] scrollback_lines = 0`, or disable restore
-entirely with `restore = false`. A broken session file is moved to `session.json.corrupt`.
+**Terminals start empty after a restart** — by design: workspaces, splits, folders and agent sessions
+are restored, but each terminal starts clean with the prompt at the top. To also see the previous output,
+set `[session] replay_lines = 500` (Settings → Replay previous output). Note that replayed output sits
+above the prompt and moves down when the window is resized (that is how terminal scrollback works).
 
 **Processes are gone after restarting the app** — expected: closing the app ends its shells. Workspaces,
 layouts, directories and recent output come back; running programs do not.

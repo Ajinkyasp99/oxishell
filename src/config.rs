@@ -34,6 +34,8 @@ pub struct Appearance {
     pub font: String,
     pub sidebar_width: i32,
     pub sidebar_visible: bool,
+    /// Show Warp-style context chips (environment, directory, git) above terminals.
+    pub chips: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,6 +45,14 @@ pub struct Terminal {
     pub shell: String,
     pub scrollback_lines: i64,
     pub confirm_close_running: bool,
+    /// Inline command suggestions from shell history (ghost text, accept with →).
+    pub suggestions: bool,
+    /// Replace the shell prompt with a compact `❯` inside cmux-linux panes
+    /// (green, red after a failed command). Applies to new terminals.
+    pub compact_prompt: bool,
+    /// "block" (solid bar), "ibeam" (vertical line) or "underline" (horizontal line).
+    pub cursor_shape: String,
+    pub cursor_blink: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -61,8 +71,14 @@ pub struct Session {
     /// ignored so existing config files keep loading; never written back.
     #[serde(default, rename = "backend", skip_serializing)]
     pub legacy_backend: Option<toml::Value>,
-    /// Lines of scrollback saved per pane for display-only restoration (0 = off).
-    pub scrollback_lines: usize,
+    /// Replay this many lines of each pane's previous output after a restart
+    /// (display-only). 0 (default) = terminals start clean at the top and no
+    /// terminal output is written to disk.
+    pub replay_lines: usize,
+    /// Removed setting (replaced by `replay_lines`, now off by default).
+    /// Accepted and ignored so existing config files keep loading.
+    #[serde(default, rename = "scrollback_lines", skip_serializing)]
+    pub legacy_scrollback_lines: Option<toml::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,6 +104,7 @@ impl Default for Appearance {
             font: "Monospace 11".into(),
             sidebar_width: 230,
             sidebar_visible: true,
+            chips: true,
         }
     }
 }
@@ -97,6 +114,10 @@ impl Default for Terminal {
             shell: String::new(),
             scrollback_lines: 10_000,
             confirm_close_running: true,
+            suggestions: true,
+            compact_prompt: true,
+            cursor_shape: "block".into(),
+            cursor_blink: true,
         }
     }
 }
@@ -113,7 +134,8 @@ impl Default for Session {
         Self {
             restore: true,
             legacy_backend: None,
-            scrollback_lines: 500,
+            replay_lines: 0,
+            legacy_scrollback_lines: None,
         }
     }
 }
@@ -150,6 +172,7 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("zoom-in", "<Ctrl>equal", "Increase font size"),
     ("zoom-out", "<Ctrl>minus", "Decrease font size"),
     ("zoom-reset", "<Ctrl>0", "Reset font size"),
+    ("command-history", "<Ctrl><Shift>h", "Search command history"),
     ("settings", "<Ctrl>comma", "Settings"),
 ];
 
@@ -166,6 +189,12 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if !["block", "ibeam", "underline"].contains(&self.terminal.cursor_shape.as_str()) {
+            return Err(format!(
+                "terminal.cursor_shape must be block, ibeam or underline (got {:?})",
+                self.terminal.cursor_shape
+            ));
+        }
         if !["system", "light", "dark"].contains(&self.appearance.mode.as_str()) {
             return Err(format!(
                 "appearance.mode must be system, light or dark (got {:?})",
@@ -273,8 +302,10 @@ mod tests {
 
     #[test]
     fn legacy_backend_key_is_accepted_and_dropped() {
-        let c = Config::parse("[session]\nrestore = true\nbackend = \"none\"\n").unwrap();
-        assert!(!toml::to_string(&c).unwrap().contains("backend"));
+        let c = Config::parse("[session]\nrestore = true\nbackend = \"none\"\nscrollback_lines = 500\n").unwrap();
+        let out = toml::to_string(&c).unwrap();
+        assert!(!out.contains("backend") && !out.contains("scrollback_lines = 500"));
+        assert_eq!(c.session.replay_lines, 0, "old auto-written replay setting must not turn replay on");
     }
 
     #[test]
@@ -283,6 +314,14 @@ mod tests {
         assert!(Config::parse("[appearance]\nmodee = \"dark\"").is_err());
         assert!(Config::parse("[shortcuts]\nfly = \"<Ctrl>x\"").is_err());
         assert!(Config::parse("[session]\nrestored = true").is_err());
+        assert!(Config::parse("[terminal]\ncursor_shape = \"triangle\"").is_err());
+        assert_eq!(
+            Config::parse("[terminal]\ncursor_shape = \"ibeam\"\ncursor_blink = false")
+                .unwrap()
+                .terminal
+                .cursor_shape,
+            "ibeam"
+        );
         assert!(Config::parse("not toml [[[").is_err());
     }
 

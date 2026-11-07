@@ -17,6 +17,8 @@ pub struct Job {
     pub shell_pid: i32,
     pub pty_fd: i32,
     pub ports: bool,
+    /// File the shell writes its active Python/conda environment to.
+    pub env_file: PathBuf,
 }
 
 pub struct Update {
@@ -25,6 +27,7 @@ pub struct Update {
     git: Option<GitInfo>,
     ports: Option<Vec<u16>>,
     fg_agent: Option<&'static str>,
+    python_env: Option<String>,
 }
 
 const GIT_TTL: Duration = Duration::from_secs(5);
@@ -74,6 +77,7 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
                             git,
                             ports,
                             fg_agent,
+                            python_env: crate::shellint::read_env(&job.env_file),
                         })
                         .is_err()
                     {
@@ -111,6 +115,10 @@ pub fn attach(app: &AppRc, rx: async_channel::Receiver<Update>) {
                 }
                 if p.fg_agent != u.fg_agent {
                     p.fg_agent = u.fg_agent;
+                    changed = true;
+                }
+                if p.python_env != u.python_env {
+                    p.python_env = u.python_env;
                     changed = true;
                 }
                 changed

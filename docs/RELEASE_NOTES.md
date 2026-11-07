@@ -10,7 +10,7 @@ zoom, full-screen programs (vi/vim, top), interactive ssh prompts. Closing a pan
 that ignore SIGHUP are killed after 3 s.
 
 **Workspaces & splits** — sidebar with git branch/dirty count, cwd, listening ports, agent status and
-unread badges; create, rename (double-click), reorder (drag), close; nested right/down splits with
+unread badges; create, rename (double-click), reorder (drag), close with the ✕ button (always confirms); nested right/down splits with
 draggable dividers and Alt+Arrow navigation.
 
 **Notifications & agents** — attention rings, workspace badges, notifications panel, jump-to-unread,
@@ -21,14 +21,21 @@ install`); bell-as-attention; foreground agent detection; explicit, user-confirm
 including gradient backgrounds and accents; a visual theme gallery in Settings; "Theme: …" entries in the
 command palette; any Warp `.yaml` theme (with background image) can be added to `~/.config/cmux-linux/themes/`.
 
+**Suggestions & chips** — Warp/fish-style inline command suggestions from bash/zsh/fish history
+(accept with →), a command-history search popup (Ctrl+Shift+H), and context chips above each terminal
+showing the active Python venv/conda env, folder and git branch.
+
+**Prompt & cursor** — compact `❯` prompt inside cmux-linux panes (green, red after a failed command;
+user configs untouched); cursor shape block / vertical line / horizontal line, with optional blinking.
+
 **Productivity** — command palette with custom commands, configurable shortcuts, light/dark/system mode
 for the default theme, settings dialog, auto-hiding sidebar in narrow windows.
 
 **Automation** — `cmux` CLI and newline-JSON Unix socket API (0600, peer-uid checked); text injection
 disabled unless enabled.
 
-**Sessions** — workspaces, layouts, directories, display-only scrollback and agent session ids restored
-on start; graceful save on SIGTERM/SIGINT/SIGHUP; corrupt session files are set aside.
+**Sessions** — workspaces, layouts, directories and agent session ids restored on start, each terminal
+clean at the top; optional display-only replay of previous output (`replay_lines`, off by default); graceful save on SIGTERM/SIGINT/SIGHUP; corrupt session files are set aside.
 
 ### Known limitations
 - OSC 9/99/777 desktop-notification sequences are not available with Ubuntu's VTE build.

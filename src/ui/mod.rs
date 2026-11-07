@@ -1,11 +1,13 @@
 //! GTK4/libadwaita front end. The model in `crate::model` is the source of
 //! truth; widgets are (re)built from it.
 
+mod chips;
 mod dialogs;
 mod ipc_handler;
 mod meta_worker;
 mod pane;
 mod sidebar;
+mod suggest;
 mod themes;
 
 use crate::agents::AgentState;
@@ -34,6 +36,8 @@ pub struct Inner {
     pub font_scale: f64,
     /// The resolved theme (see `crate::theme`).
     pub theme: crate::theme::Theme,
+    /// Shell history for suggestions (newest first) plus commands typed this session.
+    pub history: crate::history::History,
 }
 
 pub struct App {
@@ -246,6 +250,7 @@ impl App {
                 keymap: HashMap::new(),
                 font_scale: 1.0,
                 theme: crate::theme::default_theme(true),
+                history: crate::history::History::load(&crate::paths::home()),
             }),
             meta_tx,
             suppress_select: Cell::new(false),
@@ -447,23 +452,41 @@ impl App {
         if self.inner.borrow().state.workspace(wid).is_none() {
             return Err(format!("no such workspace: {wid}"));
         }
-        let confirm = self.inner.borrow().config.terminal.confirm_close_running;
-        if !force && confirm && !self.workspace_running(wid).is_empty() {
-            if interactive {
-                let w = self.weak();
-                dialogs::confirm(
-                    self,
-                    "Close workspace?",
-                    "Programs are still running in this workspace. Closing it will terminate them.",
-                    "Close",
-                    move || {
-                        if let Some(a) = w.upgrade() {
-                            let _ = a.close_workspace(wid, true, false);
-                        }
-                    },
-                );
-                return Ok(());
+        let running = self.workspace_running(wid).len();
+        if !force && interactive {
+            // Closing from the window (button, menu, shortcut) always asks first.
+            let (name, panes) = {
+                let i = self.inner.borrow();
+                let ws = i.state.workspace(wid).unwrap();
+                (ws.name.clone(), ws.layout.panes().len())
+            };
+            let mut body = if panes == 1 {
+                "This closes its terminal and ends the shell.".to_string()
+            } else {
+                format!("This closes its {panes} terminals and ends their shells.")
+            };
+            if running > 0 {
+                body.push_str(&format!(
+                    "\n\n{running} pane{} still running a program, which will be terminated.",
+                    if running == 1 { " is" } else { "s are" }
+                ));
             }
+            let w = self.weak();
+            dialogs::confirm(
+                self,
+                &format!("Close workspace \u{201c}{name}\u{201d}?"),
+                &body,
+                "Close Workspace",
+                move || {
+                    if let Some(a) = w.upgrade() {
+                        let _ = a.close_workspace(wid, true, false);
+                    }
+                },
+            );
+            return Ok(());
+        }
+        let confirm = self.inner.borrow().config.terminal.confirm_close_running;
+        if !force && confirm && running > 0 {
             return Err("workspace has running programs; pass force to close it".into());
         }
         let panes = self.inner.borrow_mut().state.close_workspace(wid).map_err(|e| e.to_string())?;
@@ -572,6 +595,7 @@ impl App {
     fn destroy_pane(&self, pane: PaneId, kill: bool) {
         let p = self.inner.borrow_mut().panes.remove(&pane);
         self.inner.borrow_mut().notes.forget_pane(pane);
+        let _ = std::fs::remove_file(crate::shellint::env_file(pane));
         if let Some(p) = p {
             pane::detach(&p.frame);
             if kill {
@@ -860,6 +884,8 @@ impl App {
         for (id, p) in &i.panes {
             set_class(&p.frame, "focused", Some(*id) == focused);
             set_class(&p.frame, "attention", i.notes.unread_for_pane(*id) > 0);
+            p.chips
+                .update(p.python_env.as_deref(), p.cwd.as_deref(), p.git.as_ref(), i.config.appearance.chips);
         }
         let unread = i.notes.unread_total();
         self.notif_badge.set_label(&unread.to_string());
@@ -1200,6 +1226,7 @@ impl App {
                 self.apply_terminal_style();
             }
             "settings" => dialogs::settings(self),
+            "command-history" => dialogs::command_history(self),
             "show-shortcuts" => dialogs::shortcuts_help(self),
             "about" => dialogs::about(self),
             other => self.toast(&format!("Unknown action {other}")),
@@ -1224,6 +1251,7 @@ impl App {
                         shell_pid: child,
                         pty_fd: p.pty_fd(),
                         ports: Some(wid) == active || !active_only,
+                        env_file: crate::shellint::env_file(pid),
                     });
                 }
             }
@@ -1274,7 +1302,7 @@ impl App {
     pub fn save_session(&self, with_scrollback: bool) {
         let (restore, lines) = {
             let c = &self.inner.borrow().config;
-            (c.session.restore, c.session.scrollback_lines)
+            (c.session.restore, c.session.replay_lines)
         };
         if !restore {
             return;
@@ -1282,7 +1310,10 @@ impl App {
         if let Err(e) = self.snapshot().save(&crate::session::session_path()) {
             eprintln!("cmux-linux: saving session failed: {e}");
         }
-        if with_scrollback && lines > 0 {
+        if lines == 0 {
+            // Replay off: keep no terminal output on disk.
+            crate::session::prune_scrollback(&[]);
+        } else if with_scrollback {
             let i = self.inner.borrow();
             for (id, p) in &i.panes {
                 if let Err(e) = crate::session::save_scrollback(*id, &p.scrollback_text(lines), lines) {
@@ -1293,7 +1324,7 @@ impl App {
     }
 
     fn restore(self: &Rc<Self>, snap: Snapshot) {
-        let lines = self.inner.borrow().config.session.scrollback_lines;
+        let lines = self.inner.borrow().config.session.replay_lines;
         let active = snap.state.active;
         let workspaces: Vec<_> = snap.state.workspaces.iter().map(|w| (w.id, w.layout.panes())).collect();
         self.inner.borrow_mut().state = snap.state;

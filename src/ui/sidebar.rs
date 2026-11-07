@@ -64,6 +64,28 @@ pub fn rebuild(app: &AppRc) {
             badge.set_valign(gtk4::Align::Center);
             top.append(&badge);
         }
+        // Close button; asks for confirmation before closing.
+        let close = gtk4::Button::builder()
+            .icon_name("window-close-symbolic")
+            .tooltip_text("Close workspace")
+            .valign(gtk4::Align::Center)
+            .build();
+        close.add_css_class("flat");
+        close.add_css_class("circular");
+        close.add_css_class("ws-close");
+        {
+            let w = app.weak();
+            let id = ws.id;
+            close.connect_clicked(move |_| {
+                if let Some(a) = w.upgrade() {
+                    // Defer: the dialog must not open while the sidebar is mid-rebuild.
+                    gtk4::glib::idle_add_local_once(move || {
+                        let _ = a.close_workspace(id, false, true);
+                    });
+                }
+            });
+        }
+        top.append(&close);
         v.append(&top);
 
         let mut sub = Vec::new();

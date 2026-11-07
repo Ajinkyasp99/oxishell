@@ -32,13 +32,16 @@ input.
 
 | | |
 |---|---|
-| 🗂 **Workspaces** | Vertical sidebar with git branch, uncommitted-change count, working directory, listening ports, agent status and unread badges. Background workspaces keep running. Drag to reorder, double-click to rename. |
+| 🗂 **Workspaces** | Vertical sidebar with git branch, uncommitted-change count, working directory, listening ports, agent status and unread badges. Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). |
 | ⊞ **Split panes** | Split right or down, nest them, drag dividers, move focus with <kbd>Alt</kbd>+arrows. Each pane is an independent shell. |
 | 🔔 **Agent notifications** | Hooks for **Claude Code, Codex, Gemini CLI, Qoder, OpenCode**. A blue ring on the pane, a badge on the workspace, a desktop notification, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> jumps to it. |
 | 🎨 **Warp themes** | 41 built-in themes from [Warp](https://github.com/warpdotdev/themes), including gradients. They colour the whole window, not just the text. Drop any Warp `.yaml` theme in to add your own. |
+| 💡 **Command suggestions** | As you type, the newest matching command from your bash/zsh/fish history appears dimmed after the cursor. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> searches your whole history. |
+| 🏷 **Context chips** | Warp-style chips above each terminal: active Python venv/conda env, folder, git branch and changes. The prompt becomes a clean `❯` (red after a failed command). |
+| ▮ **Cursor** | Block, vertical line or horizontal line, blinking or steady. |
 | ⌘ **Command palette** | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>: every action, workspace, theme and your own project commands, with fuzzy search. |
 | 🤖 **Scriptable** | The `cmux` CLI controls the running app over a private local socket: create workspaces, split, read output, send notifications. |
-| 💾 **Sessions** | Workspaces, layouts, directories and recent output come back after a restart. Commands are never re-run. |
+| 💾 **Sessions** | Workspaces, layouts, directories and agent sessions come back after a restart, each terminal clean at the top. Commands are never re-run. |
 | 🐧 **Native** | GTK4, X11 and Wayland, light/dark aware, ~180 ms startup, ~1 % idle CPU with 20 panes ([measured](docs/PERFORMANCE.md)). |
 
 ## Install
@@ -90,6 +93,25 @@ When an agent finishes or asks for permission, its workspace gets a badge. Press
 </tr>
 </table>
 
+## Suggestions and context chips
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/suggest.png" alt="Inline suggestion: typing git ch shows eckout -b feature/chips dimmed; chips show CommonVenv, ~/proj, main"><br><sub>Type <code>git ch</code> → the rest comes from your history; press <kbd>→</kbd> to accept</sub></td>
+<td width="50%"><img src="docs/assets/history.png" alt="Command history search popup"><br><sub><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>: search history. Enter puts it on the prompt, Ctrl+Enter runs it</sub></td>
+</tr>
+</table>
+
+Suggestions only appear when you're at a shell prompt (never inside vim, Python and so on), and only while
+cmux-linux can follow your typing exactly (after <kbd>Tab</kbd>, arrow keys or paste they pause until the
+next line). The **environment chip** works automatically in bash; for zsh/fish add one line:
+`cmux shell-integration zsh >> ~/.zshrc` (or `fish >> ~/.config/fish/config.fish`). Both features can be
+turned off in Settings.
+
+Because the chips already show where you are, panes use a compact **`❯` prompt** (green, red after a
+failed command) instead of `user@host:~/path$`. This only applies inside cmux-linux; your `~/.bashrc`,
+other terminals and SSH sessions keep their own prompt. Turn it off in Settings → Compact prompt.
+
 ## Themes
 
 Every theme colours the whole window (background, sidebar, header, badges, focus rings and the terminal),
@@ -120,6 +142,8 @@ See [docs/THEMES.md](docs/THEMES.md).
 | Command palette | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
 | Copy / paste | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> |
 | Search scrollback | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> |
+| Accept suggestion | <kbd>→</kbd> or <kbd>End</kbd> |
+| Search command history | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> |
 | Jump to latest unread | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> |
 | Notifications panel | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> |
 | Toggle sidebar | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> |

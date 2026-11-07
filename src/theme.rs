@@ -316,6 +316,8 @@ impl Theme {
             surface.mix(BLACK, 0.04)
         };
         let bg_avg = self.background.average();
+        // Chip colours from the palette: bright variants read better on dark themes.
+        let chip = if self.is_dark() { self.bright } else { self.normal };
         let mut bg_css = self.background.css("bottom");
         if let Some(img) = &self.background_image {
             let veil = bg_avg.rgba(1.0 - img.opacity as f64 / 100.0);
@@ -325,8 +327,14 @@ impl Theme {
                 bg_avg.hex()
             );
         }
-        format!(
-            r#"/* generated from theme "{name}" */
+        let see_through = if self.layered_background() {
+            ".cmux-root vte-terminal, .cmux-root scrolledwindow, .cmux-root overlay, .cmux-root stack, .cmux-root paned { background: transparent; }\n"
+        } else {
+            ""
+        };
+        see_through.to_string()
+            + &format!(
+                r#"/* generated from theme "{name}" */
 @define-color accent_bg_color {a};
 @define-color accent_color {a};
 @define-color accent_fg_color {afg};
@@ -350,28 +358,39 @@ impl Theme {
 .cmux-root headerbar {{ background: {surf_t}; box-shadow: none; }}
 .cmux-root .sidebar-pane {{ background: {surf_t}; }}
 .cmux-root .statusbar {{ background: {surf_t}; color: {fg_dim}; }}
+.cmux-root headerbar, .cmux-root .statusbar {{ border-color: {line}; }}
+.cmux-root .sidebar-pane {{ border-right: 1px solid {line}; }}
 .ws-list > row:selected {{ background: {sel}; }}
 .badge {{ background: {accent_css}; color: {afg}; }}
 .pane.focused {{ border-color: {focus}; }}
 .pane.attention {{ border-color: {a}; box-shadow: 0 0 0 1px {a}, 0 0 10px {glow}; }}
 .ws-agent, .ws-attention, .notif-unread .ws-name {{ color: {a}; }}
+.chip-env {{ color: {chip_env}; }}
+.chip-dir {{ color: {chip_dir}; }}
+.chip-git {{ color: {chip_git}; }}
+.ghost {{ color: {ghost}; }}
 "#,
-            name = self.name,
-            a = accent.hex(),
-            afg = accent_fg.hex(),
-            bg = bg_avg.hex(),
-            fg = fg.hex(),
-            surf = surface.hex(),
-            raised = raised.hex(),
-            card = fg.rgba(0.06),
-            bgcss = bg_css,
-            surf_t = surface.rgba(if self.layered_background() { 0.55 } else { 1.0 }),
-            fg_dim = fg.rgba(0.7),
-            sel = accent.rgba(0.22),
-            accent_css = self.accent.css("right"),
-            focus = accent.rgba(0.55),
-            glow = accent.rgba(0.6),
-        )
+                name = self.name,
+                a = accent.hex(),
+                afg = accent_fg.hex(),
+                bg = bg_avg.hex(),
+                fg = fg.hex(),
+                surf = surface.hex(),
+                raised = raised.hex(),
+                card = fg.rgba(0.06),
+                bgcss = bg_css,
+                surf_t = surface.rgba(if self.layered_background() { 0.0 } else { 1.0 }),
+                fg_dim = fg.rgba(0.7),
+                sel = accent.rgba(0.22),
+                line = fg.rgba(0.08),
+                accent_css = self.accent.css("right"),
+                focus = accent.rgba(0.55),
+                glow = accent.rgba(0.6),
+                chip_env = chip[3].hex(),
+                chip_dir = chip[4].hex(),
+                chip_git = chip[2].hex(),
+                ghost = fg.rgba(0.4),
+            )
     }
 }
 

@@ -81,3 +81,44 @@
 .notif-unread .ws-name {
   color: #3584e4;
 }
+
+/* Workspace close button: subtle until hovered or the row is selected. */
+.ws-close {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  opacity: 0.35;
+}
+.ws-list > row:hover .ws-close,
+.ws-list > row:selected .ws-close {
+  opacity: 0.8;
+}
+.ws-close:hover {
+  opacity: 1;
+  background-color: alpha(@error_color, 0.18);
+  color: @error_color;
+}
+
+/* Warp-style context chips above each terminal. */
+.chips {
+  padding: 5px 8px 3px 8px;
+}
+.chip {
+  border-radius: 6px;
+  padding: 1px 8px;
+  background-color: alpha(currentColor, 0.08);
+  border: 1px solid alpha(currentColor, 0.18);
+  font-family: monospace;
+  font-size: 0.82em;
+}
+.chip-glyph {
+  font-weight: 800;
+}
+.chip-env { color: @warning_color; }
+.chip-dir { color: @accent_color; }
+.chip-git { color: @success_color; }
+
+/* Inline command suggestion (ghost text). */
+.ghost {
+  color: alpha(@window_fg_color, 0.4);
+}

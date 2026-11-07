@@ -3,12 +3,14 @@ pub const APP_ID: &str = "dev.cmux.Linux";
 
 pub mod agents;
 pub mod config;
+pub mod history;
 pub mod ipc;
 pub mod meta;
 pub mod model;
 pub mod notify;
 pub mod paths;
 pub mod session;
+pub mod shellint;
 pub mod theme;
 mod theme_builtin;
 pub mod ui;

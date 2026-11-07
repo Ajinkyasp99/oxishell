@@ -468,12 +468,18 @@ pub fn settings(app: &AppRc) {
     font_btn.set_valign(gtk4::Align::Center);
     let font = adw::ActionRow::builder().title("Font").build();
     font.add_suffix(&font_btn);
+    let chips = adw::SwitchRow::builder()
+        .title("Context chips")
+        .subtitle("Python environment, folder and git branch above each terminal")
+        .active(cfg.appearance.chips)
+        .build();
     let sidebar = adw::SwitchRow::builder()
         .title("Show sidebar")
         .active(cfg.appearance.sidebar_visible)
         .build();
     g.add(&mode);
     g.add(&font);
+    g.add(&chips);
     g.add(&sidebar);
     page.add(&g);
     page.add(&super::themes::gallery(app));
@@ -489,6 +495,34 @@ pub fn settings(app: &AppRc) {
         .build();
     tg.add(&scroll);
     tg.add(&confirm);
+    let suggestions = adw::SwitchRow::builder()
+        .title("Command suggestions")
+        .subtitle("Show matching commands from your history as you type; press → to accept")
+        .active(cfg.terminal.suggestions)
+        .build();
+    tg.add(&suggestions);
+    let compact = adw::SwitchRow::builder()
+        .title("Compact prompt")
+        .subtitle("Show just ❯ (red after a failed command); folder and branch are in the chips. Applies to new terminals")
+        .active(cfg.terminal.compact_prompt)
+        .build();
+    tg.add(&compact);
+    let shapes = ["block", "ibeam", "underline"];
+    let cursor = adw::ComboRow::builder()
+        .title("Cursor shape")
+        .model(&gtk4::StringList::new(&[
+            "█  Block (solid bar)",
+            "▏  Vertical line",
+            "▁  Horizontal line",
+        ]))
+        .build();
+    cursor.set_selected(shapes.iter().position(|s| *s == cfg.terminal.cursor_shape).unwrap_or(0) as u32);
+    let blink = adw::SwitchRow::builder()
+        .title("Blinking cursor")
+        .active(cfg.terminal.cursor_blink)
+        .build();
+    tg.add(&cursor);
+    tg.add(&blink);
     page.add(&tg);
 
     let ng = adw::PreferencesGroup::builder().title("Notifications").build();
@@ -510,12 +544,19 @@ pub fn settings(app: &AppRc) {
         .title("Restore workspaces and layouts on start")
         .active(cfg.session.restore)
         .build();
+    let replay = adw::SpinRow::with_range(0.0, 5000.0, 100.0);
+    replay.set_title("Replay previous output (lines)");
+    replay.set_subtitle(
+        "0 = off: terminals start clean at the top. Replayed output is saved to disk and moves down if the window is resized.",
+    );
+    replay.set_value(cfg.session.replay_lines as f64);
     let allow_send = adw::SwitchRow::builder()
         .title("Allow `cmux send` to type into panes")
         .subtitle("Off by default; only same-user local clients can connect")
         .active(cfg.ipc.allow_send)
         .build();
     sg.add(&restore);
+    sg.add(&replay);
     sg.add(&allow_send);
     page.add(&sg);
     d.add(&page);
@@ -636,6 +677,34 @@ pub fn settings(app: &AppRc) {
     }
     {
         let ap = apply.clone();
+        suggestions.connect_active_notify(move |r| {
+            let v = r.is_active();
+            ap(&move |c| c.terminal.suggestions = v);
+        });
+    }
+    {
+        let ap = apply.clone();
+        compact.connect_active_notify(move |r| {
+            let v = r.is_active();
+            ap(&move |c| c.terminal.compact_prompt = v);
+        });
+    }
+    {
+        let ap = apply.clone();
+        cursor.connect_selected_notify(move |r| {
+            let v = shapes[(r.selected() as usize).min(2)].to_string();
+            ap(&move |c| c.terminal.cursor_shape = v.clone());
+        });
+    }
+    {
+        let ap = apply.clone();
+        blink.connect_active_notify(move |r| {
+            let v = r.is_active();
+            ap(&move |c| c.terminal.cursor_blink = v);
+        });
+    }
+    {
+        let ap = apply.clone();
         desktop.connect_active_notify(move |r| {
             let v = r.is_active();
             ap(&move |c| c.notifications.desktop = v);
@@ -653,6 +722,24 @@ pub fn settings(app: &AppRc) {
         restore.connect_active_notify(move |r| {
             let v = r.is_active();
             ap(&move |c| c.session.restore = v);
+        });
+    }
+    {
+        let ap = apply.clone();
+        let w = app.weak();
+        chips.connect_active_notify(move |r| {
+            let v = r.is_active();
+            ap(&move |c| c.appearance.chips = v);
+            if let Some(a) = w.upgrade() {
+                a.refresh();
+            }
+        });
+    }
+    {
+        let ap = apply.clone();
+        replay.connect_value_notify(move |r| {
+            let v = r.value() as usize;
+            ap(&move |c| c.session.replay_lines = v);
         });
     }
     {
@@ -767,6 +854,166 @@ pub fn about(app: &AppRc) {
         .developer_name("Ajinkya Patil")
         .build();
     d.present(Some(&app.window));
+}
+
+// ---- command history search ------------------------------------------------------
+
+/// Search shell history (bash/zsh/fish + this session). Enter puts the command
+/// on the prompt (replacing what was typed) for review; Ctrl+Enter also runs it.
+pub fn command_history(app: &AppRc) {
+    let Some(pane) = app.focused_pane() else { return };
+    let prefill = app
+        .inner
+        .borrow()
+        .panes
+        .get(&pane)
+        .map(|p| p.suggest.tracker.borrow().clone())
+        .filter(|t| t.valid)
+        .map(|t| t.line)
+        .unwrap_or_default();
+    let d = adw::Dialog::builder()
+        .title("Command History")
+        .content_width(640)
+        .content_height(460)
+        .build();
+    let entry = gtk4::SearchEntry::builder()
+        .placeholder_text("Search your command history…")
+        .text(prefill.trim())
+        .margin_top(10)
+        .margin_start(10)
+        .margin_end(10)
+        .build();
+    let hint = gtk4::Label::builder()
+        .label("Enter: put on prompt   ·   Ctrl+Enter: run   ·   Esc: close")
+        .margin_top(4)
+        .build();
+    hint.add_css_class("palette-accel");
+    let list = gtk4::ListBox::new();
+    list.add_css_class("palette-list");
+    list.add_css_class("boxed-list");
+    list.set_selection_mode(gtk4::SelectionMode::Browse);
+    let fill = {
+        let w = app.weak();
+        let list = list.clone();
+        Rc::new(move |q: &str| {
+            let Some(a) = w.upgrade() else { return };
+            while let Some(c) = list.row_at_index(0) {
+                list.remove(&c);
+            }
+            let i = a.inner.borrow();
+            for cmd in i.history.search(q, 200) {
+                let row = gtk4::ListBoxRow::new();
+                let l = gtk4::Label::builder()
+                    .label(cmd)
+                    .xalign(0.0)
+                    .ellipsize(gtk4::pango::EllipsizeMode::End)
+                    .build();
+                l.add_css_class("monospace");
+                row.set_child(Some(&l));
+                row.set_tooltip_text(Some(cmd));
+                list.append(&row);
+            }
+            if let Some(r) = list.row_at_index(0) {
+                list.select_row(Some(&r));
+            }
+        })
+    };
+    fill(&prefill);
+    {
+        let f = fill.clone();
+        entry.connect_search_changed(move |e| f(&e.text()));
+    }
+    let insert = {
+        let w = app.weak();
+        let d = d.clone();
+        Rc::new(move |row: &gtk4::ListBoxRow, run: bool| {
+            let cmd = row.tooltip_text().map(|t| t.to_string()).unwrap_or_default();
+            d.close();
+            let Some(a) = w.upgrade() else { return };
+            if let Some(p) = a.inner.borrow().panes.get(&pane) {
+                // Ctrl+U clears the current input line in bash, zsh and fish.
+                let mut text = format!("\u{15}{cmd}");
+                if run {
+                    text.push('\r');
+                }
+                p.send_input(text.as_bytes());
+                let mut t = p.suggest.tracker.borrow_mut();
+                t.reset();
+                if !run {
+                    t.line = cmd.clone();
+                }
+            }
+            a.focus_pane(pane);
+        })
+    };
+    {
+        let l = list.clone();
+        let ins = insert.clone();
+        entry.connect_activate(move |_| {
+            if let Some(r) = l.selected_row() {
+                ins(&r, false);
+            }
+        });
+    }
+    {
+        let ins = insert.clone();
+        list.connect_row_activated(move |_, r| ins(r, false));
+    }
+    {
+        // Ctrl+Enter runs; Down moves into the list.
+        let l = list.clone();
+        let ins = insert;
+        let keys = gtk4::EventControllerKey::new();
+        keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        keys.connect_key_pressed(move |_, k, _, state| {
+            let ctrl = state.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
+            if ctrl && matches!(k, gtk4::gdk::Key::Return | gtk4::gdk::Key::KP_Enter) {
+                if let Some(r) = l.selected_row() {
+                    ins(&r, true);
+                }
+                return glib::Propagation::Stop;
+            }
+            if k == gtk4::gdk::Key::Down {
+                let next = l.selected_row().and_then(|r| l.row_at_index(r.index() + 1));
+                if let Some(n) = next {
+                    l.select_row(Some(&n));
+                    n.grab_focus();
+                }
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        entry.add_controller(keys);
+    }
+    {
+        let d = d.clone();
+        entry.connect_stop_search(move |_| {
+            d.close();
+        });
+    }
+    let scroll = gtk4::ScrolledWindow::builder()
+        .vexpand(true)
+        .child(&list)
+        .margin_start(10)
+        .margin_end(10)
+        .margin_bottom(10)
+        .margin_top(6)
+        .build();
+    let v = gtk4::Box::new(Orientation::Vertical, 0);
+    v.append(&entry);
+    v.append(&hint);
+    v.append(&scroll);
+    d.set_child(Some(&v));
+    d.present(Some(&app.window));
+    entry.grab_focus();
+    {
+        // Keep the pre-filled text and continue typing after it (no select-all).
+        let e = entry.clone();
+        glib::idle_add_local_once(move || {
+            e.select_region(-1, -1);
+            e.set_position(-1);
+        });
+    }
 }
 
 #[cfg(test)]

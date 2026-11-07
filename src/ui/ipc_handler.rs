@@ -57,6 +57,7 @@ fn pane_json(a: &AppRc, pane: u64) -> Value {
             "ports": p.ports,
             "agent": p.agent.as_ref().map(|(a, s, m)| json!({"agent": a, "state": s, "message": m})),
             "detected_agent": p.fg_agent,
+            "python_env": p.python_env,
             "unread": i.notes.unread_for_pane(pane),
         }),
         None => json!({"id": pane, "workspace": wid}),

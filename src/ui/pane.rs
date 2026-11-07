@@ -33,6 +33,10 @@ pub struct Pane {
     pub last_bell: Cell<Option<Instant>>,
     /// Input sent before the shell finished spawning; flushed once it has.
     pub pending_input: Rc<std::cell::RefCell<Option<Vec<u8>>>>,
+    /// Active Python/conda environment reported by shell integration.
+    pub python_env: Option<String>,
+    pub chips: super::chips::Chips,
+    pub suggest: super::suggest::Suggest,
 }
 
 const PCRE2_CASELESS: u32 = 0x0000_0008;
@@ -154,7 +158,20 @@ pub fn style_terminal(t: &vte4::Terminal, cfg: &Config, scale: f64, theme: &crat
         Some(&c(theme.background.average(), bg_alpha)),
         &refs,
     );
+    // VTE paints its background unless told not to; let the window gradient show through.
+    t.set_clear_background(!theme.layered_background());
     t.set_color_cursor(theme.cursor.map(|x| c(x, 1.0)).as_ref());
+    // Programs like vim may still change the shape temporarily (DECSCUSR).
+    t.set_cursor_shape(match cfg.terminal.cursor_shape.as_str() {
+        "ibeam" => vte4::CursorShape::Ibeam,
+        "underline" => vte4::CursorShape::Underline,
+        _ => vte4::CursorShape::Block,
+    });
+    t.set_cursor_blink_mode(if cfg.terminal.cursor_blink {
+        vte4::CursorBlinkMode::On
+    } else {
+        vte4::CursorBlinkMode::Off
+    });
 }
 
 impl App {
@@ -233,8 +250,15 @@ impl App {
         frame.add_css_class("pane");
         frame.set_hexpand(true);
         frame.set_vexpand(true);
+        let chips = super::chips::Chips::new();
         frame.append(&search);
-        frame.append(&scroll);
+        frame.append(&chips.bar);
+        // Overlay so inline suggestions can be drawn over the terminal.
+        let overlay = gtk4::Overlay::new();
+        overlay.set_child(Some(&scroll));
+        let suggest = super::suggest::Suggest::new(&overlay);
+        super::suggest::attach(self, id, &term, &suggest);
+        frame.append(&overlay);
 
         // Pane context menu.
         let menu = gio::Menu::new();
@@ -338,6 +362,19 @@ impl App {
             "TERM_PROGRAM=cmux-linux".to_string(),
             format!("TERM_PROGRAM_VERSION={}", env!("CARGO_PKG_VERSION")),
         ];
+        // Context chips: the shell reports its active Python/conda env to this file.
+        let env_file = crate::shellint::env_file(id);
+        if let Some(dir) = env_file.parent() {
+            let _ = crate::paths::ensure_private_dir(dir);
+        }
+        let _ = std::fs::remove_file(&env_file);
+        env.push(format!("CMUX_ENV_FILE={}", env_file.display()));
+        if self.inner.borrow().config.terminal.compact_prompt {
+            env.push("CMUX_COMPACT_PROMPT=1".to_string());
+        }
+        if crate::shellint::shell_name(&argv[0]) == "bash" {
+            env.push(format!("PROMPT_COMMAND={}", crate::shellint::BASH_PROMPT_COMMAND));
+        }
         // Make the bundled `cmux` CLI reachable for hooks when running from a build dir.
         if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
             if dir.join("cmux").is_file() {
@@ -426,6 +463,9 @@ impl App {
                 agent_session: None,
                 last_bell: Cell::new(None),
                 pending_input: pending,
+                python_env: None,
+                chips,
+                suggest,
             },
         );
     }
