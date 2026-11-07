@@ -525,6 +525,14 @@ pub fn settings(app: &AppRc) {
         .active(cfg.terminal.history_panel)
         .build();
     tg.add(&hist_panel);
+    let blocks = adw::SwitchRow::builder()
+        .title("Command blocks")
+        .subtitle(
+            "Separate every command with a line and a header showing folder, branch, exit status and duration. Applies to new terminals",
+        )
+        .active(cfg.terminal.command_blocks)
+        .build();
+    tg.add(&blocks);
     let shapes = ["block", "ibeam", "underline"];
     let cursor = adw::ComboRow::builder()
         .title("Cursor shape")
@@ -714,6 +722,7 @@ pub fn settings(app: &AppRc) {
         ),
         (&vivid, |c: &mut Config, v: bool| c.terminal.vivid_colors = v),
         (&hist_panel, |c: &mut Config, v: bool| c.terminal.history_panel = v),
+        (&blocks, |c: &mut Config, v: bool| c.terminal.command_blocks = v),
     ] {
         let ap = apply.clone();
         row.connect_active_notify(move |r| {

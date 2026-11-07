@@ -292,3 +292,8 @@
   padding: 12px;
   opacity: 0.6;
 }
+
+/* Command block headers (folder, branch, status, duration). */
+.blocks {
+  font-size: 0.82em;
+}

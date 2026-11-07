@@ -70,7 +70,7 @@ pub(super) fn last_line_row(screen: &str, cols: usize) -> Option<usize> {
 }
 
 /// Terminal cells taken by `c` (common wide and zero-width ranges).
-fn cell_width(c: char) -> usize {
+pub(super) fn cell_width(c: char) -> usize {
     match c as u32 {
         0x300..=0x36F | 0x200B..=0x200F | 0xFE00..=0xFE0F => 0,
         0x1100..=0x115F
@@ -149,6 +149,10 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, s: &Suggest) {
         term.connect_commit(move |_, text, _| {
             let ev = tracker.borrow_mut().feed(text);
             if let Some(a) = w.upgrade() {
+                // An empty Enter only redraws the prompt: no block for it.
+                if matches!(&ev, Event::Submitted(c) if c.as_deref() != Some("")) {
+                    a.command_submitted(pane);
+                }
                 if let Event::Submitted(Some(cmd)) = ev {
                     if let Ok(mut i) = a.inner.try_borrow_mut() {
                         i.history.push(&cmd);

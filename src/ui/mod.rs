@@ -1,6 +1,7 @@
 //! GTK4/libadwaita front end. The model in `crate::model` is the source of
 //! truth; widgets are (re)built from it.
 
+mod blocks;
 mod chips;
 mod dialogs;
 mod fonts;
@@ -1033,7 +1034,22 @@ impl App {
         let i = self.inner.borrow();
         for p in i.panes.values() {
             pane::style_terminal(&p.term, &i.config, i.font_scale, &i.theme);
+            p.blocks.apply_style(&i.config, &i.theme);
         }
+    }
+
+    /// A command line was submitted in `pane`: start a command block for it.
+    pub fn command_submitted(&self, pane: PaneId) {
+        let Ok(i) = self.inner.try_borrow() else { return };
+        let Some(p) = i.panes.get(&pane) else { return };
+        if p.has_running_child() {
+            return; // Enter inside a program (an agent, a REPL…), not a shell command
+        }
+        p.blocks.on_submit(
+            p.cwd.as_deref(),
+            p.git.as_ref().map(|g| g.branch.as_str()),
+            crate::shellint::env_file(pane),
+        );
     }
 
     fn rebuild_keymap(&self) {

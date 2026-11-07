@@ -37,6 +37,7 @@ pub struct Pane {
     pub python_env: Option<String>,
     pub chips: super::chips::Chips,
     pub suggest: super::suggest::Suggest,
+    pub blocks: Rc<super::blocks::Blocks>,
 }
 
 pub(super) const PCRE2_CASELESS: u32 = 0x0000_0008;
@@ -301,6 +302,12 @@ impl App {
 
         let pid_cell: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
         let pending: Rc<std::cell::RefCell<Option<Vec<u8>>>> = Rc::new(std::cell::RefCell::new(Some(Vec::new())));
+        let blocks = super::blocks::Blocks::new(&term, pid_cell.clone());
+        overlay.add_overlay(&blocks.area);
+        {
+            let i = self.inner.borrow();
+            blocks.apply_style(&i.config, &i.theme);
+        }
 
         // Signals: defer to idle so handlers never run while the model is borrowed.
         {
@@ -388,6 +395,9 @@ impl App {
         }
         if self.inner.borrow().config.terminal.highlight_commands {
             env.push("CMUX_HIGHLIGHT_CMD=1".to_string());
+        }
+        if self.inner.borrow().config.terminal.command_blocks {
+            env.push("CMUX_BLOCKS=1".to_string());
         }
         if crate::shellint::shell_name(&argv[0]) == "bash" {
             env.push(format!("PROMPT_COMMAND={}", crate::shellint::BASH_PROMPT_COMMAND));
@@ -483,6 +493,7 @@ impl App {
                 python_env: None,
                 chips,
                 suggest,
+                blocks,
             },
         );
     }

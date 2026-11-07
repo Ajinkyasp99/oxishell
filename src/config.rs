@@ -62,6 +62,9 @@ pub struct Terminal {
     /// Pressing ↑ at the shell prompt opens a history panel (Warp style),
     /// filtered by what is already typed.
     pub history_panel: bool,
+    /// Warp-style command blocks: a separator and a header (folder, branch,
+    /// exit status, duration) above every command. Applies to new terminals.
+    pub command_blocks: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -130,6 +133,7 @@ impl Default for Terminal {
             vivid_colors: true,
             highlight_commands: true,
             history_panel: true,
+            command_blocks: true,
         }
     }
 }
