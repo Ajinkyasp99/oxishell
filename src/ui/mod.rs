@@ -15,6 +15,7 @@ mod sidebar;
 mod suggest;
 mod themes;
 mod usage_footer;
+pub mod vte_fix;
 mod zoom;
 
 use crate::agents::AgentState;
@@ -75,6 +76,9 @@ const NARROW_WIDTH: i32 = 640;
 
 /// Entry point used by `main`: activate builds the window once.
 pub fn run() -> glib::ExitCode {
+    // Before any terminal draws: VTE 0.76 would otherwise crash ~30 s after a
+    // zoom, font change or pane close (see vte_fix).
+    vte_fix::install();
     // Register before GTK creates its first Pango font map. Build surfaces errors.
     let _ = fonts::register();
     let mut flags = gio::ApplicationFlags::empty();
