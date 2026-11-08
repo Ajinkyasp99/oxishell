@@ -5,9 +5,11 @@ mod blocks;
 mod chips;
 mod desktop_notify;
 mod dialogs;
+mod edge_reveal;
 mod fonts;
 mod history_panel;
 mod ipc_handler;
+mod island;
 mod links;
 mod meta_worker;
 mod pane;
@@ -60,8 +62,14 @@ pub struct App {
     pub split: gtk4::Paned,
     pub status: gtk4::Label,
     pub toasts: adw::ToastOverlay,
+    /// Owns the notifications popover; it is the island's button.
     pub notif_button: gtk4::MenuButton,
-    pub notif_badge: gtk4::Label,
+    /// Header capsule: workspace name, agent state, flashes, unread count.
+    pub island: island::Island,
+    /// Workspace name drawn faintly in the middle of the terminal area.
+    pub watermark: gtk4::Label,
+    /// Header buttons that auto-hide until the pointer reaches the header.
+    pub edge: Rc<edge_reveal::EdgeReveal>,
     /// Desktop (OS) notifications with sound; see `desktop_notify`.
     pub desktop: Rc<desktop_notify::Desktop>,
     /// Generated CSS for the current theme (whole-window colours, gradients).
@@ -129,8 +137,11 @@ impl App {
 
         // Header bar
         let header = adw::HeaderBar::new();
-        let title = adw::WindowTitle::new("oxishell", "");
-        header.set_title_widget(Some(&title));
+        header.add_css_class("oxi-header");
+        let island = island::Island::new();
+        header.set_title_widget(Some(&island.button));
+        // Window controls always sit on the right, whatever the desktop's layout.
+        header.set_decoration_layout(Some(":minimize,maximize,close"));
         let sidebar_btn = gtk4::Button::builder()
             .icon_name("sidebar-show-symbolic")
             .tooltip_text("Toggle sidebar (Ctrl+Shift+B)")
@@ -141,8 +152,6 @@ impl App {
             .tooltip_text("New workspace (Ctrl+Shift+N)")
             .action_name("app.new-workspace")
             .build();
-        header.pack_start(&sidebar_btn);
-        header.pack_start(&new_ws);
         let split_r = gtk4::Button::builder()
             .icon_name("view-dual-symbolic")
             .tooltip_text("Split right (Ctrl+Shift+E)")
@@ -166,21 +175,16 @@ impl App {
             .tooltip_text("Main menu")
             .build();
 
-        let notif_badge = gtk4::Label::new(None);
-        notif_badge.add_css_class("badge");
-        notif_badge.set_visible(false);
-        let bell_box = gtk4::Box::new(Orientation::Horizontal, 4);
-        bell_box.append(&gtk4::Image::from_icon_name("preferences-system-notifications-symbolic"));
-        bell_box.append(&notif_badge);
-        let notif_button = gtk4::MenuButton::builder()
-            .child(&bell_box)
-            .tooltip_text("Notifications (Ctrl+Shift+I)")
-            .build();
+        // Notifications open from the island; there is no separate bell.
+        let notif_button = island.button.clone();
 
-        header.pack_end(&menu_btn);
-        header.pack_end(&notif_button);
-        header.pack_end(&split_d);
-        header.pack_end(&split_r);
+        // Everything but the window controls can slide away (auto-hide setting).
+        let edge = edge_reveal::EdgeReveal::new(
+            &header,
+            &[sidebar_btn.upcast_ref(), new_ws.upcast_ref()],
+            &[split_r.upcast_ref(), split_d.upcast_ref(), menu_btn.upcast_ref()],
+            vec![menu_btn.clone()],
+        );
 
         // Sidebar
         let sidebar_box = gtk4::Box::new(Orientation::Vertical, 0);
@@ -208,9 +212,24 @@ impl App {
         stack.set_hhomogeneous(false);
         stack.set_vhomogeneous(false);
 
+        // Faint workspace name centred behind the terminals; never takes input.
+        let watermark = gtk4::Label::builder()
+            .halign(gtk4::Align::Center)
+            .valign(gtk4::Align::Center)
+            .justify(gtk4::Justification::Center)
+            .can_target(false)
+            .can_focus(false)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .build();
+        watermark.add_css_class("ws-watermark");
+        let stack_overlay = gtk4::Overlay::new();
+        stack_overlay.set_child(Some(&stack));
+        stack_overlay.add_overlay(&watermark);
+        stack_overlay.set_clip_overlay(&watermark, true);
+
         let split = gtk4::Paned::new(Orientation::Horizontal);
         split.set_start_child(Some(&sidebar_box));
-        split.set_end_child(Some(&stack));
+        split.set_end_child(Some(&stack_overlay));
         split.set_shrink_start_child(false);
         split.set_resize_start_child(false);
         split.set_position(config.appearance.sidebar_width);
@@ -283,7 +302,9 @@ impl App {
             status,
             toasts,
             notif_button,
-            notif_badge,
+            island,
+            watermark,
+            edge,
             desktop: desktop_notify::Desktop::new(gapp),
             theme_css,
             inner: RefCell::new(Inner {
@@ -303,19 +324,12 @@ impl App {
             quitting: Cell::new(false),
         });
 
-        // Keep the title in sync.
+        // Keep the island and watermark in sync with the visible workspace.
         {
             let w = Rc::downgrade(&app);
             app.stack.connect_visible_child_name_notify(move |_| {
                 if let Some(a) = w.upgrade() {
-                    let name = a
-                        .inner
-                        .borrow()
-                        .state
-                        .active_workspace()
-                        .map(|w| w.name.clone())
-                        .unwrap_or_default();
-                    title.set_subtitle(&name);
+                    a.sync_island();
                 }
             });
         }
@@ -860,6 +874,12 @@ impl App {
     }
 
     pub fn notify_kind(self: &Rc<Self>, pane: Option<PaneId>, title: &str, body: &str, source: &str, kind: Kind) -> u64 {
+        self.notify_with(pane, title, body, source, kind, None)
+    }
+
+    /// `notify_kind`, plus `extra` text (e.g. how long an agent worked) for
+    /// the island flash only.
+    fn notify_with(self: &Rc<Self>, pane: Option<PaneId>, title: &str, body: &str, source: &str, kind: Kind, extra: Option<String>) -> u64 {
         let wid = pane.and_then(|p| self.inner.borrow().state.workspace_of(p));
         let seen = self.pane_seen(pane);
         let (id, title, body, desktop, sound) = {
@@ -873,6 +893,15 @@ impl App {
                 }
             }
             (r.0, r.1, r.2, desktop, sound)
+        };
+        let flash = {
+            // Name the workspace when the event happened somewhere else.
+            let i = self.inner.borrow();
+            let other_ws = wid
+                .filter(|w| Some(*w) != i.state.active_workspace().map(|a| a.id))
+                .and_then(|w| i.state.workspace(w).map(|w| w.name.clone()));
+            let extra = [extra, other_ws].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+            island::flash_text(kind, &title, &body, Some(&extra))
         };
         if !seen && desktop {
             let ws_name = wid.and_then(|w| self.inner.borrow().state.workspace(w).map(|w| w.name.clone()));
@@ -890,6 +919,7 @@ impl App {
                 sound,
             });
         }
+        self.island.flash(kind, &flash);
         self.refresh();
         id
     }
@@ -926,26 +956,39 @@ impl App {
         message: Option<String>,
         session: Option<String>,
     ) -> Result<(), String> {
-        {
+        let worked = {
             let mut i = self.inner.borrow_mut();
             let p = i.panes.get_mut(&pane).ok_or(format!("no such pane: {pane}"))?;
+            // Time the turn: from the first Running report to the next stop.
+            let worked = match state {
+                AgentState::Running => {
+                    if p.agent_since.is_none() {
+                        p.agent_since = Some(std::time::Instant::now());
+                    }
+                    None
+                }
+                AgentState::Waiting => None,
+                AgentState::Idle | AgentState::Ended => p.agent_since.take().map(|t| t.elapsed()),
+            };
             p.agent = Some((agent.to_string(), state, message.clone()));
             if let Some(s) = session {
                 p.agent_session = Some((agent.to_string(), s));
             }
-        }
+            worked
+        };
         if state.notifies() {
             let name = crate::agents::display_name(agent);
             let (title, kind) = match state {
                 AgentState::Waiting => (format!("{name} needs input"), Kind::AgentInput),
                 _ => (format!("{name} finished"), Kind::AgentDone),
             };
-            self.notify_kind(
+            self.notify_with(
                 Some(pane),
                 &title,
                 message.as_deref().unwrap_or(""),
                 &format!("agent:{agent}"),
                 kind,
+                worked.filter(|d| d.as_secs() >= 1).map(blocks::fmt_duration),
             );
         } else {
             self.refresh();
@@ -970,17 +1013,44 @@ impl App {
         }
         // Desktop notifications go away once their entry has been seen.
         self.desktop.sync(|id| i.notes.is_unread(id));
-        let unread = i.notes.unread_total();
-        self.notif_badge.set_label(&unread.to_string());
-        self.notif_badge.set_visible(unread > 0);
+        self.island.set_unread(i.notes.unread_total());
         self.status.set_label(&status_text(&i));
         let title = i.state.active_workspace().map(|w| w.name.clone()).unwrap_or_default();
         drop(i);
+        self.sync_island();
         self.window.set_title(Some(&if title.is_empty() {
             "oxishell".to_string()
         } else {
             format!("{title} — oxishell")
         }));
+    }
+
+    /// Island name/dot and the background watermark follow the active workspace.
+    fn sync_island(&self) {
+        let i = self.inner.borrow();
+        let Some(ws) = i.state.active_workspace() else {
+            self.island.set_workspace("", island::Activity::None);
+            self.watermark.set_label("");
+            return;
+        };
+        let mut activity = island::Activity::None;
+        for p in ws.layout.panes().iter().filter_map(|id| i.panes.get(id)) {
+            let a = match &p.agent {
+                Some((_, AgentState::Waiting, _)) => island::Activity::Waiting,
+                Some((_, AgentState::Running, _)) => island::Activity::Working,
+                Some((_, AgentState::Idle, _)) => island::Activity::Present,
+                _ if p.fg_agent.is_some() => island::Activity::Present,
+                _ => island::Activity::None,
+            };
+            activity = strongest(activity, a);
+        }
+        let show_mark = i.config.appearance.watermark;
+        self.island.set_workspace(&ws.name, activity);
+        let mark = if show_mark { ws.name.as_str() } else { "" };
+        if self.watermark.label() != mark {
+            self.watermark.set_label(mark);
+        }
+        self.watermark.set_visible(show_mark);
     }
 
     fn fit_sidebar_to_width(&self) {
@@ -1017,10 +1087,11 @@ impl App {
 
     /// Apply appearance, fonts, colors and shortcuts from the current config.
     pub fn apply_config(self: &Rc<Self>) {
-        let (mode, name) = {
+        let (mode, name, autohide) = {
             let c = &self.inner.borrow().config.appearance;
-            (c.mode.clone(), c.theme.clone())
+            (c.mode.clone(), c.theme.clone(), c.autohide_buttons)
         };
+        self.edge.set_autohide(autohide);
         let sm = adw::StyleManager::default();
         let (theme, found) = crate::theme::resolve(&name, sm.is_dark());
         if !found {
@@ -1548,6 +1619,22 @@ fn set_class(w: &impl IsA<gtk4::Widget>, class: &str, on: bool) {
         w.add_css_class(class);
     } else {
         w.remove_css_class(class);
+    }
+}
+
+/// The more urgent of two activities (Waiting > Working > Present > None).
+fn strongest(a: island::Activity, b: island::Activity) -> island::Activity {
+    use island::Activity::*;
+    let rank = |x| match x {
+        Waiting => 3,
+        Working => 2,
+        Present => 1,
+        None => 0,
+    };
+    if rank(b) > rank(a) {
+        b
+    } else {
+        a
     }
 }
 

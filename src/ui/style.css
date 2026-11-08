@@ -297,3 +297,129 @@
 .blocks {
   font-size: 0.82em;
 }
+
+/* ---- Slim header + Agent Island ---------------------------------------- */
+headerbar.oxi-header {
+  min-height: 32px;
+}
+headerbar.oxi-header > windowhandle > box {
+  padding: 2px 6px;
+}
+headerbar.oxi-header button,
+headerbar.oxi-header menubutton > button {
+  min-height: 24px;
+  min-width: 24px;
+  padding: 2px 5px;
+}
+headerbar.oxi-header windowcontrols > button {
+  min-height: 22px;
+  min-width: 22px;
+  padding: 0;
+}
+headerbar.oxi-header windowcontrols > button > image {
+  padding: 3px;
+}
+
+/* The capsule: always dark, like a notch, in light and dark themes. */
+menubutton.island > button {
+  min-height: 22px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background-color: alpha(black, 0.82);
+  color: white;
+  box-shadow: inset 0 0 0 1px alpha(@accent_color, 0.28);
+  transition: background-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+menubutton.island > button:hover,
+menubutton.island > button:checked {
+  background-color: black;
+  box-shadow: inset 0 0 0 1px alpha(@accent_color, 0.6);
+}
+menubutton.island > button > box > arrow {
+  -gtk-icon-size: 0;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+}
+.island-name {
+  font-weight: 700;
+  font-size: 0.9em;
+}
+.island-dot {
+  min-width: 7px;
+  min-height: 7px;
+  border-radius: 999px;
+  background-color: @accent_color;
+}
+.island-dot.working {
+  animation: island-pulse 1100ms ease-in-out infinite alternate;
+}
+.island-dot.waiting {
+  background-color: @warning_color;
+  animation: island-pulse 600ms ease-in-out infinite alternate;
+}
+.island-dot.present {
+  opacity: 0.6;
+}
+@keyframes island-pulse {
+  from { opacity: 1; box-shadow: 0 0 0 0 alpha(@accent_color, 0.6); }
+  to { opacity: 0.35; box-shadow: 0 0 0 3px alpha(@accent_color, 0); }
+}
+.island-sep {
+  min-width: 1px;
+  margin: 5px 2px;
+  background-color: alpha(white, 0.2);
+}
+.island-detail {
+  font-size: 0.85em;
+  color: alpha(white, 0.78);
+}
+.island-glyph {
+  font-weight: 800;
+  font-size: 0.85em;
+}
+.flash-done .island-glyph { color: @accent_color; }
+.flash-input .island-glyph { color: @warning_color; }
+.flash-failed .island-glyph { color: @error_color; }
+.flash-info .island-glyph { color: alpha(white, 0.7); }
+.island-badge {
+  background-color: @accent_color;
+  color: @accent_fg_color;
+  border-radius: 999px;
+  padding: 0 5px;
+  min-width: 8px;
+  font-size: 0.72em;
+  font-weight: 800;
+}
+
+/* Ghost watermark: the workspace name, huge and nearly invisible, centred. */
+.ws-watermark {
+  font-size: 64px;
+  font-weight: 900;
+  letter-spacing: -2px;
+  color: alpha(@window_fg_color, 0.05);
+  margin: 0 24px;
+}
+
+/* Edge reveal: the sliding button groups get a soft glass capsule. */
+headerbar.oxi-header .edge-group {
+  border-radius: 999px;
+  padding: 0 2px;
+  background-color: alpha(@headerbar_fg_color, 0.05);
+  box-shadow: inset 0 0 0 1px alpha(@headerbar_fg_color, 0.07);
+}
+headerbar.oxi-header .edge-group > button,
+headerbar.oxi-header .edge-group > menubutton > button {
+  border-radius: 999px;
+  background: transparent;
+}
+headerbar.oxi-header .edge-group > button:hover,
+headerbar.oxi-header .edge-group > menubutton > button:hover,
+headerbar.oxi-header .edge-group > menubutton > button:checked {
+  background-color: alpha(@accent_color, 0.18);
+}
+/* A faint accent line along the header's bottom edge marks where to hover. */
+/* Theme CSS sets `.oxishell-root headerbar { box-shadow: none }`; outrank it. */
+.oxishell-root headerbar.oxi-header {
+  box-shadow: inset 0 -1px alpha(@accent_color, 0.25);
+}

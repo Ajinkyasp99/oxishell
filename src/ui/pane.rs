@@ -30,6 +30,8 @@ pub struct Pane {
     pub fg_agent: Option<&'static str>,
     /// Last state reported by agent hooks: (agent, state, message).
     pub agent: Option<(String, AgentState, Option<String>)>,
+    /// When the agent's current turn started (first Running report).
+    pub agent_since: Option<Instant>,
     /// (agent, session id) reported by hooks, offered for explicit resume.
     pub agent_session: Option<(String, String)>,
     pub last_bell: Cell<Option<Instant>>,
@@ -491,6 +493,7 @@ impl App {
                 ports: vec![],
                 fg_agent: None,
                 agent: None,
+                agent_since: None,
                 agent_session: None,
                 last_bell: Cell::new(None),
                 pending_input: pending,
