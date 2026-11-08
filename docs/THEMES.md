@@ -1,6 +1,6 @@
 # Themes
 
-cmux-linux uses the [Warp theme format](https://github.com/warpdotdev/themes). A theme colours the
+oxishell uses the [Warp theme format](https://github.com/warpdotdev/themes). A theme colours the
 **whole window**: background (solid, gradient or image), accent (badges, focus rings, selection), panels,
 dialogs and the terminal's 16 colours.
 
@@ -35,7 +35,7 @@ Every other theme sets light or dark itself, based on its background.
 
 ## Adding your own
 
-1. Settings → Appearance → **Open Themes Folder** (or create `~/.config/cmux-linux/themes/`).
+1. Settings → Appearance → **Open Themes Folder** (or create `~/.config/oxishell/themes/`).
 2. Drop in any `.yaml` theme, for example from [warpdotdev/themes](https://github.com/warpdotdev/themes).
 3. Reopen Settings or the command palette: the theme is listed. A file with the same name as a built-in
    theme replaces it.

@@ -1,28 +1,28 @@
 [package]
-name = "cmux-linux"
+name = "oxishell"
 version = "0.1.0"
 edition = "2021"
 description = "Native Linux terminal workspace manager for AI coding agents, inspired by cmux"
 license = "GPL-3.0-or-later"
 rust-version = "1.87"
 authors = ["Ajinkya Patil"]
-repository = "https://github.com/Ajinkyasp99/cmux_linux"
-homepage = "https://github.com/Ajinkyasp99/cmux_linux"
+repository = "https://github.com/Ajinkyasp99/oxishell"
+homepage = "https://github.com/Ajinkyasp99/oxishell"
 readme = "README.md"
 keywords = ["terminal", "gtk", "linux", "ai-agents", "workspace"]
 categories = ["command-line-utilities"]
 
 [lib]
-name = "cmux_linux"
+name = "oxishell"
 path = "src/lib.rs"
 
 [[bin]]
-name = "cmux-linux"
+name = "oxishell"
 path = "src/main.rs"
 
 [[bin]]
-name = "cmux"
-path = "src/bin/cmux.rs"
+name = "oxi"
+path = "src/bin/oxi.rs"
 
 [dependencies]
 gtk4 = { version = "0.9", features = ["v4_14"] }

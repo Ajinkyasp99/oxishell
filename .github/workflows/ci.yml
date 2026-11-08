@@ -32,8 +32,8 @@ jobs:
           GTK_A11Y: none
       - name: Validate desktop metadata
         run: |
-          desktop-file-validate data/dev.cmux.Linux.desktop
-          appstreamcli validate --no-net data/dev.cmux.Linux.metainfo.xml
+          desktop-file-validate data/dev.oxishell.Oxishell.desktop
+          appstreamcli validate --no-net data/dev.oxishell.Oxishell.metainfo.xml
       - name: Build .deb
         run: scripts/build-deb.sh
       - name: Benchmark (informational)
@@ -42,7 +42,7 @@ jobs:
           GTK_A11Y: none
       - uses: actions/upload-artifact@v4
         with:
-          name: cmux-linux-deb
+          name: oxishell-deb
           path: |
             dist/*.deb
             bench.txt

@@ -444,17 +444,17 @@ fn shortcut_default(action: &str) -> &'static str {
         .unwrap_or("")
 }
 
-/// Absolute path of our `cmux` CLI for hook commands.
-fn cmux_cli() -> String {
+/// Absolute path of our `oxi` CLI for hook commands.
+fn oxi_cli() -> String {
     let beside = std::env::current_exe()
         .ok()
-        .and_then(|e| e.parent().map(|d| d.join("cmux")))
+        .and_then(|e| e.parent().map(|d| d.join("oxi")))
         .filter(|p| p.is_file());
     beside
-        .or_else(|| glib::find_program_in_path("cmux"))
+        .or_else(|| glib::find_program_in_path("oxi"))
         .and_then(|p| std::fs::canonicalize(p).ok())
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "cmux".into())
+        .unwrap_or_else(|| "oxi".into())
 }
 
 fn hook_status(agent: &str) -> (bool, String) {
@@ -493,7 +493,7 @@ fn hook_row(app: &AppRc, agent: &'static str) -> adw::SwitchRow {
         let home = crate::paths::home();
         let want = r.is_active();
         let res = if want {
-            crate::agents::install(agent, &home, &cmux_cli())
+            crate::agents::install(agent, &home, &oxi_cli())
         } else {
             crate::agents::uninstall(agent, &home)
         };
@@ -650,20 +650,20 @@ fn workflow_page(cfg: &Config, ap: &Ap) -> adw::PreferencesPage {
     let ipc = group(
         &p,
         "Control Socket",
-        "How the cmux CLI, scripts and agent hooks talk to this window.",
+        "How the oxi CLI, scripts and agent hooks talk to this window.",
     );
     let enabled = switch(
         &ipc,
         ap,
         "Enable control socket",
-        "Needed for agent notifications. Takes effect after restarting cmux",
+        "Needed for agent notifications. Takes effect after restarting oxishell",
         cfg.ipc.enabled,
         |c, v| c.ipc.enabled = v,
     );
     let send = switch(
         &ipc,
         ap,
-        "Allow cmux send to type into panes",
+        "Allow oxi send to type into panes",
         "Off by default; only your own local programs can connect",
         cfg.ipc.allow_send,
         |c, v| c.ipc.allow_send = v,

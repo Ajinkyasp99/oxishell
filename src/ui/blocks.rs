@@ -7,8 +7,8 @@
 //!
 //! VTE cannot draw this itself, so it is painted by a transparent widget laid
 //! over the terminal. The shell leaves an empty row above each prompt
-//! (`CMUX_BLOCKS=1`, see `shellint`) for the header. The end of a command is
-//! seen through the prompt hook rewriting `$CMUX_ENV_FILE` (whose third line
+//! (`OXISHELL_BLOCKS=1`, see `shellint`) for the header. The end of a command is
+//! seen through the prompt hook rewriting `$OXISHELL_ENV_FILE` (whose third line
 //! is the exit status), so no extra process runs per command.
 //!
 //! Positions are kept as absolute VTE rows. The scroll adjustment counts from
@@ -389,7 +389,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for BlocksArea {
-        const NAME: &'static str = "CmuxBlocksArea";
+        const NAME: &'static str = "OxishellBlocksArea";
         type Type = super::BlocksArea;
         type ParentType = gtk4::Widget;
     }

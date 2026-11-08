@@ -22,7 +22,7 @@ jobs:
         run: |
           scripts/build-deb.sh
           # Stable name so README links to releases/latest/download/... keep working.
-          cp dist/cmux-linux_*_amd64.deb dist/cmux-linux_amd64.deb
+          cp dist/oxishell_*_amd64.deb dist/oxishell_amd64.deb
           (cd dist && sha256sum *.deb > SHA256SUMS)
       - name: Publish release
         env:

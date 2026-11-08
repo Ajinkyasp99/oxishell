@@ -16,19 +16,19 @@ pub fn home() -> PathBuf {
 }
 
 pub fn config_dir() -> PathBuf {
-    xdg("XDG_CONFIG_HOME", ".config").join("cmux-linux")
+    xdg("XDG_CONFIG_HOME", ".config").join("oxishell")
 }
 
 pub fn state_dir() -> PathBuf {
-    xdg("XDG_STATE_HOME", ".local/state").join("cmux-linux")
+    xdg("XDG_STATE_HOME", ".local/state").join("oxishell")
 }
 
-/// Directory for the control socket: `$XDG_RUNTIME_DIR/cmux-linux`, or
-/// `/tmp/cmux-linux-<uid>` when no runtime dir exists.
+/// Directory for the control socket: `$XDG_RUNTIME_DIR/oxishell`, or
+/// `/tmp/oxishell-<uid>` when no runtime dir exists.
 pub fn runtime_dir() -> PathBuf {
     match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(v) if !v.is_empty() => PathBuf::from(v).join("cmux-linux"),
-        _ => PathBuf::from(format!("/tmp/cmux-linux-{}", unsafe { libc::getuid() })),
+        Some(v) if !v.is_empty() => PathBuf::from(v).join("oxishell"),
+        _ => PathBuf::from(format!("/tmp/oxishell-{}", unsafe { libc::getuid() })),
     }
 }
 
@@ -36,10 +36,10 @@ pub fn runtime_dir() -> PathBuf {
 const SUN_PATH_MAX: usize = 100;
 
 pub fn socket_path() -> PathBuf {
-    match std::env::var_os("CMUX_SOCKET") {
+    match std::env::var_os("OXISHELL_SOCKET") {
         Some(v) if !v.is_empty() => PathBuf::from(v),
         _ => {
-            let p = runtime_dir().join("cmux.sock");
+            let p = runtime_dir().join("oxishell.sock");
             if p.as_os_str().len() < SUN_PATH_MAX {
                 return p;
             }
@@ -47,7 +47,7 @@ pub fn socket_path() -> PathBuf {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             p.hash(&mut h);
-            PathBuf::from(format!("/tmp/cmux-linux-{}/{:016x}.sock", unsafe { libc::getuid() }, h.finish()))
+            PathBuf::from(format!("/tmp/oxishell-{}/{:016x}.sock", unsafe { libc::getuid() }, h.finish()))
         }
     }
 }
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn atomic_write_and_private_dir() {
-        let dir = std::env::temp_dir().join(format!("cmux-paths-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("oxishell-paths-{}", std::process::id()));
         ensure_private_dir(&dir).unwrap();
         use std::os::unix::fs::MetadataExt;
         assert_eq!(std::fs::metadata(&dir).unwrap().mode() & 0o777, 0o700);

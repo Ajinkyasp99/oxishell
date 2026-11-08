@@ -36,7 +36,7 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
     let (tx, rx) = std::sync::mpsc::channel::<Job>();
     let (utx, urx) = async_channel::unbounded();
     std::thread::Builder::new()
-        .name("cmux-meta".into())
+        .name("oxishell-meta".into())
         .spawn(move || {
             let mut git_cache: HashMap<PathBuf, (Instant, Option<GitInfo>)> = HashMap::new();
             while let Ok(first) = rx.recv() {

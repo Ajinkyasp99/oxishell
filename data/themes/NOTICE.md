@@ -7,4 +7,4 @@ original theme authors. Many of these palettes are ports of well-known color sch
 Solarized, Gruvbox, Catppuccin, Tokyo Night, ...) whose own projects are credited in the upstream repository.
 
 Background images referenced by some Warp themes (`background_image`) are **not** bundled; those themes use
-their colors only. Your own themes in `~/.config/cmux-linux/themes/` may reference images.
+their colors only. Your own themes in `~/.config/oxishell/themes/` may reference images.

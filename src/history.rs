@@ -1,5 +1,5 @@
 //! Command history for suggestions: reads bash, zsh and fish history files,
-//! newest first, de-duplicated; plus commands typed in cmux-linux this session.
+//! newest first, de-duplicated; plus commands typed in oxishell this session.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ pub struct History {
     /// Newest first, unique.
     entries: Vec<String>,
     /// When each command was last run (unix seconds), when known: from
-    /// timestamped history files and from commands typed in cmux-linux.
+    /// timestamped history files and from commands typed in oxishell.
     times: HashMap<String, i64>,
 }
 
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn loads_real_files() {
-        let home = std::env::temp_dir().join(format!("cmux-hist-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("oxishell-hist-{}", std::process::id()));
         std::fs::create_dir_all(home.join(".local/share/fish")).unwrap();
         std::fs::write(home.join(".bash_history"), "make test\n").unwrap();
         std::fs::write(home.join(".zsh_history"), ": 1:0;npm run dev\n").unwrap();

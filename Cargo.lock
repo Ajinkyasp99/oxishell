@@ -168,23 +168,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
-name = "cmux-linux"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "clap",
- "gtk4",
- "libadwaita",
- "libc",
- "serde",
- "serde_json",
- "toml 0.8.23",
- "vte4",
- "yaml-rust2",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -698,6 +681,23 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "oxishell"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "clap",
+ "gtk4",
+ "libadwaita",
+ "libc",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+ "vte4",
+ "yaml-rust2",
+]
 
 [[package]]
 name = "pango"

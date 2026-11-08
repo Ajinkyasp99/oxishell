@@ -1,7 +1,7 @@
 //! Real pointer input against the GTK widgets. Run under Xvfb with xdotool.
-use cmux_linux::ui::{App, AppRc};
 use gtk4::prelude::*;
 use gtk4::{gio, glib};
+use oxishell::ui::{App, AppRc};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::process::Command;
@@ -42,8 +42,8 @@ fn have_input() -> bool {
 
 impl Harness {
     fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("cmux-pointer-{}-{name}", std::process::id()));
-        for dir in ["home", "config/cmux-linux", "state", "run"] {
+        let root = std::env::temp_dir().join(format!("oxishell-pointer-{}-{name}", std::process::id()));
+        for dir in ["home", "config/oxishell", "state", "run"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
         for (key, dir) in [
@@ -54,15 +54,15 @@ impl Harness {
         ] {
             std::env::set_var(key, root.join(dir));
         }
-        std::env::remove_var("CMUX_SOCKET");
+        std::env::remove_var("OXISHELL_SOCKET");
         std::env::set_var("GSETTINGS_BACKEND", "memory");
         std::fs::write(
-            root.join("config/cmux-linux/config.toml"),
+            root.join("config/oxishell/config.toml"),
             "[terminal]\nshell = '/bin/bash'\nsuggestions = false\n[session]\nrestore = false\n[notifications]\ndesktop = false\n",
         )
         .unwrap();
         let application = libadwaita::Application::builder()
-            .application_id(format!("dev.cmux.PointerTest.{name}"))
+            .application_id(format!("dev.oxishell.PointerTest.{name}"))
             .flags(gio::ApplicationFlags::NON_UNIQUE)
             .build();
         application.register(gio::Cancellable::NONE).unwrap();
@@ -161,7 +161,7 @@ fn workspace_switches_on_each_single_click_during_refresh() {
         }
         h.app.inner.borrow_mut().config.session.restore = true;
         h.app.save_session(false);
-        let saved = cmux_linux::session::Snapshot::load(&h.root.join("state/cmux-linux/session.json"))
+        let saved = oxishell::session::Snapshot::load(&h.root.join("state/oxishell/session.json"))
             .unwrap()
             .unwrap();
         assert_eq!(saved.state.workspaces.iter().map(|w| w.id).collect::<Vec<_>>(), order());

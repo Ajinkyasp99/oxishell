@@ -1,16 +1,16 @@
-//! `cmux` — command-line control for a running cmux-linux.
+//! `oxi` — command-line control for a running oxishell.
 
 use clap::{Parser, Subcommand, ValueEnum};
-use cmux_linux::{agents, ipc};
+use oxishell::{agents, ipc};
 use serde_json::{json, Value};
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "cmux", version, about = "Control a running cmux-linux from the command line")]
+#[command(name = "oxi", version, about = "Control a running oxishell from the command line")]
 struct Cli {
-    /// Control socket (default: $CMUX_SOCKET or $XDG_RUNTIME_DIR/cmux-linux/cmux.sock)
+    /// Control socket (default: $OXISHELL_SOCKET or $XDG_RUNTIME_DIR/oxishell/oxishell.sock)
     #[arg(long, global = true)]
     socket: Option<PathBuf>,
     /// Print raw JSON results
@@ -47,7 +47,7 @@ enum Cmd {
     /// Notification history
     #[command(subcommand)]
     Notifications(NotifCmd),
-    /// Report agent state (used by agent hooks). Silent no-op outside cmux-linux.
+    /// Report agent state (used by agent hooks). Silent no-op outside oxishell.
     AgentEvent {
         #[arg(long)]
         agent: String,
@@ -67,7 +67,7 @@ enum Cmd {
         marker: Option<String>,
         payload: Option<String>,
     },
-    /// Forward Claude status-line usage to the sidebar; silent outside cmux-linux.
+    /// Forward Claude status-line usage to the sidebar; silent outside oxishell.
     AgentUsage {
         /// Existing status-line command to run with the original stdin and output
         #[arg(long)]
@@ -183,7 +183,7 @@ enum HooksCmd {
 }
 
 fn env_pane() -> Option<u64> {
-    std::env::var("CMUX_PANE_ID").ok().and_then(|v| v.parse().ok())
+    std::env::var("OXISHELL_PANE_ID").ok().and_then(|v| v.parse().ok())
 }
 
 fn on_path(bin: &str) -> bool {
@@ -208,7 +208,7 @@ fn main() -> ExitCode {
         Cmd::Ping => call("ping", json!({})),
         Cmd::Identify => Ok(json!({
             "pane": env_pane(),
-            "workspace": std::env::var("CMUX_WORKSPACE_ID").ok().and_then(|v| v.parse::<u64>().ok()),
+            "workspace": std::env::var("OXISHELL_WORKSPACE_ID").ok().and_then(|v| v.parse::<u64>().ok()),
             "socket": socket.display().to_string(),
         })),
         Cmd::Workspace(c) => match c {
@@ -292,7 +292,7 @@ fn main() -> ExitCode {
             marker: _,
             payload,
         } => {
-            // Hooks must never break the agent: outside cmux-linux, or on any error, exit 0.
+            // Hooks must never break the agent: outside oxishell, or on any error, exit 0.
             let Some(pane) = env_pane() else { return ExitCode::SUCCESS };
             let mut state = state;
             let (mut session, mut message) = (session, message);
@@ -320,13 +320,13 @@ fn main() -> ExitCode {
                 json!({"pane": pane, "agent": agent, "state": state, "message": message, "session": session}),
             );
             if let Err(e) = r {
-                if std::env::var_os("CMUX_DEBUG").is_some() {
-                    eprintln!("cmux agent-event: {e}");
+                if std::env::var_os("OXISHELL_DEBUG").is_some() {
+                    eprintln!("oxi agent-event: {e}");
                 }
             }
             return ExitCode::SUCCESS;
         }
-        Cmd::ShellIntegration { shell } => match cmux_linux::shellint::snippet(&shell) {
+        Cmd::ShellIntegration { shell } => match oxishell::shellint::snippet(&shell) {
             Some(s) => {
                 print!("{s}");
                 return ExitCode::SUCCESS;
@@ -334,11 +334,11 @@ fn main() -> ExitCode {
             None => Err(format!("unsupported shell {shell:?}; use bash, zsh or fish")),
         },
         Cmd::Hooks(c) => {
-            let home = cmux_linux::paths::home();
+            let home = oxishell::paths::home();
             let me = std::env::current_exe()
                 .and_then(std::fs::canonicalize)
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "cmux".into());
+                .unwrap_or_else(|_| "oxi".into());
             match c {
                 HooksCmd::List => Ok(json!(agents::SUPPORTED
                     .iter()
@@ -366,7 +366,7 @@ fn main() -> ExitCode {
                                 Ok(p) => {
                                     let mut installed = json!({"agent": a, "file": p.display().to_string()});
                                     if a == "codex" {
-                                        installed["note"] = json!("Requires Codex lifecycle hooks. Restart Codex, then open /hooks to review and trust the cmux hooks. Existing features.hooks = false settings are preserved.");
+                                        installed["note"] = json!("Requires Codex lifecycle hooks. Restart Codex, then open /hooks to review and trust the oxi hooks. Existing features.hooks = false settings are preserved.");
                                     }
                                     out.push(installed);
                                 }
@@ -393,7 +393,7 @@ fn main() -> ExitCode {
 }
 
 fn fail(msg: &str) -> ExitCode {
-    eprintln!("cmux: {msg}");
+    eprintln!("oxi: {msg}");
     ExitCode::FAILURE
 }
 

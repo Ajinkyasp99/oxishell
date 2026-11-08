@@ -379,10 +379,10 @@ impl App {
         let cwd_s = cwd.display().to_string();
         let argv: Vec<String> = vec![shell];
         let mut env = vec![
-            format!("CMUX_PANE_ID={id}"),
-            format!("CMUX_WORKSPACE_ID={wid}"),
-            format!("CMUX_SOCKET={}", crate::paths::socket_path().display()),
-            "TERM_PROGRAM=cmux-linux".to_string(),
+            format!("OXISHELL_PANE_ID={id}"),
+            format!("OXISHELL_WORKSPACE_ID={wid}"),
+            format!("OXISHELL_SOCKET={}", crate::paths::socket_path().display()),
+            "TERM_PROGRAM=oxishell".to_string(),
             format!("TERM_PROGRAM_VERSION={}", env!("CARGO_PKG_VERSION")),
         ];
         // Context chips: the shell reports its active Python/conda env to this file.
@@ -391,23 +391,23 @@ impl App {
             let _ = crate::paths::ensure_private_dir(dir);
         }
         let _ = std::fs::remove_file(&env_file);
-        env.push(format!("CMUX_ENV_FILE={}", env_file.display()));
+        env.push(format!("OXISHELL_ENV_FILE={}", env_file.display()));
         if self.inner.borrow().config.terminal.compact_prompt {
-            env.push("CMUX_COMPACT_PROMPT=1".to_string());
+            env.push("OXISHELL_COMPACT_PROMPT=1".to_string());
         }
         if self.inner.borrow().config.terminal.highlight_commands {
-            env.push("CMUX_HIGHLIGHT_CMD=1".to_string());
+            env.push("OXISHELL_HIGHLIGHT_CMD=1".to_string());
         }
         if self.inner.borrow().config.terminal.command_blocks {
-            env.push("CMUX_BLOCKS=1".to_string());
+            env.push("OXISHELL_BLOCKS=1".to_string());
         }
         let shell_name = crate::shellint::shell_name(&argv[0]).to_string();
         if shell_name == "bash" {
             env.push(format!("PROMPT_COMMAND={}", crate::shellint::BASH_PROMPT_COMMAND));
         }
-        // Make the bundled `cmux` CLI reachable for hooks when running from a build dir.
+        // Make the bundled `oxi` CLI reachable for hooks when running from a build dir.
         if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
-            if dir.join("cmux").is_file() {
+            if dir.join("oxi").is_file() {
                 let path = std::env::var("PATH").unwrap_or_default();
                 env.push(format!("PATH={}:{path}", dir.display()));
             }

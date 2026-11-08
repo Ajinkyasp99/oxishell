@@ -36,7 +36,7 @@ pub enum Kind {
     CommandFailed,
     /// A program rang the terminal bell.
     Bell,
-    /// Anything else (`cmux notify`, scripts).
+    /// Anything else (`oxi notify`, scripts).
     Message,
 }
 
@@ -79,8 +79,8 @@ impl Kind {
             Kind::AgentInput => "im.received",
             Kind::AgentDone | Kind::CommandDone => "transfer.complete",
             Kind::CommandFailed => "transfer.error",
-            Kind::Bell => "x-cmux.bell",
-            Kind::Message => "x-cmux.message",
+            Kind::Bell => "x-oxishell.bell",
+            Kind::Message => "x-oxishell.message",
         }
     }
 }

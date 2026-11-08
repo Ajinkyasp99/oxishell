@@ -92,7 +92,7 @@ Evidence keys: **U** = unit tests (`cargo test --lib`, 37 tests), **E** = end-to
 | 12.2 | .deb | Completed | `apt install` on the dev machine (Ubuntu 24.04): installed, binaries on PATH, desktop entry + icon present | apt prints a harmless note when the .deb is in a home dir (`_apt` sandbox) |
 | 12.3 | Icons & metadata | Completed | appstreamcli, desktop-file-validate | |
 | 12.4 | Installation guide | Completed | docs/INSTALL.md | |
-| 12.5 | Clean uninstall | Manual (maintainer) | — | maintainer tests `sudo apt remove cmux-linux`; package installs only the files listed in INSTALL.md |
+| 12.5 | Clean uninstall | Manual (maintainer) | — | maintainer tests `sudo apt remove oxishell`; package installs only the files listed in INSTALL.md |
 | 12.6 | Flatpak/AppImage evaluation | Completed | docs/PACKAGING.md | |
 | 12.7 | GitHub Actions | In Progress | every step run locally | workflows not executed on GitHub yet |
 | 12.8 | Release notes & troubleshooting | Completed | docs/RELEASE_NOTES.md, docs/TROUBLESHOOTING.md | |

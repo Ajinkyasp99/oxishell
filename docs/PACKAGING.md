@@ -2,7 +2,7 @@
 
 ## .deb (implemented)
 
-`scripts/build-deb.sh` builds `dist/cmux-linux_<version>_<arch>.deb`:
+`scripts/build-deb.sh` builds `dist/oxishell_<version>_<arch>.deb`:
 - `Depends` is computed by `dpkg-shlibdeps` from the binaries (GTK 4, libadwaita, VTE-GTK4, glib, libc).
 - `Recommends: git`.
 - Installs binaries, desktop entry, scalable icon, AppStream metainfo and docs; postinst/postrm only
@@ -25,7 +25,7 @@ Required work and caveats:
 - `/proc`-based cwd/ports/agent detection only sees sandboxed processes; host processes need the host
   helper or `--filesystem=host` plus `--talk-name`. Git metadata would run `git` on the host.
 - Agent hook files live in `~/.claude`, `~/.codex`, ... — needs `--filesystem` permissions for those paths.
-- The `cmux` CLI must be callable from host shells: export it via a small host-side wrapper.
+- The `oxi` CLI must be callable from host shells: export it via a small host-side wrapper.
 
 Estimate: medium effort; worthwhile once the feature set is stable.
 

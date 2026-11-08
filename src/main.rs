@@ -1,4 +1,4 @@
-//! cmux-linux desktop application.
+//! oxishell desktop application.
 fn main() -> gtk4::glib::ExitCode {
-    cmux_linux::ui::run()
+    oxishell::ui::run()
 }

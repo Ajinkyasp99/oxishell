@@ -177,7 +177,7 @@ impl Footer {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let (utx, urx) = async_channel::bounded(1);
         std::thread::Builder::new()
-            .name("cmux-usage".into())
+            .name("oxishell-usage".into())
             .spawn(move || {
                 let mut last = None;
                 let mut cached = None;
@@ -316,7 +316,7 @@ fn card(root: &gtk4::Box, name: &str, usage: Option<&Usage>, claude: bool, now: 
     let empty = usage.is_none_or(|u| u.five_hour.is_none() && u.weekly.is_none());
     if empty {
         let hint = if claude {
-            "Enable usage: cmux hooks install claude\nThen restart Claude and send a prompt."
+            "Enable usage: oxi hooks install claude\nThen restart Claude and send a prompt."
         } else {
             "Waiting for Codex usage data"
         };
@@ -325,7 +325,7 @@ fn card(root: &gtk4::Box, name: &str, usage: Option<&Usage>, claude: bool, now: 
         l.set_selectable(true);
         l.set_ellipsize(gtk4::pango::EllipsizeMode::None);
         l.set_tooltip_text(Some(if claude {
-            "Run cmux hooks install claude, then restart Claude. Limits come from Claude Code's cached usage, and live from its status line after each response. API-key sessions may not report quotas."
+            "Run oxi hooks install claude, then restart Claude. Limits come from Claude Code's cached usage, and live from its status line after each response. API-key sessions may not report quotas."
         } else {
             "Limits are read from local Codex session logs after a response. API-key sessions may not report subscription quotas."
         }));
@@ -569,7 +569,7 @@ mod tests {
             assert_eq!(chip.label.parent().unwrap(), chip.meter);
         }
 
-        if let Some(path) = std::env::var_os("CMUX_USAGE_SCREENSHOT") {
+        if let Some(path) = std::env::var_os("OXISHELL_USAGE_SCREENSHOT") {
             use gtk4::gsk::prelude::*;
             libadwaita::init().unwrap();
             libadwaita::StyleManager::default().set_color_scheme(libadwaita::ColorScheme::ForceDark);
@@ -595,7 +595,7 @@ mod tests {
                 &theme,
                 gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
             );
-            footer.root.add_css_class("cmux-root");
+            footer.root.add_css_class("oxishell-root");
             let window = gtk4::Window::builder()
                 .child(&footer.root)
                 .default_width(230)

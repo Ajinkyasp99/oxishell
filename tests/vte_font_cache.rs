@@ -15,7 +15,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 use vte4::TerminalExt;
 
-const SCENARIO_ENV: &str = "CMUX_VTE_FONT_CACHE_SCENARIO";
+const SCENARIO_ENV: &str = "OXISHELL_VTE_FONT_CACHE_SCENARIO";
 
 fn pump_for(d: Duration) {
     let ctx = glib::MainContext::default();
@@ -50,10 +50,10 @@ fn render_many_glyphs(term: &vte4::Terminal) {
 /// cache timeout, then exit cleanly.
 fn scenario(with_fix: bool) {
     if with_fix {
-        let status = cmux_linux::ui::vte_fix::install();
+        let status = oxishell::ui::vte_fix::install();
         eprintln!("vte_fix status: {status:?}");
         assert!(
-            !matches!(status, cmux_linux::ui::vte_fix::Status::Failed(_)),
+            !matches!(status, oxishell::ui::vte_fix::Status::Failed(_)),
             "workaround needed but not applied: {status:?}"
         );
     }
@@ -64,7 +64,7 @@ fn scenario(with_fix: bool) {
     win.set_child(Some(&term));
     win.present();
     pump_for(Duration::from_millis(500));
-    let cycles: u32 = std::env::var("CMUX_VTE_CYCLES").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+    let cycles: u32 = std::env::var("OXISHELL_VTE_CYCLES").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
     // Zoom away and back, like a user over a session. Each zoom level gets its
     // own VTE font cache; VTE frees an unused one 30 s later, and every cycle
     // re-caches glyphs of the same PangoFont.

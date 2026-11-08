@@ -86,7 +86,7 @@ pub fn run() -> glib::ExitCode {
     // Register before GTK creates its first Pango font map. Build surfaces errors.
     let _ = fonts::register();
     let mut flags = gio::ApplicationFlags::empty();
-    if std::env::var_os("CMUX_NON_UNIQUE").is_some() {
+    if std::env::var_os("OXISHELL_NON_UNIQUE").is_some() {
         flags |= gio::ApplicationFlags::NON_UNIQUE;
     }
     let app = adw::Application::builder().application_id(crate::APP_ID).flags(flags).build();
@@ -129,7 +129,7 @@ impl App {
 
         // Header bar
         let header = adw::HeaderBar::new();
-        let title = adw::WindowTitle::new("cmux", "");
+        let title = adw::WindowTitle::new("oxishell", "");
         header.set_title_widget(Some(&title));
         let sidebar_btn = gtk4::Button::builder()
             .icon_name("sidebar-show-symbolic")
@@ -159,7 +159,7 @@ impl App {
         menu.append(Some("Search Scrollback"), Some("app.search"));
         menu.append(Some("Settings"), Some("app.settings"));
         menu.append(Some("Keyboard Shortcuts"), Some("app.show-shortcuts"));
-        menu.append(Some("About cmux-linux"), Some("app.about"));
+        menu.append(Some("About oxishell"), Some("app.about"));
         let menu_btn = gtk4::MenuButton::builder()
             .icon_name("open-menu-symbolic")
             .menu_model(&menu)
@@ -245,7 +245,7 @@ impl App {
         }
 
         let root = gtk4::Box::new(Orientation::Vertical, 0);
-        root.add_css_class("cmux-root");
+        root.add_css_class("oxishell-root");
         root.append(&header);
         root.append(&split);
         root.append(&status_bar);
@@ -254,7 +254,7 @@ impl App {
 
         let window = adw::ApplicationWindow::builder()
             .application(gapp)
-            .title("cmux")
+            .title("oxishell")
             .default_width(1200)
             .default_height(760)
             .width_request(480)
@@ -262,8 +262,8 @@ impl App {
             .content(&toasts)
             .build();
 
-        // Optional initial size, e.g. CMUX_GEOMETRY=900x600.
-        if let Some((w, h)) = std::env::var("CMUX_GEOMETRY").ok().and_then(|g| {
+        // Optional initial size, e.g. OXISHELL_GEOMETRY=900x600.
+        if let Some((w, h)) = std::env::var("OXISHELL_GEOMETRY").ok().and_then(|g| {
             let (w, h) = g.split_once('x')?;
             Some((w.parse::<i32>().ok()?, h.parse::<i32>().ok()?))
         }) {
@@ -424,7 +424,7 @@ impl App {
         app.window.present();
         app.refresh();
 
-        if let Some(ms) = std::env::var("CMUX_QUIT_AFTER_MS").ok().and_then(|v| v.parse::<u64>().ok()) {
+        if let Some(ms) = std::env::var("OXISHELL_QUIT_AFTER_MS").ok().and_then(|v| v.parse::<u64>().ok()) {
             let w = Rc::downgrade(&app);
             glib::timeout_add_local_once(std::time::Duration::from_millis(ms), move || {
                 if let Some(a) = w.upgrade() {
@@ -440,7 +440,7 @@ impl App {
     }
 
     pub fn toast(&self, msg: &str) {
-        eprintln!("cmux-linux: {msg}");
+        eprintln!("oxishell: {msg}");
         self.toasts.add_toast(
             adw::Toast::builder()
                 .title(glib::markup_escape_text(msg).as_str())
@@ -977,9 +977,9 @@ impl App {
         let title = i.state.active_workspace().map(|w| w.name.clone()).unwrap_or_default();
         drop(i);
         self.window.set_title(Some(&if title.is_empty() {
-            "cmux".to_string()
+            "oxishell".to_string()
         } else {
-            format!("{title} — cmux")
+            format!("{title} — oxishell")
         }));
     }
 
@@ -1485,7 +1485,7 @@ impl App {
             return;
         }
         if let Err(e) = self.snapshot().save(&crate::session::session_path()) {
-            eprintln!("cmux-linux: saving session failed: {e}");
+            eprintln!("oxishell: saving session failed: {e}");
         }
         if lines == 0 {
             // Replay off: keep no terminal output on disk.
@@ -1494,7 +1494,7 @@ impl App {
             let i = self.inner.borrow();
             for (id, p) in &i.panes {
                 if let Err(e) = crate::session::save_scrollback(*id, &p.scrollback_text(lines), lines) {
-                    eprintln!("cmux-linux: saving scrollback failed: {e}");
+                    eprintln!("oxishell: saving scrollback failed: {e}");
                 }
             }
         }

@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=cmux
+Name=oxishell
 GenericName=Terminal Workspace Manager
 Comment=Terminal workspaces and split panes for AI coding agents
-Exec=cmux-linux
-Icon=dev.cmux.Linux
+Exec=oxishell
+Icon=dev.oxishell.Oxishell
 Terminal=false
 Categories=System;TerminalEmulator;
-StartupWMClass=dev.cmux.Linux
+StartupWMClass=dev.oxishell.Oxishell
 Keywords=terminal;shell;agent;

@@ -1,6 +1,6 @@
 //! Inline command suggestions (Warp/fish style "ghost text").
 //!
-//! The shell owns the input line, so cmux-linux follows what the user types
+//! The shell owns the input line, so oxishell follows what the user types
 //! (VTE's `commit` signal = bytes sent to the shell). While the line is being
 //! followed reliably and the shell is idle at its prompt, the newest history
 //! entry starting with the typed text is shown dimmed after the cursor.

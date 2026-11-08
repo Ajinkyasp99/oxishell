@@ -42,7 +42,7 @@ impl ClaudeReports {
 
     /// Claude Code's own usage cache (see [`read_claude_cache`]): used when it
     /// is newer than any status-line report, e.g. right after a session starts
-    /// and before its first response, or after cmux-linux restarts.
+    /// and before its first response, or after oxishell restarts.
     pub fn merge_cache(&mut self, fetched_at: i64, usage: Usage) {
         if usage != Usage::default() && fetched_at > self.latest_at {
             self.latest = usage;
@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn rollout_reader_uses_latest_quota_event_and_ignores_partial_records() {
-        let root = std::env::temp_dir().join(format!("cmux-usage-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("oxishell-usage-{}", std::process::id()));
         let day = root.join("sessions/2026/11/07");
         std::fs::create_dir_all(&day).unwrap();
         let event = |timestamp: &str, used: u8| {

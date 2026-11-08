@@ -159,7 +159,7 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
 /// calls to `tx`. The handler answers via `Call::reply`.
 pub fn serve(listener: UnixListener, tx: async_channel::Sender<Call>) {
     std::thread::Builder::new()
-        .name("cmux-ipc".into())
+        .name("oxishell-ipc".into())
         .spawn(move || {
             let me = unsafe { libc::getuid() };
             for stream in listener.incoming() {
@@ -169,7 +169,7 @@ pub fn serve(listener: UnixListener, tx: async_channel::Sender<Call>) {
                 }
                 let tx = tx.clone();
                 let _ = std::thread::Builder::new()
-                    .name("cmux-ipc-conn".into())
+                    .name("oxishell-ipc-conn".into())
                     .spawn(move || handle_conn(stream, tx));
             }
         })
@@ -222,7 +222,7 @@ pub fn call_at(path: &Path, method: &str, params: Value) -> Result<Value, String
 /// the user's existing status-line command when the app is busy.
 pub fn call_at_with_timeout(path: &Path, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
     let mut s =
-        UnixStream::connect(path).map_err(|e| format!("cannot connect to cmux-linux at {} ({e}). Is the app running?", path.display()))?;
+        UnixStream::connect(path).map_err(|e| format!("cannot connect to oxishell at {} ({e}). Is the app running?", path.display()))?;
     s.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
     s.set_write_timeout(Some(timeout)).map_err(|e| e.to_string())?;
     let req = Request {
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn server_roundtrip_and_permissions() {
-        let dir = std::env::temp_dir().join(format!("cmux-ipc-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("oxishell-ipc-{}", std::process::id()));
         let sock = dir.join("t.sock");
         let l = bind(&sock).unwrap();
         use std::os::unix::fs::MetadataExt;
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn stale_socket_is_replaced() {
-        let dir = std::env::temp_dir().join(format!("cmux-ipc-stale-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("oxishell-ipc-stale-{}", std::process::id()));
         let sock = dir.join("s.sock");
         drop(bind(&sock).unwrap()); // listener closed, file remains
         assert!(sock.exists());

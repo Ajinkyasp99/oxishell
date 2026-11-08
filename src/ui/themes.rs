@@ -102,7 +102,7 @@ fn card(t: &Theme) -> gtk4::Box {
         .build();
     label.add_css_class("caption");
     if t.user {
-        label.set_tooltip_text(Some("Your theme (~/.config/cmux-linux/themes)"));
+        label.set_tooltip_text(Some("Your theme (~/.config/oxishell/themes)"));
     }
     let b = gtk4::Box::new(Orientation::Vertical, 6);
     b.set_margin_top(4);

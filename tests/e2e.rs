@@ -3,7 +3,7 @@
 //! Needs a display. Run with:  xvfb-run -a cargo test --test e2e -- --nocapture
 //! Without DISPLAY/WAYLAND_DISPLAY the tests are skipped (and say so).
 
-use cmux_linux::ipc::call_at;
+use oxishell::ipc::call_at;
 use serde_json::{json, Value};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -20,13 +20,13 @@ struct Env {
 impl Env {
     fn new(name: &str) -> Env {
         // Keep paths short: Unix socket paths are limited to 108 bytes.
-        let root = PathBuf::from(format!("/tmp/cmux-e2e-{}-{name}", std::process::id()));
+        let root = PathBuf::from(format!("/tmp/oxishell-e2e-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        for d in ["config/cmux-linux", "state", "run", "home"] {
+        for d in ["config/oxishell", "state", "run", "home"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
         std::fs::set_permissions(root.join("run"), std::fs::Permissions::from_mode(0o700)).unwrap();
-        let socket = root.join("run/cmux-linux/cmux.sock");
+        let socket = root.join("run/oxishell/oxishell.sock");
         let e = Env {
             root,
             socket,
@@ -38,7 +38,7 @@ impl Env {
 
     fn write_config(&self, ipc_extra: &str) {
         std::fs::write(
-            self.root.join("config/cmux-linux/config.toml"),
+            self.root.join("config/oxishell/config.toml"),
             format!(
                 "[ipc]\n{ipc_extra}\n[notifications]\ndesktop = false\n[terminal]\nshell = \"/bin/bash\"\n[session]\nreplay_lines = 200\n"
             ),
@@ -47,16 +47,16 @@ impl Env {
     }
 
     fn start(&self) -> Child {
-        let child = Command::new(env!("CARGO_BIN_EXE_cmux-linux"))
+        let child = Command::new(env!("CARGO_BIN_EXE_oxishell"))
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_RUNTIME_DIR", self.root.join("run"))
             .env("HOME", self.root.join("home"))
-            .env("CMUX_NON_UNIQUE", "1")
+            .env("OXISHELL_NON_UNIQUE", "1")
             .env("GSETTINGS_BACKEND", "memory")
             .env("PS1", "$ ")
-            .env_remove("CMUX_SOCKET")
-            .env_remove("CMUX_PANE_ID")
+            .env_remove("OXISHELL_SOCKET")
+            .env_remove("OXISHELL_PANE_ID")
             .current_dir(self.root.join("home"))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -81,10 +81,10 @@ impl Env {
     }
 
     fn cli(&self, args: &[&str], pane: Option<u64>) -> (bool, String) {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_cmux"));
-        c.args(args).env("CMUX_SOCKET", &self.socket).env_remove("CMUX_PANE_ID");
+        let mut c = Command::new(env!("CARGO_BIN_EXE_oxi"));
+        c.args(args).env("OXISHELL_SOCKET", &self.socket).env_remove("OXISHELL_PANE_ID");
         if let Some(p) = pane {
-            c.env("CMUX_PANE_ID", p.to_string());
+            c.env("OXISHELL_PANE_ID", p.to_string());
         }
         let o = c.output().unwrap();
         (
@@ -201,7 +201,7 @@ fn terminal_workspaces_splits_notifications_and_restore() {
     let p1 = first_pane(&e);
     e.ok(
         "pane.send",
-        json!({"pane": p1, "text": "echo RESULT=$((6*7)) PANE=$CMUX_PANE_ID\r"}),
+        json!({"pane": p1, "text": "echo RESULT=$((6*7)) PANE=$OXISHELL_PANE_ID\r"}),
     );
     e.wait_text(p1, &format!("RESULT=42 PANE={p1}"));
     e.ok(
@@ -275,10 +275,10 @@ fn terminal_workspaces_splits_notifications_and_restore() {
     // --- Phases 7/8: notifications and agent events via the real CLI.
     let (ok, out) = e.cli(&["notify", "-t", "Build done", "-b", "all green"], Some(p4));
     assert!(ok, "{out}");
-    let mut sh = Command::new(env!("CARGO_BIN_EXE_cmux"))
+    let mut sh = Command::new(env!("CARGO_BIN_EXE_oxi"))
         .args(["agent-event", "--agent", "claude", "--state", "waiting", "--stdin-json"])
-        .env("CMUX_SOCKET", &e.socket)
-        .env("CMUX_PANE_ID", p4.to_string())
+        .env("OXISHELL_SOCKET", &e.socket)
+        .env("OXISHELL_PANE_ID", p4.to_string())
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
@@ -300,7 +300,7 @@ fn terminal_workspaces_splits_notifications_and_restore() {
         Some(p1),
     );
     assert!(ok);
-    // Outside cmux-linux the hook is a silent success.
+    // Outside oxishell the hook is a silent success.
     let (ok, out) = e.cli(&["agent-event", "--agent", "claude", "--state", "idle"], None);
     assert!(ok && out.is_empty());
     let notes = e.ok("notification.list", json!({}));
@@ -369,11 +369,11 @@ fn terminal_workspaces_splits_notifications_and_restore() {
     e.stop(app);
 
     // --- Phase 10.10: corrupt session file -> fresh start, file set aside.
-    let sess = e.root.join("state/cmux-linux/session.json");
+    let sess = e.root.join("state/oxishell/session.json");
     std::fs::write(&sess, "{\"version\":1,\"state\":{\"worksp").unwrap();
     let app = e.start();
     assert_eq!(e.ok("workspace.list", json!({})).as_array().unwrap().len(), 1);
-    assert!(e.root.join("state/cmux-linux/session.json.corrupt").exists());
+    assert!(e.root.join("state/oxishell/session.json.corrupt").exists());
     e.stop(app);
 }
 
@@ -389,7 +389,7 @@ fn codex_hooks_install_lifecycle_and_uninstall() {
     let original = "model = \"custom-model\"\nnotify = [\"user-notifier\"]\n";
     std::fs::write(&config, original).unwrap();
     let manage = |action: &str| {
-        Command::new(env!("CARGO_BIN_EXE_cmux"))
+        Command::new(env!("CARGO_BIN_EXE_oxi"))
             .args(["hooks", action, "codex"])
             .env("CODEX_HOME", &codex_dir)
             .output()
@@ -401,7 +401,7 @@ fn codex_hooks_install_lifecycle_and_uninstall() {
     assert!(report["installed"][0]["note"].as_str().unwrap().contains("/hooks"));
     assert_eq!(report["installed"][0]["file"], config.to_string_lossy().as_ref());
     assert_eq!(
-        std::fs::read_to_string(config.with_extension("toml.cmux-linux.bak")).unwrap(),
+        std::fs::read_to_string(config.with_extension("toml.oxishell.bak")).unwrap(),
         original
     );
     let text = std::fs::read_to_string(&config).unwrap();
@@ -417,17 +417,17 @@ fn codex_hooks_install_lifecycle_and_uninstall() {
         payload.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
         let mut cmd = Command::new("/bin/sh");
         cmd.args(["-c", command])
-            .env("CMUX_SOCKET", &e.socket)
-            .env_remove("CMUX_PANE_ID")
+            .env("OXISHELL_SOCKET", &e.socket)
+            .env_remove("OXISHELL_PANE_ID")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if inside {
-            cmd.env("CMUX_PANE_ID", pane.to_string());
+            cmd.env("OXISHELL_PANE_ID", pane.to_string());
         }
         let mut child = cmd.spawn().unwrap();
         use std::io::Write;
-        // Outside cmux the hook can exit before reading stdin.
+        // Outside oxishell the hook can exit before reading stdin.
         let _ = child.stdin.take().unwrap().write_all(payload.to_string().as_bytes());
         let out = child.wait_with_output().unwrap();
         assert!(out.status.success(), "{out:?}");
@@ -477,7 +477,7 @@ fn codex_hooks_install_lifecycle_and_uninstall() {
     assert_state("ended");
     assert_eq!(e.ok("notification.list", json!({})).as_array().unwrap().len(), 3);
     e.stop(app);
-    let saved: Value = serde_json::from_str(&std::fs::read_to_string(e.root.join("state/cmux-linux/session.json")).unwrap()).unwrap();
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(e.root.join("state/oxishell/session.json")).unwrap()).unwrap();
     assert_eq!(saved["panes"][pane.to_string()]["agent_session"], "codex-session-42");
 
     assert!(manage("uninstall").status.success());
@@ -502,7 +502,7 @@ fn claude_usage_bridge_preserves_output_and_does_not_post_notifications() {
     let original = json!({"model": "custom", "statusLine": {"type": "command", "command": "cat\nprintf ''", "padding": 2}});
     std::fs::write(&settings, original.to_string()).unwrap();
     let manage = |action: &str| {
-        Command::new(env!("CARGO_BIN_EXE_cmux"))
+        Command::new(env!("CARGO_BIN_EXE_oxi"))
             .args(["hooks", action, "claude"])
             .env("CLAUDE_CONFIG_DIR", &claude_dir)
             .output()
@@ -514,20 +514,20 @@ fn claude_usage_bridge_preserves_output_and_does_not_post_notifications() {
     let app = e.start();
     let pane = first_pane(&e);
     let payload = json!({"model": {"display_name": "Claude"}, "rate_limits": {
-        "five_hour": {"used_percentage": 25.5, "resets_at": cmux_linux::usage::now() + 3600},
-        "seven_day": {"used_percentage": 70, "resets_at": cmux_linux::usage::now() + 86400}
+        "five_hour": {"used_percentage": 25.5, "resets_at": oxishell::usage::now() + 3600},
+        "seven_day": {"used_percentage": 70, "resets_at": oxishell::usage::now() + 86400}
     }})
     .to_string();
     for inside in [false, true] {
         let mut cmd = Command::new("/bin/sh");
         cmd.args(["-c", command])
-            .env("CMUX_SOCKET", &e.socket)
-            .env_remove("CMUX_PANE_ID")
+            .env("OXISHELL_SOCKET", &e.socket)
+            .env_remove("OXISHELL_PANE_ID")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if inside {
-            cmd.env("CMUX_PANE_ID", pane.to_string());
+            cmd.env("OXISHELL_PANE_ID", pane.to_string());
         }
         let mut child = cmd.spawn().unwrap();
         use std::io::Write;
@@ -553,9 +553,9 @@ fn claude_usage_bridge_preserves_output_and_does_not_post_notifications() {
 #[test]
 fn usage_forwarder_preserves_exit_status_without_a_running_app() {
     use std::io::Write;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_cmux"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxi"))
         .args(["agent-usage", "--forward-command", "cat; exit 7"])
-        .env_remove("CMUX_PANE_ID")
+        .env_remove("OXISHELL_PANE_ID")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -581,10 +581,10 @@ fn usage_forwarder_keeps_status_line_responsive_when_app_stalls() {
         let _ = wait.recv_timeout(Duration::from_secs(10));
     });
     let start = Instant::now();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_cmux"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxi"))
         .args(["agent-usage", "--forward-command", "cat"])
-        .env("CMUX_SOCKET", &e.socket)
-        .env("CMUX_PANE_ID", "1")
+        .env("OXISHELL_SOCKET", &e.socket)
+        .env("OXISHELL_PANE_ID", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -1,7 +1,7 @@
 //! Coding-agent hook integration.
 //!
-//! Hooks run `cmux agent-event ...` inside panes started by cmux-linux
-//! (`CMUX_PANE_ID` set). Outside cmux-linux the command exits 0 silently, so
+//! Hooks run `oxi agent-event ...` inside panes started by oxishell
+//! (`OXISHELL_PANE_ID` set). Outside oxishell the command exits 0 silently, so
 //! installed hooks never break an agent. We only report states the agent's
 //! own hook system emits:
 //!
@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-pub const MARKER: &str = "cmux-linux-hook";
-const CLAUDE_USAGE_MARKER: &str = " # cmux-linux-hook statusLine=";
+pub const MARKER: &str = "oxishell-hook";
+const CLAUDE_USAGE_MARKER: &str = " # oxishell-hook statusLine=";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -119,7 +119,7 @@ fn settings_path(home: &Path, agent: &str) -> Option<PathBuf> {
         "opencode" => std::env::var_os("OPENCODE_CONFIG_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config/opencode"))
-            .join("plugins/cmux-linux.js"),
+            .join("plugins/oxishell.js"),
         _ => return None,
     })
 }
@@ -145,10 +145,10 @@ pub fn hooks_installed(home: &Path, agent: &str) -> bool {
         .is_some_and(|t| t.contains(MARKER) && t.contains("agent-event"))
 }
 
-fn hook_command(cmux: &str, agent: &str, state: &str) -> String {
+fn hook_command(cli: &str, agent: &str, state: &str) -> String {
     format!(
         "{} agent-event --agent {agent} --state {state} --stdin-json # {MARKER}",
-        shell_quote(cmux)
+        shell_quote(cli)
     )
 }
 
@@ -161,8 +161,8 @@ pub fn shell_quote(s: &str) -> String {
 }
 
 /// Add our hooks to a settings object. Idempotent:
-/// existing cmux-linux entries are replaced, user entries are preserved.
-pub fn install_nested(settings: &mut Value, agent: &str, cmux: &str) -> Result<(), String> {
+/// existing oxishell entries are replaced, user entries are preserved.
+pub fn install_nested(settings: &mut Value, agent: &str, cli: &str) -> Result<(), String> {
     uninstall_nested(settings);
     let obj = settings.as_object_mut().ok_or("settings file is not a JSON object")?;
     let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
@@ -175,7 +175,7 @@ pub fn install_nested(settings: &mut Value, agent: &str, cmux: &str) -> Result<(
         } else {
             10
         };
-        let mut group = json!({"hooks": [{"type": "command", "command": hook_command(cmux, agent, state), "timeout": timeout}]});
+        let mut group = json!({"hooks": [{"type": "command", "command": hook_command(cli, agent, state), "timeout": timeout}]});
         if agent == "codex" && *event == "PreToolUse" {
             // Only an explicit question means waiting; other tools are still work.
             group["matcher"] = json!("^request_user_input$");
@@ -183,16 +183,16 @@ pub fn install_nested(settings: &mut Value, agent: &str, cmux: &str) -> Result<(
         groups.push(group);
     }
     if agent == "claude" {
-        install_claude_usage(settings, cmux)?;
+        install_claude_usage(settings, cli)?;
     }
     Ok(())
 }
 
 /// Wrap the user's status line so the same stdin and output are preserved.
 /// Keep its full settings object for lossless uninstall/reinstall.
-fn install_claude_usage(settings: &mut Value, cmux: &str) -> Result<(), String> {
+fn install_claude_usage(settings: &mut Value, cli: &str) -> Result<(), String> {
     let original = settings.get("statusLine").cloned().unwrap_or(Value::Null);
-    let mut command = format!("{} agent-usage", shell_quote(cmux));
+    let mut command = format!("{} agent-usage", shell_quote(cli));
     if !original.is_null() {
         if original["type"] != "command" {
             return Err("cannot forward a Claude statusLine whose type is not command".into());
@@ -250,13 +250,13 @@ pub fn uninstall_nested(settings: &mut Value) {
 /// Codex lifecycle hooks use the same nested format in an inline TOML table.
 /// Preserve user hooks and notify programs, migrating our legacy notify entry
 /// so completion isn't reported twice.
-pub fn install_codex(toml_text: &str, cmux: &str) -> Result<String, String> {
+pub fn install_codex(toml_text: &str, cli: &str) -> Result<String, String> {
     let mut doc: toml::Table = toml::from_str(toml_text).map_err(|e| format!("config.toml: {e}"))?;
     let mut settings = json!({});
     if let Some(hooks) = doc.get("hooks") {
         settings["hooks"] = serde_json::to_value(hooks).map_err(|e| e.to_string())?;
     }
-    install_nested(&mut settings, "codex", cmux)?;
+    install_nested(&mut settings, "codex", cli)?;
     doc.insert(
         "hooks".into(),
         toml::Value::try_from(&settings["hooks"]).map_err(|e| e.to_string())?,
@@ -290,14 +290,14 @@ fn remove_codex_notify(doc: &mut toml::Table) {
     }
 }
 
-pub fn opencode_plugin(cmux: &str) -> String {
-    let cmux_js = serde_json::to_string(cmux).unwrap();
+pub fn opencode_plugin(cli: &str) -> String {
+    let cli_js = serde_json::to_string(cli).unwrap();
     format!(
-        r#"// {MARKER}: reports OpenCode session state to cmux-linux. Managed by `cmux hooks`.
-export const CmuxLinux = async ({{ $ }}) => {{
-  if (!process.env.CMUX_PANE_ID) return {{}};
+        r#"// {MARKER}: reports OpenCode session state to oxishell. Managed by `oxi hooks`.
+export const Oxishell = async ({{ $ }}) => {{
+  if (!process.env.OXISHELL_PANE_ID) return {{}};
   const send = async (state, message) => {{
-    try {{ await $`${{{cmux_js}}} agent-event --agent opencode --state ${{state}} --message ${{message || ""}}`.quiet(); }} catch {{}}
+    try {{ await $`${{{cli_js}}} agent-event --agent opencode --state ${{state}} --message ${{message || ""}}`.quiet(); }} catch {{}}
   }};
   return {{
     event: async ({{ event }}) => {{
@@ -315,7 +315,7 @@ export const CmuxLinux = async ({{ $ }}) => {{
 }
 
 /// Install hooks for `agent`. Returns the file written.
-pub fn install(agent: &str, home: &Path, cmux: &str) -> Result<PathBuf, String> {
+pub fn install(agent: &str, home: &Path, cli: &str) -> Result<PathBuf, String> {
     let path = settings_path(home, agent).ok_or_else(|| format!("unsupported agent {agent:?}; supported: {}", SUPPORTED.join(", ")))?;
     let existing = match std::fs::read_to_string(&path) {
         Ok(t) => Some(t),
@@ -323,20 +323,20 @@ pub fn install(agent: &str, home: &Path, cmux: &str) -> Result<PathBuf, String> 
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
     let text = match agent {
-        "codex" => install_codex(existing.as_deref().unwrap_or(""), cmux)?,
-        "opencode" => opencode_plugin(cmux),
+        "codex" => install_codex(existing.as_deref().unwrap_or(""), cli)?,
+        "opencode" => opencode_plugin(cli),
         _ => {
             let mut v: Value = match &existing {
                 Some(t) if !t.trim().is_empty() => serde_json::from_str(t).map_err(|e| format!("{}: {e}", path.display()))?,
                 _ => json!({}),
             };
-            install_nested(&mut v, agent, cmux)?;
+            install_nested(&mut v, agent, cli)?;
             serde_json::to_string_pretty(&v).unwrap() + "\n"
         }
     };
     if let Some(old) = &existing {
         // Keep one backup of the user's original file.
-        let bak = path.with_extension(format!("{}.cmux-linux.bak", path.extension().unwrap_or_default().to_string_lossy()));
+        let bak = path.with_extension(format!("{}.oxishell.bak", path.extension().unwrap_or_default().to_string_lossy()));
         if !bak.exists() {
             std::fs::write(&bak, old).map_err(|e| e.to_string())?;
         }
@@ -409,13 +409,13 @@ mod tests {
 
     #[test]
     fn hooks_installed_follows_install_and_uninstall() {
-        let home = std::env::temp_dir().join(format!("cmux-hooks-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("oxishell-hooks-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join(".gemini")).unwrap();
         std::fs::create_dir_all(home.join(".config/opencode/plugins")).unwrap();
         for agent in ["gemini", "opencode"] {
             assert!(!hooks_installed(&home, agent), "{agent}");
-            install(agent, &home, "/usr/bin/cmux").unwrap();
+            install(agent, &home, "/usr/bin/oxi").unwrap();
             assert!(hooks_installed(&home, agent), "{agent}");
             uninstall(agent, &home).unwrap();
             assert!(!hooks_installed(&home, agent), "{agent}");
@@ -428,8 +428,8 @@ mod tests {
     #[test]
     fn nested_install_is_idempotent_and_preserves_user_hooks() {
         let mut v = json!({"model": "x", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}});
-        install_nested(&mut v, "claude", "/usr/bin/cmux").unwrap();
-        install_nested(&mut v, "claude", "/usr/bin/cmux").unwrap();
+        install_nested(&mut v, "claude", "/usr/bin/oxi").unwrap();
+        install_nested(&mut v, "claude", "/usr/bin/oxi").unwrap();
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.len(), 2, "user hook kept, ours added once: {v}");
         assert!(v["hooks"]["Notification"][0]["hooks"][0]["command"]
@@ -447,11 +447,11 @@ mod tests {
     fn claude_usage_preserves_status_line_and_restores_it_on_uninstall() {
         let original = json!({"statusLine": {"type": "command", "command": "printf '%s' \"$(cat)\"", "padding": 2}, "model": "custom"});
         let mut settings = original.clone();
-        install_nested(&mut settings, "claude", "/my dir/cmux").unwrap();
+        install_nested(&mut settings, "claude", "/my dir/oxi").unwrap();
         let installed = settings.clone();
         assert_eq!(settings["statusLine"]["padding"], 2);
         assert!(settings["statusLine"]["command"].as_str().unwrap().contains("--forward-command"));
-        install_nested(&mut settings, "claude", "/my dir/cmux").unwrap();
+        install_nested(&mut settings, "claude", "/my dir/oxi").unwrap();
         assert_eq!(settings, installed);
         uninstall_nested(&mut settings);
         assert_eq!(settings, original);
@@ -460,10 +460,10 @@ mod tests {
     #[test]
     fn gemini_and_qoder_events() {
         let mut v = json!({});
-        install_nested(&mut v, "gemini", "cmux").unwrap();
+        install_nested(&mut v, "gemini", "oxi").unwrap();
         assert!(v["hooks"]["AfterAgent"].is_array() && v["hooks"]["BeforeAgent"].is_array());
         let mut q = json!({});
-        install_nested(&mut q, "qoder", "cmux").unwrap();
+        install_nested(&mut q, "qoder", "oxi").unwrap();
         assert!(q["hooks"]["Stop"].is_array());
         uninstall_nested(&mut q);
         assert_eq!(q, json!({}));
@@ -483,7 +483,7 @@ type = "command"
 command = "say done"
 timeout = 20
 "#;
-        let t = install_codex(original, "/my dir/it's/cmux").unwrap();
+        let t = install_codex(original, "/my dir/it's/oxi").unwrap();
         let doc: toml::Table = toml::from_str(&t).unwrap();
         assert_eq!(doc["model"].as_str(), Some("custom-model"));
         assert_eq!(doc["notify"].as_array().unwrap()[0].as_str(), Some("my-notifier"));
@@ -493,28 +493,28 @@ timeout = 20
         for (event, state) in nested_events("codex") {
             let group = hooks[event].as_array().unwrap().last().unwrap();
             let command = group["hooks"][0]["command"].as_str().unwrap();
-            assert_eq!(command, hook_command("/my dir/it's/cmux", "codex", state));
+            assert_eq!(command, hook_command("/my dir/it's/oxi", "codex", state));
             let timeout = group["hooks"][0]["timeout"].as_integer().unwrap();
             assert_eq!(timeout, if matches!(*event, "SessionEnd" | "Interrupt") { 3 } else { 10 });
         }
         assert_eq!(hooks["PreToolUse"][0]["matcher"].as_str(), Some("^request_user_input$"));
-        let again = install_codex(&t, "/my dir/it's/cmux").unwrap();
+        let again = install_codex(&t, "/my dir/it's/oxi").unwrap();
         assert_eq!(again, t);
         let removed = uninstall_codex(&t).unwrap();
         assert_eq!(
             toml::from_str::<toml::Table>(&removed).unwrap(),
             toml::from_str::<toml::Table>(original).unwrap()
         );
-        assert!(install_codex("hooks = false", "cmux").is_err());
-        assert!(install_codex("[hooks]\nStop = false", "cmux").is_err());
-        assert!(install_codex("{broken", "cmux").is_err());
+        assert!(install_codex("hooks = false", "oxi").is_err());
+        assert!(install_codex("[hooks]\nStop = false", "oxi").is_err());
+        assert!(install_codex("{broken", "oxi").is_err());
     }
 
     #[test]
     fn codex_migrates_legacy_notify_without_duplicate_completion() {
         let legacy =
-            format!("model = \"custom-model\"\nnotify = [\"cmux\", \"agent-event\", \"--marker\", \"{MARKER}\", \"--codex-json\"]\n");
-        let t = install_codex(&legacy, "cmux").unwrap();
+            format!("model = \"custom-model\"\nnotify = [\"oxi\", \"agent-event\", \"--marker\", \"{MARKER}\", \"--codex-json\"]\n");
+        let t = install_codex(&legacy, "oxi").unwrap();
         let doc: toml::Table = toml::from_str(&t).unwrap();
         assert!(!doc.contains_key("notify"));
         assert_eq!(doc["hooks"]["Stop"].as_array().unwrap().len(), 1);
@@ -523,7 +523,7 @@ timeout = 20
         assert_eq!(removed["model"].as_str(), Some("custom-model"));
         let old_removed: toml::Table = toml::from_str(&uninstall_codex(&legacy).unwrap()).unwrap();
         assert_eq!(old_removed, removed);
-        let empty = install_codex("", "cmux").unwrap();
+        let empty = install_codex("", "oxi").unwrap();
         assert!(toml::from_str::<toml::Table>(&uninstall_codex(&empty).unwrap()).unwrap().is_empty());
     }
 
@@ -559,24 +559,24 @@ timeout = 20
 
     #[test]
     fn install_and_uninstall_files() {
-        let home = std::env::temp_dir().join(format!("cmux-agents-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("oxishell-agents-{}", std::process::id()));
         std::fs::create_dir_all(home.join(".gemini")).unwrap();
         std::fs::write(home.join(".gemini/settings.json"), "{\"theme\":\"x\"}").unwrap();
-        let p = install("gemini", &home, "cmux").unwrap();
+        let p = install("gemini", &home, "oxi").unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         assert_eq!(v["theme"], "x");
-        assert!(home.join(".gemini/settings.json.cmux-linux.bak").exists());
+        assert!(home.join(".gemini/settings.json.oxishell.bak").exists());
         uninstall("gemini", &home).unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         assert_eq!(v, json!({"theme": "x"}));
-        let op = install("opencode", &home, "cmux").unwrap();
+        let op = install("opencode", &home, "oxi").unwrap();
         assert!(std::fs::read_to_string(&op).unwrap().contains("session.idle"));
         uninstall("opencode", &home).unwrap();
         assert!(!op.exists());
         // Corrupt settings are not overwritten.
         std::fs::write(home.join(".gemini/settings.json"), "{broken").unwrap();
-        assert!(install("gemini", &home, "cmux").is_err());
-        assert!(install("nope", &home, "cmux").is_err());
+        assert!(install("gemini", &home, "oxi").is_err());
+        assert!(install("nope", &home, "oxi").is_err());
         std::fs::remove_dir_all(&home).unwrap();
     }
 
@@ -588,7 +588,7 @@ timeout = 20
         assert_eq!(resume_command("claude", "abc-1").unwrap(), "claude --resume abc-1");
         assert_eq!(resume_command("claude", "x; rm -rf ~"), None);
         assert_eq!(resume_command("unknown", "abc"), None);
-        assert_eq!(shell_quote("/usr/bin/cmux"), "/usr/bin/cmux");
+        assert_eq!(shell_quote("/usr/bin/oxi"), "/usr/bin/oxi");
         assert_eq!(shell_quote("/my dir/it's"), "'/my dir/it'\\''s'");
     }
 }

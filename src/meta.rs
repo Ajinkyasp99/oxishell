@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn git_info_on_real_repo_and_non_repo() {
-        let dir = std::env::temp_dir().join(format!("cmux-git-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("oxishell-git-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(git_info(&dir), None);
         let ok = Command::new("git")

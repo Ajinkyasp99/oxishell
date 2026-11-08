@@ -4,7 +4,7 @@
 //! or a top→bottom gradient, optionally an image), accent (solid or a
 //! left→right gradient), foreground, surface shading (`details: darker|lighter`)
 //! and the 16 ANSI colours. Built-in themes are bundled Warp theme files; users
-//! can drop any Warp `.yaml` theme into `~/.config/cmux-linux/themes/`.
+//! can drop any Warp `.yaml` theme into `~/.config/oxishell/themes/`.
 //!
 //! The special theme `default` keeps the native GNOME/libadwaita look and
 //! follows the system light/dark setting.
@@ -273,7 +273,7 @@ fn builtins() -> &'static [Theme] {
             .iter()
             .filter_map(|(id, text)| {
                 parse_warp(id, text, None)
-                    .map_err(|e| eprintln!("cmux-linux: bundled theme {e}"))
+                    .map_err(|e| eprintln!("oxishell: bundled theme {e}"))
                     .ok()
             })
             .collect()
@@ -404,7 +404,7 @@ impl Theme {
             );
         }
         let see_through = if self.layered_background() {
-            ".cmux-root vte-terminal, .cmux-root scrolledwindow, .cmux-root overlay, .cmux-root stack, .cmux-root paned { background: transparent; }\n"
+            ".oxishell-root vte-terminal, .oxishell-root scrolledwindow, .oxishell-root overlay, .oxishell-root stack, .oxishell-root paned { background: transparent; }\n"
         } else {
             ""
         };
@@ -430,12 +430,12 @@ impl Theme {
 @define-color dialog_fg_color {fg};
 @define-color card_bg_color {card};
 @define-color card_fg_color {fg};
-.cmux-root {{ background: {bgcss}; color: {fg}; }}
-.cmux-root headerbar {{ background: {surf_t}; box-shadow: none; }}
-.cmux-root .sidebar-pane {{ background: {surf_t}; }}
-.cmux-root .statusbar {{ background: {surf_t}; color: {fg_dim}; }}
-.cmux-root headerbar, .cmux-root .statusbar {{ border-color: {line}; }}
-.cmux-root .sidebar-pane {{ border-right: 1px solid {line}; }}
+.oxishell-root {{ background: {bgcss}; color: {fg}; }}
+.oxishell-root headerbar {{ background: {surf_t}; box-shadow: none; }}
+.oxishell-root .sidebar-pane {{ background: {surf_t}; }}
+.oxishell-root .statusbar {{ background: {surf_t}; color: {fg_dim}; }}
+.oxishell-root headerbar, .oxishell-root .statusbar {{ border-color: {line}; }}
+.oxishell-root .sidebar-pane {{ border-right: 1px solid {line}; }}
 .ws-list > row:selected {{ background: {sel}; }}
 .badge {{ background: {accent_css}; color: {afg}; }}
 .pane.focused {{ border-color: {focus}; }}
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn user_dir_themes_and_background_image() {
-        let dir = std::env::temp_dir().join(format!("cmux-themes-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("oxishell-themes-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("bg.jpg"), b"x").unwrap();
         std::fs::write(

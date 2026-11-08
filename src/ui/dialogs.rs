@@ -486,13 +486,13 @@ pub fn shortcuts_help(app: &AppRc) {
 
 pub fn about(app: &AppRc) {
     let d = adw::AboutDialog::builder()
-        .application_name("cmux-linux")
+        .application_name("oxishell")
         .application_icon(crate::APP_ID)
         .version(env!("CARGO_PKG_VERSION"))
         .comments("Native Linux terminal workspaces and split panes for AI coding agents. Inspired by cmux (manaflow-ai/cmux). Themes from warpdotdev/themes (Apache-2.0).")
         .license_type(gtk4::License::Gpl30)
-        .website("https://github.com/Ajinkyasp99/cmux_linux")
-        .issue_url("https://github.com/Ajinkyasp99/cmux_linux/issues")
+        .website("https://github.com/Ajinkyasp99/oxishell")
+        .issue_url("https://github.com/Ajinkyasp99/oxishell/issues")
         .developer_name("Ajinkya Patil")
         .build();
     d.present(Some(&app.window));
