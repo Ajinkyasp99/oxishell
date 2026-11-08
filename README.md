@@ -34,7 +34,7 @@ input.
 |---|---|
 | 🗂 **Workspaces** | Vertical sidebar with git branch, uncommitted-change count, working directory, listening ports, agent status and unread badges. Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). |
 | ⊞ **Split panes** | Split right or down, nest them, drag dividers, move focus with <kbd>Alt</kbd>+arrows. Each pane is an independent shell. |
-| 🔔 **Agent notifications** | Hooks for **Claude Code, Codex, Gemini CLI, Qoder, OpenCode**. A blue ring on the pane, a badge on the workspace, a desktop notification, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> jumps to it. |
+| 🔔 **Agent notifications** | Hooks for **Claude Code, Codex, Gemini CLI, Qoder, OpenCode**. A blue ring on the pane, a badge on the workspace, a system notification with sound (stays on screen while an agent waits for input; click it to jump to the pane), and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> jumps to it. Long shell commands notify when they finish in a pane you are not watching. |
 | 📊 **Agent limits** | Open Codex and Claude Code sessions show **5-hour and weekly** usage percentages, progress bars and local reset dates/times in AM/PM format at the bottom of the sidebar. Uses local CLI data. |
 | 🎨 **Warp themes** | 41 built-in themes from [Warp](https://github.com/warpdotdev/themes), including gradients. They colour the whole window, not just the text. Drop any Warp `.yaml` theme in to add your own. |
 | 💡 **Command suggestions** | As you type, the newest matching command from your bash/zsh/fish history appears dimmed after the cursor. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> searches your whole history. |
@@ -47,43 +47,119 @@ input.
 
 ## Install
 
-### Ubuntu / Debian (.deb)
+### Requirements
 
-Requires Ubuntu 24.04+ or Debian 13+ (GTK ≥ 4.12, libadwaita ≥ 1.5, VTE-GTK4 ≥ 0.76).
+| | Minimum | Ubuntu 24.04 package (installed automatically by the .deb) |
+|---|---|---|
+| OS | Ubuntu 24.04+ or Debian 13+, X11 or Wayland | — |
+| GTK | 4.12 | `libgtk-4-1` |
+| libadwaita | 1.5 | `libadwaita-1-0` |
+| VTE for GTK 4 | 0.76 | `libvte-2.91-gtk4-0` |
+| git *(optional)* | any | `git` (branch and changes in the sidebar) |
+
+Check what your system offers before installing (each version must be at least the minimum above):
 
 ```bash
-wget https://github.com/Ajinkyasp99/cmux_linux/releases/latest/download/cmux-linux_amd64.deb
-sudo apt install ./cmux-linux_amd64.deb
+lsb_release -ds                     # e.g. Ubuntu 24.04.1 LTS
+for p in libgtk-4-1 libadwaita-1-0 libvte-2.91-gtk4-0; do
+  printf '%-20s %s\n' "$p" "$(apt-cache policy "$p" | awk '/Candidate/ {print $2}')"
+done
 ```
 
-Then open **cmux** from your app menu, or run `cmux-linux`.
+On Ubuntu 24.04 this prints GTK `4.14`, libadwaita `1.5` and VTE `0.76`. If a line shows `(none)`, run
+`sudo apt update` first; if it is still missing, your release is too old.
+
+### Ubuntu / Debian (.deb), recommended
+
+On a fresh Ubuntu install:
+
+```bash
+sudo apt update
+sudo apt install -y wget ca-certificates git
+wget https://github.com/Ajinkyasp99/cmux_linux/releases/latest/download/cmux-linux_amd64.deb
+sudo apt install ./cmux-linux_amd64.deb     # pulls in GTK 4, libadwaita and VTE automatically
+```
+
+Then open **cmux** from your app menu, or run `cmux-linux`. The `cmux` command-line tool is installed too.
 
 > apt may print `N: Download is performed unsandboxed as root…` when the file is in your home folder.
 > That note is harmless.
 
-### Other distributions: build from source
+**Notification sounds** use the system sound theme (`sound-theme-freedesktop`, preinstalled on Ubuntu).
+On desktops whose notification server cannot play sounds itself (not GNOME or KDE), also install
+`sudo apt install gnome-session-canberra` so cmux can play them.
+
+### Build from source
+
+On a fresh Ubuntu 24.04:
 
 ```bash
-# Ubuntu:  sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev
+# 1. Build tools and development headers
+sudo apt update
+sudo apt install -y build-essential pkg-config git curl \
+    libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev
+
+# 2. Rust 1.87 or newer. Ubuntu's own rustc (1.75) is too old, so use rustup:
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+rustc --version                    # must print 1.87 or newer
+
+# 3. Build and run
 git clone https://github.com/Ajinkyasp99/cmux_linux.git
 cd cmux_linux
-cargo build --release          # needs Rust 1.87+ (https://rustup.rs)
+cargo build --release
 ./target/release/cmux-linux
+```
+
+To install your build system-wide (app menu entry, `cmux` on PATH), turn it into a package:
+
+```bash
+sudo apt install -y dpkg-dev
+scripts/build-deb.sh                                     # writes dist/cmux-linux_<version>_<arch>.deb
+sudo apt install --reinstall ./dist/cmux-linux_*.deb
 ```
 
 On Fedora (`gtk4-devel libadwaita-devel vte291-gtk4-devel`) or Arch (`gtk4 libadwaita vte4`), install the
 equivalent packages. These distros haven't been tested yet; reports are welcome.
 Full guide, including uninstalling: [docs/INSTALL.md](docs/INSTALL.md).
 
+### Update
+
+Your settings, themes, workspaces and agent hooks are kept across updates. Close cmux first (or restart it
+afterwards); workspaces come back on the next start.
+
+**Installed from the .deb:** download the latest release and install it over the old one.
+
+```bash
+cmux --version                       # the version you have now
+wget -O cmux-linux_amd64.deb https://github.com/Ajinkyasp99/cmux_linux/releases/latest/download/cmux-linux_amd64.deb
+sudo apt install ./cmux-linux_amd64.deb
+cmux --version                       # the new version
+```
+
+**Built from source:**
+
+```bash
+cd cmux_linux
+git pull
+cargo build --release                                    # run ./target/release/cmux-linux, or:
+scripts/build-deb.sh && sudo apt install --reinstall ./dist/cmux-linux_*.deb
+```
+
+`--reinstall` matters here: a local build keeps the version number, and without it apt says
+*already the newest version* and skips the install.
+
 ## Quick start
 
 1. **Open a workspace per project:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>, then rename it with a double-click.
 2. **Split:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> (right) and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> (down). Start your dev server in one pane and an agent in another.
-3. **Turn on agent notifications** (one time):
+3. **Turn on agent notifications** (one time): <kbd>Ctrl</kbd>+<kbd>,</kbd> → Notifications → Agent Hooks, and switch on
+   your agents. Or from a terminal:
    ```bash
    cmux hooks install --all     # sets up every supported agent found on your PATH
    ```
-4. **Pick a theme:** <kbd>Ctrl</kbd>+<kbd>,</kbd> → Appearance, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> and type `theme`.
+4. **Pick a theme:** <kbd>Ctrl</kbd>+<kbd>,</kbd> → Appearance (→ *Browse all themes* for the full list with search), or
+   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> and type `theme`.
 
 When an agent finishes or asks for permission, its workspace gets a badge. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> to jump straight to it.
 
@@ -141,6 +217,7 @@ See [docs/THEMES.md](docs/THEMES.md).
 | Close pane | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
 | Move focus | <kbd>Alt</kbd>+<kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> |
 | Command palette | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
+| New line in a prompt (without sending) | <kbd>Shift</kbd>+<kbd>Enter</kbd> or <kbd>Ctrl</kbd>+<kbd>Enter</kbd> |
 | Copy / paste | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> |
 | Search scrollback | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> |
 | Accept suggestion | <kbd>→</kbd> or <kbd>End</kbd> |
@@ -151,6 +228,10 @@ See [docs/THEMES.md](docs/THEMES.md).
 | Font size | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>0</kbd> |
 | Font zoom alternatives | <kbd>Ctrl</kbd>+<kbd>+</kbd> / keypad <kbd>+</kbd> or <kbd>-</kbd>; hold <kbd>Ctrl</kbd> and scroll up/down over a terminal |
 | Settings | <kbd>Ctrl</kbd>+<kbd>,</kbd> |
+
+**New line in a prompt** works in Claude Code, Codex, Gemini CLI and OpenCode (sent as <kbd>Ctrl</kbd>+<kbd>J</kbd>),
+and at a bash, zsh or fish prompt, where Enter then runs all the lines. Other programs (vim, REPLs) get the
+key unchanged.
 
 All shortcuts can be changed in Settings → Shortcuts. Right-click a workspace or a terminal for more actions.
 

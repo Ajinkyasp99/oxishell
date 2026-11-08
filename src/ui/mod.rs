@@ -3,6 +3,7 @@
 
 mod blocks;
 mod chips;
+mod desktop_notify;
 mod dialogs;
 mod fonts;
 mod history_panel;
@@ -11,6 +12,7 @@ mod links;
 mod meta_worker;
 mod pane;
 mod scroll;
+mod settings;
 mod sidebar;
 mod suggest;
 mod themes;
@@ -21,7 +23,7 @@ mod zoom;
 use crate::agents::AgentState;
 use crate::config::Config;
 use crate::model::{AppState, Direction, Node, Orient, PaneClosed, PaneId, WorkspaceId};
-use crate::notify::NotificationCenter;
+use crate::notify::{Kind, NotificationCenter};
 use crate::session::{PaneSnapshot, Snapshot};
 use gtk4::glib::translate::IntoGlib;
 use gtk4::prelude::*;
@@ -60,6 +62,8 @@ pub struct App {
     pub toasts: adw::ToastOverlay,
     pub notif_button: gtk4::MenuButton,
     pub notif_badge: gtk4::Label,
+    /// Desktop (OS) notifications with sound; see `desktop_notify`.
+    pub desktop: Rc<desktop_notify::Desktop>,
     /// Generated CSS for the current theme (whole-window colours, gradients).
     pub theme_css: gtk4::CssProvider,
     pub inner: RefCell<Inner>,
@@ -280,6 +284,7 @@ impl App {
             toasts,
             notif_button,
             notif_badge,
+            desktop: desktop_notify::Desktop::new(gapp),
             theme_css,
             inner: RefCell::new(Inner {
                 state: AppState::default(),
@@ -324,6 +329,18 @@ impl App {
                 }
             });
             app.fit_sidebar_to_width();
+        }
+        {
+            let w = Rc::downgrade(&app);
+            app.desktop.set_on_activate(move |id, token| {
+                if let Some(a) = w.upgrade() {
+                    if let Some(t) = token {
+                        // Lets the window manager raise us for this click.
+                        a.window.set_startup_id(&t);
+                    }
+                    a.open_notification(id);
+                }
+            });
         }
         app.install_actions();
         app.install_key_handler();
@@ -371,6 +388,7 @@ impl App {
             app.window.connect_close_request(move |_| {
                 if let Some(a) = w.upgrade() {
                     a.quitting.set(true);
+                    a.desktop.close_all();
                     a.save_session(true);
                     a.shutdown_panes();
                 }
@@ -829,15 +847,24 @@ impl App {
 
     // ---- notifications ------------------------------------------------------
 
+    /// The user is looking at `pane` right now.
+    fn pane_seen(&self, pane: Option<PaneId>) -> bool {
+        pane.is_some() && pane == self.focused_pane() && self.window.is_active()
+    }
+
     /// Record a notification. Visible, focused panes in an active window are
     /// marked read immediately; otherwise the pane gets an attention ring and
     /// a desktop notification is sent.
     pub fn notify(self: &Rc<Self>, pane: Option<PaneId>, title: &str, body: &str, source: &str) -> u64 {
+        self.notify_kind(pane, title, body, source, Kind::from_source(source))
+    }
+
+    pub fn notify_kind(self: &Rc<Self>, pane: Option<PaneId>, title: &str, body: &str, source: &str, kind: Kind) -> u64 {
         let wid = pane.and_then(|p| self.inner.borrow().state.workspace_of(p));
-        let seen = pane.is_some() && pane == self.focused_pane() && self.window.is_active();
-        let (id, title, body, desktop) = {
+        let seen = self.pane_seen(pane);
+        let (id, title, body, desktop, sound) = {
             let mut i = self.inner.borrow_mut();
-            let desktop = i.config.notifications.desktop;
+            let (desktop, sound) = (i.config.notifications.desktop, i.config.notifications.sound);
             let n = i.notes.push(pane, wid, title, body, source);
             let r = (n.id, n.title.clone(), n.body.clone());
             if seen {
@@ -845,20 +872,23 @@ impl App {
                     i.notes.mark_pane_read(p);
                 }
             }
-            (r.0, r.1, r.2, desktop)
+            (r.0, r.1, r.2, desktop, sound)
         };
         if !seen && desktop {
-            let n = gio::Notification::new(if title.is_empty() { "cmux" } else { &title });
             let ws_name = wid.and_then(|w| self.inner.borrow().state.workspace(w).map(|w| w.name.clone()));
             let body = match ws_name {
                 Some(ws) if body.is_empty() => ws,
                 Some(ws) => format!("{ws}: {body}"),
                 None => body,
             };
-            n.set_body(Some(&body));
-            n.set_default_action_and_target_value("app.open-notification", Some(&id.to_variant()));
-            // Failures (no notification daemon) are reported by D-Bus asynchronously and ignored.
-            self.app.send_notification(Some(&format!("cmux-{id}")), &n);
+            self.desktop.show(&desktop_notify::Request {
+                id,
+                pane,
+                kind,
+                title: &title,
+                body: &body,
+                sound,
+            });
         }
         self.refresh();
         id
@@ -906,11 +936,17 @@ impl App {
         }
         if state.notifies() {
             let name = crate::agents::display_name(agent);
-            let title = match state {
-                AgentState::Waiting => format!("{name} needs input"),
-                _ => format!("{name} finished"),
+            let (title, kind) = match state {
+                AgentState::Waiting => (format!("{name} needs input"), Kind::AgentInput),
+                _ => (format!("{name} finished"), Kind::AgentDone),
             };
-            self.notify(Some(pane), &title, message.as_deref().unwrap_or(""), &format!("agent:{agent}"));
+            self.notify_kind(
+                Some(pane),
+                &title,
+                message.as_deref().unwrap_or(""),
+                &format!("agent:{agent}"),
+                kind,
+            );
         } else {
             self.refresh();
         }
@@ -932,6 +968,8 @@ impl App {
             p.chips
                 .update(p.python_env.as_deref(), p.cwd.as_deref(), p.git.as_ref(), i.config.appearance.chips);
         }
+        // Desktop notifications go away once their entry has been seen.
+        self.desktop.sync(|id| i.notes.is_unread(id));
         let unread = i.notes.unread_total();
         self.notif_badge.set_label(&unread.to_string());
         self.notif_badge.set_visible(unread > 0);
@@ -1042,18 +1080,50 @@ impl App {
         }
     }
 
-    /// A command line was submitted in `pane`: start a command block for it.
-    pub fn command_submitted(&self, pane: PaneId) {
+    /// A command line was submitted in `pane`: start a command block for it
+    /// and watch for its end (to notify when a long one finishes).
+    pub fn command_submitted(self: &Rc<Self>, pane: PaneId, cmd: Option<&str>) {
         let Ok(i) = self.inner.try_borrow() else { return };
         let Some(p) = i.panes.get(&pane) else { return };
         if p.has_running_child() {
             return; // Enter inside a program (an agent, a REPL…), not a shell command
         }
+        let w = self.weak();
+        let cmd = cmd.unwrap_or("").trim().to_string();
         p.blocks.on_submit(
             p.cwd.as_deref(),
             p.git.as_ref().map(|g| g.branch.as_str()),
             crate::shellint::env_file(pane),
+            Box::new(move |status, took| {
+                if let Some(a) = w.upgrade() {
+                    a.command_finished(pane, &cmd, status, took);
+                }
+            }),
         );
+    }
+
+    /// A shell command ended. Long ones raise a notification unless the user
+    /// is watching that pane (then the block header already says it).
+    fn command_finished(self: &Rc<Self>, pane: PaneId, cmd: &str, status: i32, took: std::time::Duration) {
+        let (enabled, min) = {
+            let Ok(i) = self.inner.try_borrow() else { return };
+            if !i.panes.contains_key(&pane) {
+                return;
+            }
+            let n = &i.config.notifications;
+            (n.command_finished, n.command_min_seconds)
+        };
+        if !enabled
+            || cmd.is_empty()
+            || took < std::time::Duration::from_secs(min)
+            || crate::notify::is_agent_command(cmd)
+            || self.pane_seen(Some(pane))
+        {
+            return;
+        }
+        let (title, body) = crate::notify::command_text(cmd, status, &blocks::fmt_duration(took));
+        let kind = if status == 0 { Kind::CommandDone } else { Kind::CommandFailed };
+        self.notify_kind(Some(pane), &title, &body, "command", kind);
     }
 
     fn rebuild_keymap(&self) {
@@ -1079,6 +1149,15 @@ impl App {
             let mods = state & gtk4::accelerator_get_default_mod_mask();
             let action = a.inner.borrow().keymap.get(&(key.to_lower().into_glib(), mods)).cloned();
             if let Some(action) = action {
+                if action == "newline" || action == "newline-alt" {
+                    // Only in a focused terminal; elsewhere (dialogs, entries)
+                    // Shift/Ctrl+Enter keep their own meaning.
+                    return if a.insert_newline(true) {
+                        glib::Propagation::Stop
+                    } else {
+                        glib::Propagation::Proceed
+                    };
+                }
                 a.run_action(&action);
                 return glib::Propagation::Stop;
             }
@@ -1208,6 +1287,40 @@ impl App {
         }
     }
 
+    /// Start a new line in the focused pane's input without submitting it
+    /// (see `shellint::newline_input`). False when the program in front has
+    /// no such notion, so the key should reach it unchanged.
+    pub fn insert_newline(&self, require_focus: bool) -> bool {
+        let Some(pane) = self.focused_pane() else { return false };
+        let i = self.inner.borrow();
+        let Some(p) = i.panes.get(&pane) else { return false };
+        if require_focus && !p.term.has_focus() {
+            return false;
+        }
+        let fg = if p.has_running_child() {
+            // Checked now: the sidebar's agent detection runs every few seconds.
+            let agent = crate::meta::foreground_pgrp(p.pty_fd())
+                .filter(|pg| *pg > 0)
+                .and_then(|pg| crate::meta::comm(pg).and_then(|c| crate::meta::agent_for_process(&c, &crate::meta::cmdline(pg))))
+                .or(p.fg_agent)
+                .is_some();
+            if agent {
+                crate::shellint::Foreground::Agent
+            } else {
+                crate::shellint::Foreground::Program
+            }
+        } else {
+            crate::shellint::Foreground::Shell(&p.shell)
+        };
+        match crate::shellint::newline_input(fg) {
+            Some(bytes) => {
+                p.send_input(bytes);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn run_action(self: &Rc<Self>, action: &str) {
         let focused = self.focused_pane();
         let term = focused.and_then(|p| self.inner.borrow().panes.get(&p).map(|p| (p.term.clone(), p.search.clone())));
@@ -1269,6 +1382,9 @@ impl App {
                 let shown = self.split.start_child().is_some_and(|s| s.get_visible());
                 self.set_sidebar_visible(!shown);
             }
+            "newline" | "newline-alt" => {
+                self.insert_newline(false);
+            }
             "jump-unread" => {
                 if self.jump_to_unread().is_none() {
                     self.toast("No unread notifications");
@@ -1286,7 +1402,7 @@ impl App {
                 }
                 self.apply_terminal_style();
             }
-            "settings" => dialogs::settings(self),
+            "settings" => settings::show(self, None),
             "command-history" => dialogs::command_history(self),
             "show-shortcuts" => dialogs::shortcuts_help(self),
             "about" => dialogs::about(self),

@@ -25,6 +25,9 @@ cursor_blink = true
 [notifications]
 desktop = true           # desktop notification when the window/pane is not focused
 bell_attention = true    # terminal bell marks the pane for attention (max once per 5 s)
+sound = true             # play a sound-theme sound with desktop notifications
+command_finished = true  # notify when a long shell command ends in a pane you are not looking at
+command_min_seconds = 10 # ... that ran at least this long
 
 [session]
 restore = true           # restore workspaces, layouts and directories on start
@@ -45,7 +48,7 @@ command = "cargo test"
 
 Shortcut actions: `new-workspace`, `close-workspace`, `rename-workspace`, `next-workspace`,
 `prev-workspace`, `split-right`, `split-down`, `close-pane`, `focus-left|right|up|down`, `copy`, `paste`,
-`search`, `command-palette`, `toggle-sidebar`, `jump-unread`, `notifications`, `zoom-in`, `zoom-out`,
+`newline`, `newline-alt`, `search`, `command-palette`, `toggle-sidebar`, `jump-unread`, `notifications`, `zoom-in`, `zoom-out`,
 `zoom-reset`, `command-history`, `settings`. Conflicting bindings are reported when the app starts.
 
 Environment variables: `CMUX_SOCKET` (socket path), `CMUX_GEOMETRY=WxH` (initial window size),

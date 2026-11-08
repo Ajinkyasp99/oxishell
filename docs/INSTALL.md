@@ -32,6 +32,27 @@ cargo build --release
 
 Rust 1.87+ is required. To build the package yourself: `scripts/build-deb.sh` (needs `dpkg-dev`).
 
+## Update
+
+Settings, themes, workspaces and agent hooks are kept. Close cmux before updating (or restart it after).
+
+From a release:
+
+```bash
+wget -O cmux-linux_amd64.deb https://github.com/Ajinkyasp99/cmux_linux/releases/latest/download/cmux-linux_amd64.deb
+sudo apt install ./cmux-linux_amd64.deb
+cmux --version
+```
+
+From source:
+
+```bash
+git pull
+scripts/build-deb.sh && sudo apt install --reinstall ./dist/cmux-linux_*.deb
+```
+
+A local build keeps its version number, so `--reinstall` is needed or apt skips it as already installed.
+
 ## Uninstall
 
 1. Remove agent hooks first (they live in your agents' own config files):

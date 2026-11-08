@@ -283,6 +283,12 @@ impl LineTracker {
                     self.reset();
                 }
                 '\u{3}' | '\u{15}' => self.reset(), // Ctrl+C, Ctrl+U: line cleared
+                '\u{16}' => {
+                    // Ctrl+V: the next key is inserted literally (a line break
+                    // from Shift+Enter is not a submit).
+                    self.valid = false;
+                    chars.next();
+                }
                 '\u{7f}' | '\u{8}' => {
                     self.line.pop();
                 }
@@ -314,6 +320,16 @@ impl LineTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quoted_line_feed_is_not_a_submit() {
+        let mut t = LineTracker::default();
+        t.feed("echo one");
+        assert!(matches!(t.feed("\u{16}\n"), Event::Changed));
+        t.feed("echo two");
+        assert!(matches!(t.feed("\r"), Event::Submitted(None)), "line no longer tracked exactly");
+        assert!(matches!(t.feed("ls\r"), Event::Submitted(Some(ref l)) if l == "ls"));
+    }
 
     #[test]
     fn parses_history_formats() {

@@ -1,12 +1,18 @@
-//! Theme gallery: a grid of live preview cards, Warp style. Clicking a card
-//! applies the theme to the whole window immediately.
+//! Theme picker: live preview cards, Warp style. Clicking a card applies the
+//! theme to the whole window immediately.
+//!
+//! Settings shows a few quick picks (the current theme first); "Browse all
+//! themes" opens a subpage with every theme, a search field and a
+//! light/dark filter, so the main settings page stays short.
 
 use super::AppRc;
 use crate::theme::{Paint, Rgb, Theme};
 use gtk4::prelude::*;
-use gtk4::{cairo, gio, Orientation};
+use gtk4::{cairo, gio, glib, Orientation};
 use libadwaita as adw;
 use libadwaita::prelude::*;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 const CARD_W: i32 = 168;
 const CARD_H: i32 = 100;
@@ -107,66 +113,335 @@ fn card(t: &Theme) -> gtk4::Box {
     b
 }
 
-/// Preferences group with the gallery, for the Settings dialog.
-pub fn gallery(app: &AppRc) -> adw::PreferencesGroup {
-    let dark = adw::StyleManager::default().is_dark();
-    let current = app.inner.borrow().theme.id.clone();
-    let (_, errors) = crate::theme::load_dir(&crate::theme::user_dir());
-    let group = adw::PreferencesGroup::builder()
-        .title("Theme")
-        .description("Colours the whole window — background, accents, panels and terminal. Any Warp theme (.yaml) works: drop it into the themes folder.")
-        .build();
+/// Popular themes offered as quick picks after the current one.
+const FEATURED: &[&str] = &[
+    "default",
+    "tokyo_night",
+    "dracula",
+    "catppuccin",
+    "nord",
+    "one_dark",
+    "github_light",
+    "solarized_light",
+];
+const QUICK_PICKS: usize = 6;
 
-    let open = gtk4::Button::builder()
-        .label("Open Themes Folder")
-        .valign(gtk4::Align::Center)
-        .build();
-    open.add_css_class("flat");
-    {
-        let w = app.weak();
-        open.connect_clicked(move |_| {
-            let dir = crate::theme::user_dir();
-            let _ = crate::paths::ensure_private_dir(&dir);
-            let uri = gio::File::for_path(&dir).uri();
-            if let Err(e) = gio::AppInfo::launch_default_for_uri(&uri, gio::AppLaunchContext::NONE) {
-                if let Some(a) = w.upgrade() {
-                    a.toast(&format!("Themes folder: {} ({e})", dir.display()));
-                }
-            }
-        });
+/// Ids of the quick picks: the current theme, then featured ones that exist.
+pub fn quick_ids(current: &str, available: &[&str]) -> Vec<String> {
+    let mut ids = vec![current.to_string()];
+    for f in FEATURED {
+        if ids.len() == QUICK_PICKS {
+            break;
+        }
+        if *f != current && available.contains(f) {
+            ids.push(f.to_string());
+        }
     }
-    group.set_header_suffix(Some(&open));
+    ids
+}
 
-    let flow = gtk4::FlowBox::builder()
+/// Light/dark filter of the theme browser.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shade {
+    All,
+    Dark,
+    Light,
+}
+
+/// Search and shade filter used by the theme browser.
+pub fn matches(name: &str, dark: bool, query: &str, shade_dark: Option<bool>) -> bool {
+    shade_dark.is_none_or(|d| d == dark) && super::dialogs::fuzzy_match(query.trim(), name)
+}
+
+fn flow_box(max_per_line: u32) -> gtk4::FlowBox {
+    gtk4::FlowBox::builder()
         .selection_mode(gtk4::SelectionMode::Single)
         .homogeneous(true)
         .min_children_per_line(2)
-        .max_children_per_line(4)
+        .max_children_per_line(max_per_line)
         .column_spacing(8)
         .row_spacing(8)
         .activate_on_single_click(true)
-        .build();
-    for t in crate::theme::all(dark) {
-        let c = card(&t);
-        flow.append(&c);
-        if t.id == current {
-            if let Some(child) = c.parent().and_then(|p| p.downcast::<gtk4::FlowBoxChild>().ok()) {
+        .valign(gtk4::Align::Start)
+        .build()
+}
+
+fn card_id(child: &gtk4::FlowBoxChild) -> String {
+    child.child().map(|c| c.widget_name().to_string()).unwrap_or_default()
+}
+
+fn select_id(flow: &gtk4::FlowBox, id: &str) {
+    let mut w = flow.first_child();
+    while let Some(c) = w {
+        if let Ok(child) = c.clone().downcast::<gtk4::FlowBoxChild>() {
+            if card_id(&child) == id {
                 flow.select_child(&child);
+                return;
             }
         }
+        w = c.next_sibling();
     }
+}
+
+fn open_folder_button(app: &AppRc) -> gtk4::Button {
+    let b = gtk4::Button::builder()
+        .icon_name("folder-open-symbolic")
+        .tooltip_text("Open themes folder — drop any Warp theme (.yaml) here")
+        .valign(gtk4::Align::Center)
+        .build();
+    b.add_css_class("flat");
     let w = app.weak();
-    flow.connect_child_activated(move |_, child| {
-        let id = child.child().map(|c| c.widget_name().to_string()).unwrap_or_default();
-        if let Some(a) = w.upgrade() {
-            a.set_theme(&id);
+    b.connect_clicked(move |_| {
+        let dir = crate::theme::user_dir();
+        let _ = crate::paths::ensure_private_dir(&dir);
+        let uri = gio::File::for_path(&dir).uri();
+        if let Err(e) = gio::AppInfo::launch_default_for_uri(&uri, gio::AppLaunchContext::NONE) {
+            if let Some(a) = w.upgrade() {
+                a.toast(&format!("Themes folder: {} ({e})", dir.display()));
+            }
         }
     });
-    group.add(&flow);
-    for e in errors {
-        let l = gtk4::Label::builder().label(format!("⚠ {e}")).xalign(0.0).wrap(true).build();
-        l.add_css_class("error");
-        group.add(&l);
+    b
+}
+
+/// The theme section of Settings: quick-pick cards, then a group with
+/// "Browse all themes" (opens the full browser as a subpage) and `extra`
+/// rows (the light/dark style). Returns both groups in display order.
+pub fn settings_groups(
+    app: &AppRc,
+    dialog: &adw::PreferencesDialog,
+    extra: &[&gtk4::Widget],
+) -> (adw::PreferencesGroup, adw::PreferencesGroup) {
+    let picks = adw::PreferencesGroup::builder()
+        .title("Theme")
+        .description("Colours the whole window: background, accents, panels and terminal.")
+        .build();
+    picks.set_header_suffix(Some(&open_folder_button(app)));
+    let quick = flow_box(3);
+    picks.add(&quick);
+
+    // Rebuilt after a pick in the browser so the current theme leads.
+    let fill: Rc<dyn Fn()> = {
+        let w = app.weak();
+        let quick = quick.clone();
+        Rc::new(move || {
+            let Some(a) = w.upgrade() else { return };
+            let dark = adw::StyleManager::default().is_dark();
+            let current = a.inner.borrow().theme.id.clone();
+            let all = crate::theme::all(dark);
+            let ids: Vec<&str> = all.iter().map(|t| t.id.as_str()).collect();
+            quick.remove_all();
+            for id in quick_ids(&current, &ids) {
+                if let Some(t) = all.iter().find(|t| t.id == id) {
+                    quick.append(&card(t));
+                }
+            }
+            select_id(&quick, &current);
+        })
+    };
+    fill();
+    {
+        let w = app.weak();
+        quick.connect_child_activated(move |_, child| {
+            if let Some(a) = w.upgrade() {
+                a.set_theme(&card_id(child));
+            }
+        });
     }
-    group
+
+    let more = adw::PreferencesGroup::new();
+    let dark = adw::StyleManager::default().is_dark();
+    let count = crate::theme::all(dark).len();
+    let browse = adw::ActionRow::builder()
+        .title("Browse all themes")
+        .subtitle(format!("{count} themes, with search and a light/dark filter"))
+        .activatable(true)
+        .build();
+    browse.add_prefix(&gtk4::Image::from_icon_name("view-grid-symbolic"));
+    browse.add_suffix(&gtk4::Image::from_icon_name("go-next-symbolic"));
+    {
+        let w = app.weak();
+        let d = dialog.downgrade();
+        let fill = fill.clone();
+        browse.connect_activated(move |_| {
+            let (Some(a), Some(d)) = (w.upgrade(), d.upgrade()) else { return };
+            d.push_subpage(&browser_page(&a, fill.clone()));
+        });
+    }
+    more.add(&browse);
+    for x in extra {
+        more.add(*x);
+    }
+    let (_, errors) = crate::theme::load_dir(&crate::theme::user_dir());
+    for e in errors {
+        let row = adw::ActionRow::builder()
+            .title("Theme file could not be loaded")
+            .subtitle(glib::markup_escape_text(&e).as_str())
+            .build();
+        row.add_prefix(&gtk4::Image::from_icon_name("dialog-warning-symbolic"));
+        row.add_css_class("error");
+        more.add(&row);
+    }
+    (picks, more)
+}
+
+/// Every theme, searchable and filterable by light/dark.
+fn browser_page(app: &AppRc, on_pick: Rc<dyn Fn()>) -> adw::NavigationPage {
+    let dark = adw::StyleManager::default().is_dark();
+    let themes = crate::theme::all(dark);
+    let current = app.inner.borrow().theme.id.clone();
+
+    let search = gtk4::SearchEntry::builder().placeholder_text("Search themes").hexpand(true).build();
+    let shade = Rc::new(Cell::new(Shade::All));
+    let toggles = gtk4::Box::new(Orientation::Horizontal, 0);
+    toggles.add_css_class("linked");
+    let mut buttons = Vec::new();
+    for label in ["All", "Dark", "Light"] {
+        let b = gtk4::ToggleButton::with_label(label);
+        if let Some(first) = buttons.first() {
+            b.set_group(Some(first));
+        } else {
+            b.set_active(true);
+        }
+        toggles.append(&b);
+        buttons.push(b);
+    }
+    let bar = gtk4::Box::new(Orientation::Horizontal, 8);
+    bar.set_margin_start(12);
+    bar.set_margin_end(12);
+    bar.set_margin_top(6);
+    bar.set_margin_bottom(6);
+    bar.append(&search);
+    bar.append(&toggles);
+
+    let flow = flow_box(4);
+    flow.set_margin_start(12);
+    flow.set_margin_end(12);
+    flow.set_margin_top(12);
+    flow.set_margin_bottom(12);
+    // id → (name, dark) for filtering
+    let info: Rc<std::collections::HashMap<String, (String, bool)>> =
+        Rc::new(themes.iter().map(|t| (t.id.clone(), (t.name.clone(), t.is_dark()))).collect());
+    for t in &themes {
+        flow.append(&card(t));
+    }
+    select_id(&flow, &current);
+    let query = Rc::new(RefCell::new(String::new()));
+    {
+        let (info, query, shade) = (info.clone(), query.clone(), shade.clone());
+        flow.set_filter_func(move |child| {
+            let Some((name, dark)) = info.get(&card_id(child)) else {
+                return true;
+            };
+            let want = match shade.get() {
+                Shade::All => None,
+                Shade::Dark => Some(true),
+                Shade::Light => Some(false),
+            };
+            matches(name, *dark, &query.borrow(), want)
+        });
+    }
+
+    let empty = adw::StatusPage::builder()
+        .icon_name("edit-find-symbolic")
+        .title("No Themes Found")
+        .description("Try another name, or switch the light/dark filter.")
+        .build();
+    let clamp = adw::Clamp::builder().maximum_size(900).child(&flow).build();
+    let scroll = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vexpand(true)
+        .child(&clamp)
+        .build();
+    let stack = gtk4::Stack::new();
+    stack.add_named(&scroll, Some("list"));
+    stack.add_named(&empty, Some("empty"));
+
+    let refilter: Rc<dyn Fn()> = {
+        let (flow, stack, info, query, shade) = (flow.clone(), stack.clone(), info.clone(), query.clone(), shade.clone());
+        Rc::new(move || {
+            flow.invalidate_filter();
+            let want = match shade.get() {
+                Shade::All => None,
+                Shade::Dark => Some(true),
+                Shade::Light => Some(false),
+            };
+            let any = info.values().any(|(n, d)| matches(n, *d, &query.borrow(), want));
+            stack.set_visible_child_name(if any { "list" } else { "empty" });
+        })
+    };
+    {
+        let (query, refilter) = (query.clone(), refilter.clone());
+        search.connect_search_changed(move |e| {
+            *query.borrow_mut() = e.text().to_string();
+            refilter();
+        });
+    }
+    for (b, s) in buttons.iter().zip([Shade::All, Shade::Dark, Shade::Light]) {
+        let (shade, refilter) = (shade.clone(), refilter.clone());
+        b.connect_toggled(move |b| {
+            if b.is_active() {
+                shade.set(s);
+                refilter();
+            }
+        });
+    }
+    {
+        let w = app.weak();
+        flow.connect_child_activated(move |_, child| {
+            if let Some(a) = w.upgrade() {
+                a.set_theme(&card_id(child));
+                on_pick();
+            }
+        });
+    }
+
+    let header = adw::HeaderBar::new();
+    header.pack_end(&open_folder_button(app));
+    let view = adw::ToolbarView::new();
+    view.add_top_bar(&header);
+    view.add_top_bar(&bar);
+    view.set_content(Some(&stack));
+    let page = adw::NavigationPage::builder().title("Themes").child(&view).build();
+    {
+        let s = search.clone();
+        page.connect_shown(move |_| {
+            s.grab_focus();
+        });
+    }
+    page
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_picks_lead_with_current_and_skip_missing() {
+        let avail = [
+            "default",
+            "dracula",
+            "nord",
+            "tokyo_night",
+            "koi",
+            "catppuccin",
+            "one_dark",
+            "github_light",
+        ];
+        let ids = quick_ids("koi", &avail);
+        assert_eq!(ids[0], "koi");
+        assert_eq!(ids.len(), QUICK_PICKS);
+        assert!(!ids[1..].contains(&"koi".to_string()));
+        let ids = quick_ids("dracula", &["default", "dracula"]);
+        assert_eq!(ids, vec!["dracula", "default"]);
+    }
+
+    #[test]
+    fn browser_filter_combines_search_and_shade() {
+        assert!(matches("Tokyo Night", true, "tokyo", None));
+        assert!(matches("Tokyo Night", true, "  ", Some(true)));
+        assert!(!matches("Tokyo Night", true, "", Some(false)));
+        assert!(!matches("Nord", true, "dracula", None));
+        assert!(matches("GitHub Light", false, "ghl", Some(false)));
+    }
 }

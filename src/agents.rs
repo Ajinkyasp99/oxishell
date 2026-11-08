@@ -124,6 +124,27 @@ fn settings_path(home: &Path, agent: &str) -> Option<PathBuf> {
     })
 }
 
+/// Executable name of a supported agent.
+pub fn binary(agent: &str) -> &str {
+    match agent {
+        "qoder" => "qodercli",
+        a => a,
+    }
+}
+
+/// The agent's own settings file that `install` writes our hooks into.
+pub fn hook_file(home: &Path, agent: &str) -> Option<PathBuf> {
+    settings_path(home, agent)
+}
+
+/// Our hooks are present in the agent's settings (`agent-event` commands
+/// tagged with [`MARKER`]; the Claude usage status line alone does not count).
+pub fn hooks_installed(home: &Path, agent: &str) -> bool {
+    settings_path(home, agent)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .is_some_and(|t| t.contains(MARKER) && t.contains("agent-event"))
+}
+
 fn hook_command(cmux: &str, agent: &str, state: &str) -> String {
     format!(
         "{} agent-event --agent {agent} --state {state} --stdin-json # {MARKER}",
@@ -385,6 +406,24 @@ pub fn resume_command(agent: &str, session: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hooks_installed_follows_install_and_uninstall() {
+        let home = std::env::temp_dir().join(format!("cmux-hooks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".gemini")).unwrap();
+        std::fs::create_dir_all(home.join(".config/opencode/plugins")).unwrap();
+        for agent in ["gemini", "opencode"] {
+            assert!(!hooks_installed(&home, agent), "{agent}");
+            install(agent, &home, "/usr/bin/cmux").unwrap();
+            assert!(hooks_installed(&home, agent), "{agent}");
+            uninstall(agent, &home).unwrap();
+            assert!(!hooks_installed(&home, agent), "{agent}");
+        }
+        assert_eq!(binary("qoder"), "qodercli");
+        assert_eq!(binary("claude"), "claude");
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     #[test]
     fn nested_install_is_idempotent_and_preserves_user_hooks() {

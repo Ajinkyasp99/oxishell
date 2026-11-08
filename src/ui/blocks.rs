@@ -214,10 +214,15 @@ impl Blocks {
         Some(line)
     }
 
-    /// A command was submitted at the prompt of this pane.
-    pub fn on_submit(self: &Rc<Self>, cwd: Option<&Path>, branch: Option<&str>, env_file: PathBuf) {
+    /// A command was submitted at the prompt of this pane. `on_done` gets its
+    /// exit status and duration once the shell shows its next prompt (also
+    /// when blocks are not drawn, for "command finished" notifications).
+    pub fn on_submit(self: &Rc<Self>, cwd: Option<&Path>, branch: Option<&str>, env_file: PathBuf, on_done: Box<dyn Fn(i32, Duration)>) {
         let Some(term) = self.term.upgrade() else { return };
         if !self.enabled.get() {
+            let id = self.next_id.get();
+            self.next_id.set(id + 1);
+            self.watch_finish(id, false, env_file, on_done);
             return;
         }
         let (_, cursor) = term.cursor_position();
@@ -255,11 +260,13 @@ impl Blocks {
             }
         }
         self.area.queue_draw();
-        self.watch_finish(id, env_file);
+        self.watch_finish(id, true, env_file, on_done);
     }
 
     /// Wait for the prompt hook to rewrite the env file: the command ended.
-    fn watch_finish(self: &Rc<Self>, id: u64, env_file: PathBuf) {
+    /// `drawn`: the command has a block in the list (it stops being watched if
+    /// that block is dropped). A newer submission supersedes the watch too.
+    fn watch_finish(self: &Rc<Self>, id: u64, drawn: bool, env_file: PathBuf, on_done: Box<dyn Fn(i32, Duration)>) {
         let started = SystemTime::now();
         // Compare with the previous prompt's write, not with `started`: file
         // times come from a coarse kernel clock (a few ms per tick), so a
@@ -269,7 +276,8 @@ impl Blocks {
         let weak = Rc::downgrade(self);
         glib::timeout_add_local(Duration::from_millis(120), move || {
             let Some(b) = weak.upgrade() else { return glib::ControlFlow::Break };
-            if !b.list.borrow().iter().any(|x| x.id == id) {
+            let superseded = b.next_id.get() != id + 1;
+            if superseded || (drawn && !b.list.borrow().iter().any(|x| x.id == id)) {
                 return glib::ControlFlow::Break;
             }
             let Some(t) = mtime(&env_file).filter(|t| Some(*t) != before) else {
@@ -284,6 +292,7 @@ impl Blocks {
                 x.result = Some((status, took));
             }
             b.area.queue_draw();
+            on_done(status, took);
             // Re-measure once the new prompt is on screen.
             let w = Rc::downgrade(&b);
             glib::timeout_add_local_once(Duration::from_millis(150), move || {
