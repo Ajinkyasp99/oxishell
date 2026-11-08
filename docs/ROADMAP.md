@@ -5,7 +5,7 @@ what remains, in priority order.
 
 ## To close out 0.1
 
-1. Manual uninstall check by the maintainer: `sudo apt remove cmux-linux` (12.5).
+1. Manual uninstall check by the maintainer: `sudo apt remove oxishell` (12.5).
 2. Run the GitHub Actions workflows on GitHub (12.7).
 3. Turn the manual audit checks (divider drag, theme/font, D-Bus notification, agent resume) into
    automated e2e tests.
@@ -15,9 +15,9 @@ what remains, in priority order.
 ## Next features
 
 - Flatpak with host shell spawning (see PACKAGING.md).
-- Per-project command files (e.g. `.cmux/commands.toml`) in addition to global custom commands.
+- Per-project command files (e.g. `.oxishell/commands.toml`) in addition to global custom commands.
 - OSC 9/777 notifications when a VTE build that exposes them is available.
 - Pane zoom (temporarily maximize one pane), pane swap, equalize splits.
-- Optional `cmux ssh host` convenience that opens a workspace running ssh.
+- Optional `oxi ssh host` convenience that opens a workspace running ssh.
 
 Out of scope (per brief): embedded browser, cloud services, remote dashboards.

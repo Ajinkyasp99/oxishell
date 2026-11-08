@@ -37,7 +37,7 @@ session); Wayland testing in Phase 11.10 is limited to what can be run (e.g. a n
 
 - **OSC 9/99/777 notifications:** the `vte4` binding exposes `notification-received`, but Ubuntu 24.04's
   `libvte-2.91-gtk4.so.0` (0.76.0) does not contain that signal (it comes from a downstream patch).
-  Connecting it would fail at runtime, so it is not used. Attention comes from hooks, `cmux notify`, and
+  Connecting it would fail at runtime, so it is not used. Attention comes from hooks, `oxi notify`, and
   the terminal bell (`bell` signal), which is available.
 - **Renderer:** GTK's default GL renderer works under Xvfb via Mesa llvmpipe; `GSK_RENDERER=cairo` uses
   ~65 MB less private memory there. See PERFORMANCE.md.

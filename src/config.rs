@@ -1,4 +1,4 @@
-//! User configuration (`~/.config/cmux-linux/config.toml`).
+//! User configuration (`~/.config/oxishell/config.toml`).
 //!
 //! Unknown keys are rejected so typos are reported; an invalid file falls
 //! back to defaults and the error is surfaced in the UI rather than crashing.
@@ -47,7 +47,7 @@ pub struct Terminal {
     pub confirm_close_running: bool,
     /// Inline command suggestions from shell history (ghost text, accept with →).
     pub suggestions: bool,
-    /// Replace the shell prompt with a compact `❯` inside cmux-linux panes
+    /// Replace the shell prompt with a compact `❯` inside oxishell panes
     /// (green, red after a failed command). Applies to new terminals.
     pub compact_prompt: bool,
     /// "block" (solid bar), "ibeam" (vertical line) or "underline" (horizontal line).
@@ -71,7 +71,7 @@ pub struct Terminal {
 #[serde(default, deny_unknown_fields)]
 pub struct Ipc {
     pub enabled: bool,
-    /// Allow `cmux send` to type text into panes. Off by default.
+    /// Allow `oxi send` to type text into panes. Off by default.
     pub allow_send: bool,
 }
 
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn load_missing_and_corrupt_files() {
-        let dir = std::env::temp_dir().join(format!("cmux-cfg-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("oxishell-cfg-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let (c, err) = Config::load_from(&dir.join("missing.toml"));
         assert_eq!(c, Config::default());

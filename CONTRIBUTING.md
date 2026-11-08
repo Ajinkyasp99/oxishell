@@ -1,13 +1,13 @@
-# Contributing to cmux-linux
+# Contributing to oxishell
 
 Thanks for helping! Bug reports, theme fixes, docs and code are all welcome.
 
 ## Reporting bugs
 
-Open an [issue](https://github.com/Ajinkyasp99/cmux_linux/issues/new/choose) with:
-- your distro and version, X11 or Wayland (`echo $XDG_SESSION_TYPE`), and the cmux-linux version (`cmux --version`);
+Open an [issue](https://github.com/Ajinkyasp99/oxishell/issues/new/choose) with:
+- your distro and version, X11 or Wayland (`echo $XDG_SESSION_TYPE`), and the oxishell version (`oxi --version`);
 - what you did, what you expected and what happened;
-- output from running `cmux-linux` in another terminal, if relevant.
+- output from running `oxishell` in another terminal, if relevant.
 
 Security problems: please follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
@@ -17,12 +17,12 @@ Security problems: please follow [SECURITY.md](SECURITY.md) instead of opening a
 # Ubuntu 24.04
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev xvfb
 curl https://sh.rustup.rs -sSf | sh     # Rust 1.87+
-git clone https://github.com/Ajinkyasp99/cmux_linux.git && cd cmux_linux
-cargo run --bin cmux-linux
+git clone https://github.com/Ajinkyasp99/oxishell.git && cd oxishell
+cargo run --bin oxishell
 ```
 
-Running a development build next to an installed cmux-linux:
-`CMUX_NON_UNIQUE=1 CMUX_SOCKET=/tmp/cmux-dev.sock cargo run --bin cmux-linux`.
+Running a development build next to an installed oxishell:
+`OXISHELL_NON_UNIQUE=1 OXISHELL_SOCKET=/tmp/oxishell-dev.sock cargo run --bin oxishell`.
 
 ## Before you open a pull request
 
@@ -34,7 +34,7 @@ xvfb-run -a cargo test --test e2e -- --test-threads=1    # end-to-end: real app 
 ```
 
 CI runs the same checks. The end-to-end tests start the real app with isolated config/state directories
-and drive it through the `cmux` socket. Please add or extend a test with your change.
+and drive it through the `oxi` socket. Please add or extend a test with your change.
 
 ## Where things live
 
@@ -42,7 +42,7 @@ and drive it through the `cmux` socket. Please add or extend a test with your ch
 |---|---|
 | `src/model.rs` | workspaces and the split-pane tree (no GTK) |
 | `src/config.rs`, `src/theme.rs` | settings, Warp theme parsing and CSS generation |
-| `src/ipc.rs`, `src/bin/cmux.rs` | socket protocol and the CLI |
+| `src/ipc.rs`, `src/bin/oxi.rs` | socket protocol and the CLI |
 | `src/agents.rs`, `src/notify.rs` | agent hooks, notifications |
 | `src/session.rs`, `src/meta.rs` | save/restore, git/ports/cwd from `/proc` |
 | `src/ui/` | GTK front end (window, panes, sidebar, dialogs, theme gallery) |
@@ -66,7 +66,7 @@ Bundled themes come from [warpdotdev/themes](https://github.com/warpdotdev/theme
 ## Releasing (maintainers)
 
 1. Bump `version` in `Cargo.toml`, update `docs/RELEASE_NOTES.md` and the `<releases>` entry in
-   `data/dev.cmux.Linux.metainfo.xml`.
+   `data/dev.oxishell.Oxishell.metainfo.xml`.
 2. `git tag v0.x.y && git push origin v0.x.y`. The Release workflow builds the `.deb` and publishes it.
 
 By contributing you agree that your contributions are licensed under GPL-3.0-or-later.

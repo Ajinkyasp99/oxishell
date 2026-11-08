@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Measure startup time, idle CPU and memory of cmux-linux (Phase 11).
+# Measure startup time, idle CPU and memory of oxishell (Phase 11).
 # Usage: scripts/bench.sh [path/to/bin-dir]   (default: target/release)
 # Needs a display; under CI use: xvfb-run -a scripts/bench.sh
 set -euo pipefail
 BIN=${1:-target/release}
-APP=$BIN/cmux-linux; CLI=$BIN/cmux
-TMP=$(mktemp -d /tmp/cmux-bench.XXXXXX); trap 'kill $PID 2>/dev/null || true; rm -rf "$TMP"' EXIT
-mkdir -p "$TMP"/{config/cmux-linux,state,run}; chmod 700 "$TMP/run"
-printf '[ipc]\nallow_send = true\n[notifications]\ndesktop = false\n[session]\nrestore = false\n[terminal]\nshell = "/bin/bash"\n' > "$TMP/config/cmux-linux/config.toml"
-export XDG_CONFIG_HOME=$TMP/config XDG_STATE_HOME=$TMP/state XDG_RUNTIME_DIR=$TMP/run CMUX_NON_UNIQUE=1 GSETTINGS_BACKEND=memory
-unset CMUX_SOCKET CMUX_PANE_ID
+APP=$BIN/oxishell; CLI=$BIN/oxi
+TMP=$(mktemp -d /tmp/oxishell-bench.XXXXXX); trap 'kill $PID 2>/dev/null || true; rm -rf "$TMP"' EXIT
+mkdir -p "$TMP"/{config/oxishell,state,run}; chmod 700 "$TMP/run"
+printf '[ipc]\nallow_send = true\n[notifications]\ndesktop = false\n[session]\nrestore = false\n[terminal]\nshell = "/bin/bash"\n' > "$TMP/config/oxishell/config.toml"
+export XDG_CONFIG_HOME=$TMP/config XDG_STATE_HOME=$TMP/state XDG_RUNTIME_DIR=$TMP/run OXISHELL_NON_UNIQUE=1 GSETTINGS_BACKEND=memory
+unset OXISHELL_SOCKET OXISHELL_PANE_ID
 PID=
 
 now() { date +%s%N; }
@@ -28,7 +28,7 @@ start() {
 }
 stop() { kill -TERM $PID; wait $PID 2>/dev/null || true; PID=; }
 
-echo "# cmux-linux benchmark — $(date -u +%Y-%m-%dT%H:%MZ)"
+echo "# oxishell benchmark — $(date -u +%Y-%m-%dT%H:%MZ)"
 echo "host: $(uname -r), $(nproc) CPUs, display: ${WAYLAND_DISPLAY:+wayland }${DISPLAY:+x11 $DISPLAY}, GSK_RENDERER=${GSK_RENDERER:-default}"
 times=()
 for i in 1 2 3 4 5; do start; times+=("$STARTMS"); stop; done

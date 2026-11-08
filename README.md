@@ -1,30 +1,30 @@
 <div align="center">
 
-<img src="data/icons/dev.cmux.Linux.svg" width="96" alt="cmux-linux icon">
+<img src="data/icons/dev.oxishell.Oxishell.svg" width="96" alt="oxishell icon">
 
-# cmux-linux
+# oxishell
 
 **A native Linux terminal for running many shells and AI coding agents side by side.**
 
 Workspaces in a sidebar · split panes · notification rings when an agent needs you · 41 Warp themes
 
-[![CI](https://github.com/Ajinkyasp99/cmux_linux/actions/workflows/ci.yml/badge.svg)](https://github.com/Ajinkyasp99/cmux_linux/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Ajinkyasp99/cmux_linux?display_name=tag)](https://github.com/Ajinkyasp99/cmux_linux/releases/latest)
+[![CI](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml/badge.svg)](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Ajinkyasp99/oxishell?display_name=tag)](https://github.com/Ajinkyasp99/oxishell/releases/latest)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 ![Platform: Linux](https://img.shields.io/badge/platform-Linux%20(X11%20%2B%20Wayland)-informational)
 
-<img src="docs/assets/hero.png" alt="cmux-linux with three workspaces, split panes, git branch and port info in the sidebar, and unread notification badges" width="900">
+<img src="docs/assets/hero.png" alt="oxishell with three workspaces, split panes, git branch and port info in the sidebar, and unread notification badges" width="900">
 
 </div>
 
-cmux-linux brings the workflow of [cmux](https://github.com/manaflow-ai/cmux) (a macOS app) to Linux as a
+oxishell brings the workflow of [cmux](https://github.com/manaflow-ai/cmux) (a macOS app) to Linux as a
 real native app: **Rust + GTK4/libadwaita**, with terminals rendered by **VTE**, the engine behind GNOME
 Terminal. No Electron, no browser, no web terminal.
 
 ## Why
 
 When you run Claude Code, Codex or Gemini in several terminals, you keep checking each one to see whether it
-finished or is waiting for you. cmux-linux keeps every project in its own **workspace**, shows each one's git
+finished or is waiting for you. oxishell keeps every project in its own **workspace**, shows each one's git
 branch, open ports and agent status in a **sidebar**, and **lights up the pane** the moment an agent needs
 input.
 
@@ -41,7 +41,7 @@ input.
 | 🏷 **Context chips** | Warp-style chips above each terminal: active Python venv/conda env, folder, git branch and changes. The prompt becomes a clean `❯` (red after a failed command). |
 | ▮ **Cursor** | Block, vertical line or horizontal line, blinking or steady. |
 | ⌘ **Command palette** | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>: every action, workspace, theme and your own project commands, with fuzzy search. |
-| 🤖 **Scriptable** | The `cmux` CLI controls the running app over a private local socket: create workspaces, split, read output, send notifications. |
+| 🤖 **Scriptable** | The `oxi` CLI controls the running app over a private local socket: create workspaces, split, read output, send notifications. |
 | 💾 **Sessions** | Workspaces, layouts, directories and agent sessions come back after a restart, each terminal clean at the top. Commands are never re-run. |
 | 🐧 **Native** | GTK4, X11 and Wayland, light/dark aware, ~180 ms startup, ~1 % idle CPU with 20 panes ([measured](docs/PERFORMANCE.md)). |
 
@@ -76,18 +76,18 @@ On a fresh Ubuntu install:
 ```bash
 sudo apt update
 sudo apt install -y wget ca-certificates git
-wget https://github.com/Ajinkyasp99/cmux_linux/releases/latest/download/cmux-linux_amd64.deb
-sudo apt install ./cmux-linux_amd64.deb     # pulls in GTK 4, libadwaita and VTE automatically
+wget https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_amd64.deb
+sudo apt install ./oxishell_amd64.deb     # pulls in GTK 4, libadwaita and VTE automatically
 ```
 
-Then open **cmux** from your app menu, or run `cmux-linux`. The `cmux` command-line tool is installed too.
+Then open **oxishell** from your app menu, or run `oxishell`. The `oxi` command-line tool is installed too.
 
 > apt may print `N: Download is performed unsandboxed as root…` when the file is in your home folder.
 > That note is harmless.
 
 **Notification sounds** use the system sound theme (`sound-theme-freedesktop`, preinstalled on Ubuntu).
 On desktops whose notification server cannot play sounds itself (not GNOME or KDE), also install
-`sudo apt install gnome-session-canberra` so cmux can play them.
+`sudo apt install gnome-session-canberra` so oxishell can play them.
 
 ### Build from source
 
@@ -105,18 +105,18 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 rustc --version                    # must print 1.87 or newer
 
 # 3. Build and run
-git clone https://github.com/Ajinkyasp99/cmux_linux.git
-cd cmux_linux
+git clone https://github.com/Ajinkyasp99/oxishell.git
+cd oxishell
 cargo build --release
-./target/release/cmux-linux
+./target/release/oxishell
 ```
 
-To install your build system-wide (app menu entry, `cmux` on PATH), turn it into a package:
+To install your build system-wide (app menu entry, `oxi` on PATH), turn it into a package:
 
 ```bash
 sudo apt install -y dpkg-dev
-scripts/build-deb.sh                                     # writes dist/cmux-linux_<version>_<arch>.deb
-sudo apt install --reinstall ./dist/cmux-linux_*.deb
+scripts/build-deb.sh                                     # writes dist/oxishell_<version>_<arch>.deb
+sudo apt install --reinstall ./dist/oxishell_*.deb
 ```
 
 On Fedora (`gtk4-devel libadwaita-devel vte291-gtk4-devel`) or Arch (`gtk4 libadwaita vte4`), install the
@@ -125,25 +125,25 @@ Full guide, including uninstalling: [docs/INSTALL.md](docs/INSTALL.md).
 
 ### Update
 
-Your settings, themes, workspaces and agent hooks are kept across updates. Close cmux first (or restart it
+Your settings, themes, workspaces and agent hooks are kept across updates. Close oxishell first (or restart it
 afterwards); workspaces come back on the next start.
 
 **Installed from the .deb:** download the latest release and install it over the old one.
 
 ```bash
-cmux --version                       # the version you have now
-wget -O cmux-linux_amd64.deb https://github.com/Ajinkyasp99/cmux_linux/releases/latest/download/cmux-linux_amd64.deb
-sudo apt install ./cmux-linux_amd64.deb
-cmux --version                       # the new version
+oxi --version                       # the version you have now
+wget -O oxishell_amd64.deb https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_amd64.deb
+sudo apt install ./oxishell_amd64.deb
+oxi --version                       # the new version
 ```
 
 **Built from source:**
 
 ```bash
-cd cmux_linux
+cd oxishell
 git pull
-cargo build --release                                    # run ./target/release/cmux-linux, or:
-scripts/build-deb.sh && sudo apt install --reinstall ./dist/cmux-linux_*.deb
+cargo build --release                                    # run ./target/release/oxishell, or:
+scripts/build-deb.sh && sudo apt install --reinstall ./dist/oxishell_*.deb
 ```
 
 `--reinstall` matters here: a local build keeps the version number, and without it apt says
@@ -156,7 +156,7 @@ scripts/build-deb.sh && sudo apt install --reinstall ./dist/cmux-linux_*.deb
 3. **Turn on agent notifications** (one time): <kbd>Ctrl</kbd>+<kbd>,</kbd> → Notifications → Agent Hooks, and switch on
    your agents. Or from a terminal:
    ```bash
-   cmux hooks install --all     # sets up every supported agent found on your PATH
+   oxi hooks install --all     # sets up every supported agent found on your PATH
    ```
 4. **Pick a theme:** <kbd>Ctrl</kbd>+<kbd>,</kbd> → Appearance (→ *Browse all themes* for the full list with search), or
    <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> and type `theme`.
@@ -180,13 +180,13 @@ When an agent finishes or asks for permission, its workspace gets a badge. Press
 </table>
 
 Suggestions only appear when you're at a shell prompt (never inside vim, Python and so on), and only while
-cmux-linux can follow your typing exactly (after <kbd>Tab</kbd>, arrow keys or paste they pause until the
+oxishell can follow your typing exactly (after <kbd>Tab</kbd>, arrow keys or paste they pause until the
 next line). The **environment chip** works automatically in bash; for zsh/fish add one line:
-`cmux shell-integration zsh >> ~/.zshrc` (or `fish >> ~/.config/fish/config.fish`). Both features can be
+`oxi shell-integration zsh >> ~/.zshrc` (or `fish >> ~/.config/fish/config.fish`). Both features can be
 turned off in Settings.
 
 Because the chips already show where you are, panes use a compact **`❯` prompt** (green, red after a
-failed command) instead of `user@host:~/path$`. This only applies inside cmux-linux; your `~/.bashrc`,
+failed command) instead of `user@host:~/path$`. This only applies inside oxishell; your `~/.bashrc`,
 other terminals and SSH sessions keep their own prompt. Turn it off in Settings → Compact prompt.
 
 ## Themes
@@ -202,7 +202,7 @@ Dark/Light, Gruvbox, Solarized, Monokai Pro, Night Owl, Synthwave 84, Ayu, Everf
 Cobalt 2, Outrun, Shades of Purple, Poimandres, Vitesse, Palenight, and more.
 
 **Add your own:** put any [Warp theme file](https://github.com/warpdotdev/themes) into
-`~/.config/cmux-linux/themes/`. It shows up in the gallery right away, background images included.
+`~/.config/oxishell/themes/`. It shows up in the gallery right away, background images included.
 See [docs/THEMES.md](docs/THEMES.md).
 
 <img src="docs/assets/theme-gallery.png" alt="Theme gallery in Settings" width="420">
@@ -242,11 +242,11 @@ Zoom applies to all panes, and <kbd>Ctrl</kbd>+<kbd>0</kbd> returns to the confi
 ## Command line
 
 ```bash
-cmux workspace new --name api --cwd ~/src/api   # new workspace
-cmux pane split --direction down                # split the current pane
-cmux notify -t "Deploy done" -b "prod is green" # ring this pane
-cmux workspace list                             # see everything
-cmux pane read --lines 50                       # last 50 lines of output
+oxi workspace new --name api --cwd ~/src/api   # new workspace
+oxi pane split --direction down                # split the current pane
+oxi notify -t "Deploy done" -b "prod is green" # ring this pane
+oxi workspace list                             # see everything
+oxi pane read --lines 50                       # last 50 lines of output
 ```
 
 Use it from scripts, git hooks or your own agent tooling. Reference: [docs/CLI.md](docs/CLI.md).
@@ -260,18 +260,18 @@ Use it from scripts, git hooks or your own agent tooling. Reference: [docs/CLI.m
 | OpenCode¹ | ✓ | ✓ | ✓ |
 | Codex CLI² | ✓ | ✓ | ✓ |
 | Qoder CLI | — | — | ✓ |
-| Anything else | `cmux agent-event` / `cmux notify` from your own scripts | | |
+| Anything else | `oxi agent-event` / `oxi notify` from your own scripts | | |
 
 ¹ OpenCode support is implemented as a plugin but has not yet been tested against a live OpenCode.
-² Codex requires a CLI with lifecycle hooks: run `cmux hooks install codex`, restart Codex, then review
-and trust the cmux hooks in `/hooks`. Needs input covers approval requests and `request_user_input`
+² Codex requires a CLI with lifecycle hooks: run `oxi hooks install codex`, restart Codex, then review
+and trust the oxi hooks in `/hooks`. Needs input covers approval requests and `request_user_input`
 questions. Older Codex versions can still use the completion-only `notify` integration; see [agent setup](docs/AGENTS.md).
 
 After a restart, sessions whose hooks reported a session id (Claude Code, Gemini, Qoder, and Codex when it
 sends a thread id) can be resumed from the pane menu or the palette.
 
-cmux-linux only shows states that the agent's own hooks report; it never guesses. Hooks are silent no-ops
-outside cmux-linux, so installing them never breaks your agents. Details: [docs/AGENTS.md](docs/AGENTS.md).
+oxishell only shows states that the agent's own hooks report; it never guesses. Hooks are silent no-ops
+outside oxishell, so installing them never breaks your agents. Details: [docs/AGENTS.md](docs/AGENTS.md).
 
 ### Codex and Claude usage limits
 
@@ -283,18 +283,18 @@ Rows disappear when the sessions close. Limits are account-wide snapshots, refre
 reported after agent responses; usage from other devices can lag until the CLI reports again.
 
 Codex works automatically from local session logs (`CODEX_HOME` is respected). For Claude, run
-`cmux hooks install claude` once with the updated cmux binary, then restart Claude. This also installs
-a status-line bridge to forward Claude's quota data to cmux. Any existing status-line command keeps
-its input, output and settings, and is restored by `cmux hooks uninstall claude`. A project-level
+`oxi hooks install claude` once with the updated `oxi` binary, then restart Claude. This also installs
+a status-line bridge to forward Claude's quota data to oxishell. Any existing status-line command keeps
+its input, output and settings, and is restored by `oxi hooks uninstall claude`. A project-level
 `statusLine` override can take precedence over this user-level bridge.
 
 Missing limits remain unavailable (including API-key sessions that do not report subscription quotas).
 Expired snapshots wait for updated data instead of assuming the allowance was replenished. No API keys,
-credentials or network requests are used by cmux for this feature.
+credentials or network requests are used by oxishell for this feature.
 
 ## Configuration
 
-Everything is in Settings (<kbd>Ctrl</kbd>+<kbd>,</kbd>), saved to `~/.config/cmux-linux/config.toml`:
+Everything is in Settings (<kbd>Ctrl</kbd>+<kbd>,</kbd>), saved to `~/.config/oxishell/config.toml`:
 
 ```toml
 [appearance]
@@ -312,7 +312,7 @@ All options: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 - Everything stays on your machine. No accounts, telemetry, cloud or network listeners.
 - The control socket is private to your user (mode 0600, peer-uid checked).
-- Typing into panes from the CLI (`cmux pane send`) is **off by default**.
+- Typing into panes from the CLI (`oxi pane send`) is **off by default**.
 - Restoring a session never re-runs commands; saved output is shown as plain text.
 
 Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
@@ -341,4 +341,4 @@ tests and guidelines.
 - Built on [GTK](https://gtk.org), [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/) and
   [VTE](https://gitlab.gnome.org/GNOME/vte).
 
-cmux-linux is free software under the **GNU GPL v3.0 or later**. See [LICENSE](LICENSE).
+oxishell is free software under the **GNU GPL v3.0 or later**. See [LICENSE](LICENSE).

@@ -48,7 +48,7 @@ pub fn install() -> Status {
             match patch_libvte() {
                 Ok(()) => Status::Installed,
                 Err(e) => {
-                    eprintln!("cmux-linux: VTE {major}.{minor} font crash workaround not applied: {e}");
+                    eprintln!("oxishell: VTE {major}.{minor} font crash workaround not applied: {e}");
                     Status::Failed(e)
                 }
             }

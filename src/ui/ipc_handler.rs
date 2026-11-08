@@ -192,7 +192,7 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
         "pane.send" => {
             if !a.inner.borrow().config.ipc.allow_send {
                 return Err(
-                    "sending input is disabled; enable [ipc] allow_send = true in ~/.config/cmux-linux/config.toml or in Settings".into(),
+                    "sending input is disabled; enable [ipc] allow_send = true in ~/.config/oxishell/config.toml or in Settings".into(),
                 );
             }
             let pane = resolve_pane(a, p)?;
@@ -241,7 +241,7 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
             Ok(json!({"pane": pane}))
         }
         "agent.event" => {
-            let pane = param_u64(p, "pane")?.ok_or("missing pane (run inside a cmux-linux pane)")?;
+            let pane = param_u64(p, "pane")?.ok_or("missing pane (run inside an oxishell pane)")?;
             let agent = require_str(p, "agent")?;
             if agent.is_empty() || agent.len() > 32 || !agent.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
                 return Err("invalid agent name".into());

@@ -27,7 +27,7 @@ use std::rc::{Rc, Weak};
 const BUS: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
 const IFACE: &str = "org.freedesktop.Notifications";
-const APP_NAME: &str = "cmux";
+const APP_NAME: &str = "oxishell";
 const CALL_TIMEOUT_MS: i32 = 5000;
 
 /// One notification to show.
@@ -67,7 +67,7 @@ pub struct Desktop {
 impl Desktop {
     pub fn new(gapp: &impl IsA<gio::Application>) -> Rc<Desktop> {
         let conn = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE)
-            .map_err(|e| eprintln!("cmux-linux: no session bus, using GTK notifications: {e}"))
+            .map_err(|e| eprintln!("oxishell: no session bus, using GTK notifications: {e}"))
             .ok();
         let d = Rc::new(Desktop {
             gapp: gapp.clone().upcast(),
@@ -249,7 +249,7 @@ impl Desktop {
                     }
                     None => {
                         d.retired.borrow_mut().remove(&id);
-                        eprintln!("cmux-linux: notification server unavailable, using GTK notifications");
+                        eprintln!("oxishell: notification server unavailable, using GTK notifications");
                         d.server_sound.set(Some(false));
                         let r = fallback.request();
                         if r.sound && server_sound {
@@ -274,8 +274,8 @@ impl Desktop {
         });
         n.set_default_action_and_target_value("app.open-notification", Some(&r.id.to_variant()));
         let key = match r.pane {
-            Some(p) => format!("cmux-pane-{p}"),
-            None => format!("cmux-{}", r.id),
+            Some(p) => format!("oxishell-pane-{p}"),
+            None => format!("oxishell-{}", r.id),
         };
         self.gapp.send_notification(Some(&key), &n);
     }
@@ -389,7 +389,7 @@ fn play_sound(event: &str) {
         std::ffi::OsStr::new("--id"),
         std::ffi::OsStr::new(event),
         std::ffi::OsStr::new("--description"),
-        std::ffi::OsStr::new("cmux notification"),
+        std::ffi::OsStr::new("oxishell notification"),
     ];
     let flags = gio::SubprocessFlags::STDOUT_SILENCE | gio::SubprocessFlags::STDERR_SILENCE;
     match gio::Subprocess::newv(&argv, flags) {

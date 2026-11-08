@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build a Debian/Ubuntu package: dist/cmux-linux_<version>_<arch>.deb
+# Build a Debian/Ubuntu package: dist/oxishell_<version>_<arch>.deb
 # Requires: cargo, dpkg-dev (dpkg-deb, dpkg-shlibdeps). Run from the repo root.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 ARCH=$(dpkg --print-architecture)
-PKG=cmux-linux
+PKG=oxishell
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
@@ -16,11 +16,11 @@ export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$PWD=. --remap-path-prefix=
 cargo build --release --locked
 
 R=$STAGE/root
-install -Dm755 target/release/cmux-linux "$R/usr/bin/cmux-linux"
-install -Dm755 target/release/cmux "$R/usr/bin/cmux"
-install -Dm644 data/dev.cmux.Linux.desktop "$R/usr/share/applications/dev.cmux.Linux.desktop"
-install -Dm644 data/dev.cmux.Linux.metainfo.xml "$R/usr/share/metainfo/dev.cmux.Linux.metainfo.xml"
-install -Dm644 data/icons/dev.cmux.Linux.svg "$R/usr/share/icons/hicolor/scalable/apps/dev.cmux.Linux.svg"
+install -Dm755 target/release/oxishell "$R/usr/bin/oxishell"
+install -Dm755 target/release/oxi "$R/usr/bin/oxi"
+install -Dm644 data/dev.oxishell.Oxishell.desktop "$R/usr/share/applications/dev.oxishell.Oxishell.desktop"
+install -Dm644 data/dev.oxishell.Oxishell.metainfo.xml "$R/usr/share/metainfo/dev.oxishell.Oxishell.metainfo.xml"
+install -Dm644 data/icons/dev.oxishell.Oxishell.svg "$R/usr/share/icons/hicolor/scalable/apps/dev.oxishell.Oxishell.svg"
 install -Dm644 README.md "$R/usr/share/doc/$PKG/README.md"
 install -Dm644 docs/RELEASE_NOTES.md "$R/usr/share/doc/$PKG/RELEASE_NOTES.md"
 install -Dm644 docs/TROUBLESHOOTING.md "$R/usr/share/doc/$PKG/TROUBLESHOOTING.md"
@@ -30,10 +30,10 @@ install -Dm644 data/fonts/LICENSE.md "$R/usr/share/doc/$PKG/LICENSE-Hack.md"
 install -Dm644 data/fonts/NOTICE.md "$R/usr/share/doc/$PKG/FONTS-NOTICE.md"
 cat > "$R/usr/share/doc/$PKG/copyright" <<C
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: cmux-linux
+Upstream-Name: oxishell
 Comment: Linux-native terminal inspired by cmux (https://github.com/manaflow-ai/cmux).
 Files: *
-Copyright: Ajinkya Patil and cmux-linux contributors
+Copyright: Ajinkya Patil and oxishell contributors
 License: GPL-3.0-or-later
  On Debian systems, the full text is in /usr/share/common-licenses/GPL-3.
 
@@ -41,13 +41,13 @@ Files: data/themes/*
 Copyright: Warp and the original theme authors
 License: Apache-2.0
  Theme data compiled into the binary comes from https://github.com/warpdotdev/themes.
- See /usr/share/doc/cmux-linux/LICENSE-warp-themes.
+ See /usr/share/doc/oxishell/LICENSE-warp-themes.
 
 Files: data/fonts/*
 Copyright: 2018 Source Foundry Authors; 2003 Bitstream Inc.
 License: MIT and Bitstream-Vera
  Unmodified Hack fonts, bundled in the binary.
- See /usr/share/doc/cmux-linux/LICENSE-Hack.md and FONTS-NOTICE.md.
+ See /usr/share/doc/oxishell/LICENSE-Hack.md and FONTS-NOTICE.md.
 C
 
 chmod 644 "$R/usr/share/doc/$PKG/copyright"
@@ -55,7 +55,7 @@ chmod 644 "$R/usr/share/doc/$PKG/copyright"
 # Shared-library dependencies computed from the binaries.
 mkdir -p "$STAGE/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: any\n' "$PKG" "$PKG" > "$STAGE/debian/control"
-DEPS=$(cd "$STAGE" && dpkg-shlibdeps -O "root/usr/bin/cmux-linux" "root/usr/bin/cmux" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
+DEPS=$(cd "$STAGE" && dpkg-shlibdeps -O "root/usr/bin/oxishell" "root/usr/bin/oxi" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
 [ -n "$DEPS" ] || { echo "dpkg-shlibdeps failed" >&2; exit 1; }
 
 mkdir -p "$R/DEBIAN"
@@ -70,12 +70,12 @@ Depends: $DEPS
 Recommends: git
 Section: x11
 Priority: optional
-Homepage: https://github.com/Ajinkyasp99/cmux_linux
+Homepage: https://github.com/Ajinkyasp99/oxishell
 Description: terminal workspaces and split panes for AI coding agents
  Native GTK4/libadwaita terminal (VTE) with a vertical workspace sidebar,
  nested split panes, git/port metadata, notification rings for coding agents
  (Claude Code, Codex, Gemini CLI, Qoder, OpenCode), a command palette and a
- local CLI/socket API ("cmux"). Inspired by cmux for macOS.
+ local CLI/socket API ("oxi"). Inspired by cmux for macOS.
 C
 # Refresh desktop caches when available (no-ops otherwise).
 cat > "$R/DEBIAN/postinst" <<'C'

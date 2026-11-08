@@ -4,7 +4,7 @@
 
 - Codex lifecycle hooks report running, needs input (approvals and explicit questions), completion,
   interruption and session end. Installation preserves custom hooks and notification programs and
-  migrates the old cmux notifier. Restart Codex and review and trust the hooks in `/hooks`.
+  migrates the old oxishell notifier. Restart Codex and review and trust the hooks in `/hooks`.
 
 ## 0.1.0 — 2026-11-07 (first release)
 
@@ -20,24 +20,24 @@ unread badges; create, rename (double-click), reorder (drag), close with the ✕
 draggable dividers and Alt+Arrow navigation.
 
 **Notifications & agents** — attention rings, workspace badges, notifications panel, jump-to-unread,
-desktop notifications; hooks for Claude Code, Codex, Gemini CLI, Qoder CLI and OpenCode (`cmux hooks
+desktop notifications; hooks for Claude Code, Codex, Gemini CLI, Qoder CLI and OpenCode (`oxi hooks
 install`); bell-as-attention; foreground agent detection; explicit, user-confirmed agent session resume.
 
 **Themes** — 41 built-in Warp themes (Apache-2.0, warpdotdev/themes) that colour the whole window,
 including gradient backgrounds and accents; a visual theme gallery in Settings; "Theme: …" entries in the
-command palette; any Warp `.yaml` theme (with background image) can be added to `~/.config/cmux-linux/themes/`.
+command palette; any Warp `.yaml` theme (with background image) can be added to `~/.config/oxishell/themes/`.
 
 **Suggestions & chips** — Warp/fish-style inline command suggestions from bash/zsh/fish history
 (accept with →), a command-history search popup (Ctrl+Shift+H), and context chips above each terminal
 showing the active Python venv/conda env, folder and git branch.
 
-**Prompt & cursor** — compact `❯` prompt inside cmux-linux panes (green, red after a failed command;
+**Prompt & cursor** — compact `❯` prompt inside oxishell panes (green, red after a failed command;
 user configs untouched); cursor shape block / vertical line / horizontal line, with optional blinking.
 
 **Productivity** — command palette with custom commands, configurable shortcuts, light/dark/system mode
 for the default theme, settings dialog, auto-hiding sidebar in narrow windows.
 
-**Automation** — `cmux` CLI and newline-JSON Unix socket API (0600, peer-uid checked); text injection
+**Automation** — `oxi` CLI and newline-JSON Unix socket API (0600, peer-uid checked); text injection
 disabled unless enabled.
 
 **Sessions** — workspaces, layouts, directories and agent session ids restored on start, each terminal

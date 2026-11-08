@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>dev.cmux.Linux</id>
+  <id>dev.oxishell.Oxishell</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <name>cmux</name>
+  <name>oxishell</name>
   <summary>Terminal workspaces and split panes for AI coding agents</summary>
   <description>
     <p>
@@ -20,26 +20,26 @@
       <li>Workspace, layout and directory restoration</li>
     </ul>
   </description>
-  <launchable type="desktop-id">dev.cmux.Linux.desktop</launchable>
-  <url type="homepage">https://github.com/Ajinkyasp99/cmux_linux</url>
-  <url type="bugtracker">https://github.com/Ajinkyasp99/cmux_linux/issues</url>
+  <launchable type="desktop-id">dev.oxishell.Oxishell.desktop</launchable>
+  <url type="homepage">https://github.com/Ajinkyasp99/oxishell</url>
+  <url type="bugtracker">https://github.com/Ajinkyasp99/oxishell/issues</url>
   <screenshots>
     <screenshot type="default">
       <caption>Workspaces, split panes and agent notifications</caption>
-      <image>https://raw.githubusercontent.com/Ajinkyasp99/cmux_linux/main/docs/assets/hero.png</image>
+      <image>https://raw.githubusercontent.com/Ajinkyasp99/oxishell/main/docs/assets/hero.png</image>
     </screenshot>
     <screenshot>
       <caption>41 built-in Warp themes</caption>
-      <image>https://raw.githubusercontent.com/Ajinkyasp99/cmux_linux/main/docs/assets/themes.png</image>
+      <image>https://raw.githubusercontent.com/Ajinkyasp99/oxishell/main/docs/assets/themes.png</image>
     </screenshot>
   </screenshots>
-  <developer id="dev.cmux">
+  <developer id="dev.oxishell">
     <name>Ajinkya Patil</name>
   </developer>
   <content_rating type="oars-1.1"/>
   <provides>
-    <binary>cmux-linux</binary>
-    <binary>cmux</binary>
+    <binary>oxishell</binary>
+    <binary>oxi</binary>
   </provides>
   <categories>
     <category>System</category>

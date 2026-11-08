@@ -1,5 +1,5 @@
-//! cmux-linux library. Everything except `ui` is GTK-free and unit-tested.
-pub const APP_ID: &str = "dev.cmux.Linux";
+//! oxishell library. Everything except `ui` is GTK-free and unit-tested.
+pub const APP_ID: &str = "dev.oxishell.Oxishell";
 
 pub mod agents;
 pub mod config;

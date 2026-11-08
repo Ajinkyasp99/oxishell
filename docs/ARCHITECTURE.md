@@ -1,8 +1,8 @@
 # Architecture
 
 ```
- cmux (CLI, src/bin/cmux.rs)
-   │ newline-delimited JSON over $XDG_RUNTIME_DIR/cmux-linux/cmux.sock (0600, SO_PEERCRED)
+ oxi (CLI, src/bin/oxi.rs)
+   │ newline-delimited JSON over $XDG_RUNTIME_DIR/oxishell/oxishell.sock (0600, SO_PEERCRED)
    ▼
  ipc.rs  ── accept thread ─ per-connection thread ─ validate ─▶ async channel ─▶ ui/ipc_handler.rs (GTK thread)
                                                                                   │
@@ -31,8 +31,8 @@
   structural change mutates the model, then `rebuild_workspace` re-parents the existing pane widgets into a
   fresh `gtk::Paned` tree. Terminals are never recreated, so processes survive layout changes.
 - **Workspaces are `gtk::Stack` pages.** Hidden workspaces stay alive and keep processing output.
-- **VTE owns the PTY.** We pass env (`CMUX_PANE_ID`, `CMUX_WORKSPACE_ID`, `CMUX_SOCKET`,
-  `TERM_PROGRAM=cmux-linux`) at spawn. Input sent before the shell is ready is queued until the tty
+- **VTE owns the PTY.** We pass env (`OXISHELL_PANE_ID`, `OXISHELL_WORKSPACE_ID`, `OXISHELL_SOCKET`,
+  `TERM_PROGRAM=oxishell`) at spawn. Input sent before the shell is ready is queued until the tty
   leaves canonical mode and output is quiet (VTE drops input sent before the PTY exists).
 - **Reading text** uses absolute VTE row numbers anchored on the cursor, because the scroll adjustment is
   relative to retained scrollback.

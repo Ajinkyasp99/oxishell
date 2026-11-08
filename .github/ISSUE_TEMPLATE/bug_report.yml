@@ -12,8 +12,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: cmux-linux version
-      description: Output of `cmux --version`
+      label: oxishell version
+      description: Output of `oxi --version`
     validations:
       required: true
   - type: input
@@ -35,5 +35,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Run `cmux-linux` from another terminal and paste any output.
+      description: Run `oxishell` from another terminal and paste any output.
       render: text

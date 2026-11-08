@@ -150,7 +150,7 @@ pub fn attach(app: &AppRc, term: &vte4::Terminal, menu: &gio::Menu) {
             let tag = term.match_add_regex(&re, 0);
             term.match_set_cursor_name(tag, "pointer");
         }
-        Err(e) => eprintln!("cmux-linux: link regex: {e}"),
+        Err(e) => eprintln!("oxishell: link regex: {e}"),
     }
 
     // The link the popover / context menu acts on.

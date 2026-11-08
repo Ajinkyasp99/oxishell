@@ -19,7 +19,7 @@ Shell 46, see below) was 216 ms.
 | App RSS, 20 panes (private anon) | 258 MB (123 MB) | 181 MB (59 MB) |
 | App + shells RSS, 20 panes | 372 MB | 295 MB |
 | `seq 1 1000000` in a visible pane, to last line | 678 ms | 690 ms |
-| CLI round trip (`cmux ping`, incl. process start) | 3.1 ms | 3.0 ms |
+| CLI round trip (`oxi ping`, incl. process start) | 3.1 ms | 3.0 ms |
 
 Reading the table:
 - Most RSS is file-backed shared libraries (GTK, Mesa/LLVM, ICU, fonts) that other GTK apps share.

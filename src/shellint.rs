@@ -4,14 +4,14 @@
 //! shell's own variables, which are not visible from outside (/proc shows the
 //! environment the shell *started* with). So the shell reports it: at every
 //! prompt it writes the active environment name to a small per-pane file,
-//! `$CMUX_ENV_FILE`, using only shell builtins (no extra process).
+//! `$OXISHELL_ENV_FILE`, using only shell builtins (no extra process).
 //!
 //! bash is set up automatically through `PROMPT_COMMAND` in the pane
 //! environment (unless your own config replaces PROMPT_COMMAND). zsh and fish
-//! need one line in their config: `cmux shell-integration zsh|fish`.
+//! need one line in their config: `oxi shell-integration zsh|fish`.
 //!
 //! The same hook optionally replaces the prompt with a compact `❯` (the chips
-//! already show folder, branch and environment), only inside cmux-linux panes.
+//! already show folder, branch and environment), only inside oxishell panes.
 
 use std::path::{Path, PathBuf};
 
@@ -23,54 +23,54 @@ pub fn env_file(pane: crate::model::PaneId) -> PathBuf {
 ///
 /// It remembers the last exit status, reports the active Python/conda env for
 /// the chips (`${var##*/}` keeps the venv's folder name) and, with
-/// `CMUX_COMPACT_PROMPT=1`, sets the prompt to `❯` (green, or red after a
-/// failed command). With `CMUX_HIGHLIGHT_CMD=1` as well, the typed command is
+/// `OXISHELL_COMPACT_PROMPT=1`, sets the prompt to `❯` (green, or red after a
+/// failed command). With `OXISHELL_HIGHLIGHT_CMD=1` as well, the typed command is
 /// bold cyan and `PS0` resets the colour before the command's output. With
-/// `CMUX_BLOCKS=1` the prompt starts with an empty row, where cmux-linux draws
+/// `OXISHELL_BLOCKS=1` the prompt starts with an empty row, where oxishell draws
 /// the command block's separator and header.
 ///
 /// The env file's third line is the last exit status: its modification time
-/// tells cmux-linux when a command finished, and the status how.
+/// tells oxishell when a command finished, and the status how.
 pub const BASH_PROMPT_COMMAND: &str = concat!(
-    r#"__cmux_status=$?; "#,
-    r#"[ -n "$CMUX_ENV_FILE" ] && builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV##*/}" "$CONDA_DEFAULT_ENV" "$__cmux_status" >| "$CMUX_ENV_FILE" 2>/dev/null; "#,
-    r#"if [ "$CMUX_COMPACT_PROMPT" = 1 ]; then if [ "$__cmux_status" = 0 ]; then PS1='\[\e[1;32m\]❯\[\e[0m\] '; else PS1='\[\e[1;31m\]❯\[\e[0m\] '; fi; "#,
-    r#"if [ "$CMUX_BLOCKS" = 1 ]; then PS1='\n'"$PS1"; fi; "#,
-    r#"if [ "$CMUX_HIGHLIGHT_CMD" = 1 ]; then PS1="$PS1"'\[\e[1;36m\]'; PS0='\e[0m'; fi; fi"#
+    r#"__oxishell_status=$?; "#,
+    r#"[ -n "$OXISHELL_ENV_FILE" ] && builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV##*/}" "$CONDA_DEFAULT_ENV" "$__oxishell_status" >| "$OXISHELL_ENV_FILE" 2>/dev/null; "#,
+    r#"if [ "$OXISHELL_COMPACT_PROMPT" = 1 ]; then if [ "$__oxishell_status" = 0 ]; then PS1='\[\e[1;32m\]❯\[\e[0m\] '; else PS1='\[\e[1;31m\]❯\[\e[0m\] '; fi; "#,
+    r#"if [ "$OXISHELL_BLOCKS" = 1 ]; then PS1='\n'"$PS1"; fi; "#,
+    r#"if [ "$OXISHELL_HIGHLIGHT_CMD" = 1 ]; then PS1="$PS1"'\[\e[1;36m\]'; PS0='\e[0m'; fi; fi"#
 );
 
 pub fn snippet(shell: &str) -> Option<String> {
     Some(match shell {
         "bash" => format!(
-            "# cmux-linux context chips (already automatic unless your config sets PROMPT_COMMAND)\nPROMPT_COMMAND='{}'\"${{PROMPT_COMMAND:+; $PROMPT_COMMAND}}\"\n",
+            "# oxishell context chips (already automatic unless your config sets PROMPT_COMMAND)\nPROMPT_COMMAND='{}'\"${{PROMPT_COMMAND:+; $PROMPT_COMMAND}}\"\n",
             BASH_PROMPT_COMMAND.replace('\'', r"'\''")
         ),
-        "zsh" => r#"# cmux-linux context chips and compact prompt — add to ~/.zshrc
-if [[ -n "$CMUX_ENV_FILE" ]]; then
-  _cmux_precmd() {
+        "zsh" => r#"# oxishell context chips and compact prompt — add to ~/.zshrc
+if [[ -n "$OXISHELL_ENV_FILE" ]]; then
+  _oxishell_precmd() {
     local s=$?
-    builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV:t}" "$CONDA_DEFAULT_ENV" "$s" >| "$CMUX_ENV_FILE" 2>/dev/null
-    [[ "$CMUX_COMPACT_PROMPT" == 1 ]] && PROMPT='%(?.%F{green}.%F{red})%B❯%b%f ' && RPROMPT=''
-    [[ "$CMUX_COMPACT_PROMPT" == 1 && "$CMUX_BLOCKS" == 1 ]] && PROMPT=$'\n'"$PROMPT"
+    builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV:t}" "$CONDA_DEFAULT_ENV" "$s" >| "$OXISHELL_ENV_FILE" 2>/dev/null
+    [[ "$OXISHELL_COMPACT_PROMPT" == 1 ]] && PROMPT='%(?.%F{green}.%F{red})%B❯%b%f ' && RPROMPT=''
+    [[ "$OXISHELL_COMPACT_PROMPT" == 1 && "$OXISHELL_BLOCKS" == 1 ]] && PROMPT=$'\n'"$PROMPT"
   }
-  autoload -Uz add-zsh-hook && add-zsh-hook precmd _cmux_precmd
+  autoload -Uz add-zsh-hook && add-zsh-hook precmd _oxishell_precmd
   # Typed command in bold cyan (zsh draws the input line itself).
-  [[ "$CMUX_COMPACT_PROMPT" == 1 && "$CMUX_HIGHLIGHT_CMD" == 1 ]] && zle_highlight=(default:fg=cyan,bold)
+  [[ "$OXISHELL_COMPACT_PROMPT" == 1 && "$OXISHELL_HIGHLIGHT_CMD" == 1 ]] && zle_highlight=(default:fg=cyan,bold)
 fi
 "#
         .to_string(),
-        "fish" => r#"# cmux-linux context chips and compact prompt — add to ~/.config/fish/config.fish
-if set -q CMUX_ENV_FILE
-    function _cmux_report_env --on-event fish_prompt
+        "fish" => r#"# oxishell context chips and compact prompt — add to ~/.config/fish/config.fish
+if set -q OXISHELL_ENV_FILE
+    function _oxishell_report_env --on-event fish_prompt
         set -l s $status
         set -l venv ''
         set -q VIRTUAL_ENV; and set venv (path basename $VIRTUAL_ENV)
-        printf '%s\n%s\n%s\n' "$venv" "$CONDA_DEFAULT_ENV" $s > $CMUX_ENV_FILE 2>/dev/null
+        printf '%s\n%s\n%s\n' "$venv" "$CONDA_DEFAULT_ENV" $s > $OXISHELL_ENV_FILE 2>/dev/null
     end
-    if test "$CMUX_COMPACT_PROMPT" = 1
+    if test "$OXISHELL_COMPACT_PROMPT" = 1
         function fish_prompt
             set -l s $status
-            test "$CMUX_BLOCKS" = 1; and printf '\n'
+            test "$OXISHELL_BLOCKS" = 1; and printf '\n'
             if test $s -eq 0; set_color --bold green; else; set_color --bold red; end
             printf '❯ '
             set_color normal
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn bash_hook_reports_activated_venv() {
-        let dir = std::env::temp_dir().join(format!("cmux-shellint-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("oxishell-shellint-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("p.env");
         // Simulate `source myenv/bin/activate` (sets VIRTUAL_ENV) and one prompt.
@@ -189,7 +189,7 @@ mod tests {
         let ok = std::process::Command::new("bash")
             .args(["--norc", "--noprofile", "-c", script])
             .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
-            .env("CMUX_ENV_FILE", &file)
+            .env("OXISHELL_ENV_FILE", &file)
             .env_remove("CONDA_DEFAULT_ENV")
             .status()
             .unwrap()
@@ -200,7 +200,7 @@ mod tests {
         let ok = std::process::Command::new("bash")
             .args(["--norc", "--noprofile", "-c", "(exit 3); eval \"$PROMPT_COMMAND\""])
             .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
-            .env("CMUX_ENV_FILE", &file)
+            .env("OXISHELL_ENV_FILE", &file)
             .status()
             .unwrap()
             .success();
@@ -220,10 +220,10 @@ mod tests {
                     &format!("{cmd}; eval \"$PROMPT_COMMAND\"; printf %s \"$PS1\""),
                 ])
                 .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
-                .env("CMUX_COMPACT_PROMPT", "1")
-                .env_remove("CMUX_ENV_FILE")
-                .env_remove("CMUX_HIGHLIGHT_CMD")
-                .env_remove("CMUX_BLOCKS")
+                .env("OXISHELL_COMPACT_PROMPT", "1")
+                .env_remove("OXISHELL_ENV_FILE")
+                .env_remove("OXISHELL_HIGHLIGHT_CMD")
+                .env_remove("OXISHELL_BLOCKS")
                 .output()
                 .unwrap();
             String::from_utf8(out.stdout).unwrap()
@@ -240,9 +240,9 @@ mod tests {
                 "eval \"$PROMPT_COMMAND\"; printf '%s|%s' \"$PS1\" \"$PS0\"",
             ])
             .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
-            .env("CMUX_COMPACT_PROMPT", "1")
-            .env("CMUX_HIGHLIGHT_CMD", "1")
-            .env_remove("CMUX_ENV_FILE")
+            .env("OXISHELL_COMPACT_PROMPT", "1")
+            .env("OXISHELL_HIGHLIGHT_CMD", "1")
+            .env_remove("OXISHELL_ENV_FILE")
             .output()
             .unwrap();
         let out = String::from_utf8(out.stdout).unwrap();
@@ -252,10 +252,10 @@ mod tests {
         let out = std::process::Command::new("bash")
             .args(["--norc", "--noprofile", "-c", "eval \"$PROMPT_COMMAND\"; printf %s \"$PS1\""])
             .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
-            .env("CMUX_COMPACT_PROMPT", "1")
-            .env("CMUX_BLOCKS", "1")
-            .env_remove("CMUX_ENV_FILE")
-            .env_remove("CMUX_HIGHLIGHT_CMD")
+            .env("OXISHELL_COMPACT_PROMPT", "1")
+            .env("OXISHELL_BLOCKS", "1")
+            .env_remove("OXISHELL_ENV_FILE")
+            .env_remove("OXISHELL_HIGHLIGHT_CMD")
             .output()
             .unwrap();
         assert!(String::from_utf8(out.stdout).unwrap().starts_with("\\n\\[\\e[1;32m"));
@@ -269,7 +269,7 @@ mod tests {
                 "PS1='mine$ '; eval \"$PROMPT_COMMAND\"; printf %s \"$PS1\"",
             ])
             .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
-            .env_remove("CMUX_COMPACT_PROMPT")
+            .env_remove("OXISHELL_COMPACT_PROMPT")
             .output()
             .unwrap();
         assert_eq!(String::from_utf8(out.stdout).unwrap(), "mine$ ");
