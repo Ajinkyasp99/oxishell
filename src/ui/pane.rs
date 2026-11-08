@@ -21,6 +21,8 @@ pub struct Pane {
     pub term: vte4::Terminal,
     pub search: gtk4::SearchBar,
     pub pid: Rc<Cell<Option<i32>>>,
+    /// Program name of the pane's shell ("bash", "zsh", "fish", ...).
+    pub shell: String,
     pub cwd: Option<PathBuf>,
     pub git: Option<GitInfo>,
     pub ports: Vec<u16>,
@@ -399,7 +401,8 @@ impl App {
         if self.inner.borrow().config.terminal.command_blocks {
             env.push("CMUX_BLOCKS=1".to_string());
         }
-        if crate::shellint::shell_name(&argv[0]) == "bash" {
+        let shell_name = crate::shellint::shell_name(&argv[0]).to_string();
+        if shell_name == "bash" {
             env.push(format!("PROMPT_COMMAND={}", crate::shellint::BASH_PROMPT_COMMAND));
         }
         // Make the bundled `cmux` CLI reachable for hooks when running from a build dir.
@@ -482,6 +485,7 @@ impl App {
                 term,
                 search,
                 pid: pid_cell,
+                shell: shell_name,
                 cwd: Some(cwd),
                 git: None,
                 ports: vec![],

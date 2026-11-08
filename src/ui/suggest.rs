@@ -150,8 +150,10 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, s: &Suggest) {
             let ev = tracker.borrow_mut().feed(text);
             if let Some(a) = w.upgrade() {
                 // An empty Enter only redraws the prompt: no block for it.
-                if matches!(&ev, Event::Submitted(c) if c.as_deref() != Some("")) {
-                    a.command_submitted(pane);
+                if let Event::Submitted(c) = &ev {
+                    if c.as_deref() != Some("") {
+                        a.command_submitted(pane, c.as_deref());
+                    }
                 }
                 if let Event::Submitted(Some(cmd)) = ev {
                     if let Ok(mut i) = a.inner.try_borrow_mut() {

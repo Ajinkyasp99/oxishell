@@ -99,6 +99,13 @@ pub struct Notifications {
     pub desktop: bool,
     /// Treat the terminal bell as an attention request.
     pub bell_attention: bool,
+    /// Desktop notifications play a sound (from the system sound theme).
+    pub sound: bool,
+    /// Notify when a shell command that ran for a while finishes in a pane
+    /// you are not looking at.
+    pub command_finished: bool,
+    /// How long (seconds) a command must run before its end is notified.
+    pub command_min_seconds: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -160,6 +167,9 @@ impl Default for Notifications {
         Self {
             desktop: true,
             bell_attention: true,
+            sound: true,
+            command_finished: true,
+            command_min_seconds: 10,
         }
     }
 }
@@ -178,6 +188,8 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("focus-right", "<Alt>Right", "Focus pane right"),
     ("focus-up", "<Alt>Up", "Focus pane up"),
     ("focus-down", "<Alt>Down", "Focus pane down"),
+    ("newline", "<Shift>Return", "New line in prompt"),
+    ("newline-alt", "<Ctrl>Return", "New line in prompt (alternative)"),
     ("copy", "<Ctrl><Shift>c", "Copy"),
     ("paste", "<Ctrl><Shift>v", "Paste"),
     ("search", "<Ctrl><Shift>f", "Search scrollback"),

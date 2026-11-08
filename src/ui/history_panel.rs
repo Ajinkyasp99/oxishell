@@ -310,7 +310,9 @@ fn reveal(panel: &Panel, row: &gtk4::ListBoxRow) {
 /// Send `text` to the shell as if typed, keeping the line tracker in sync.
 fn type_into(app: &AppRc, pane: PaneId, text: &str) {
     if text.ends_with('\r') {
-        app.command_submitted(pane); // before the shell sees Enter
+        // Before the shell sees Enter. `choose` sends Ctrl+U, the command, Enter.
+        let cmd = text.trim_end_matches('\r').trim_start_matches('\u{15}');
+        app.command_submitted(pane, Some(cmd));
     }
     let submitted = {
         let i = app.inner.borrow();

@@ -113,9 +113,58 @@ pub fn shell_name(shell: &str) -> &str {
     Path::new(shell).file_name().and_then(|f| f.to_str()).unwrap_or(shell)
 }
 
+/// What has the keyboard in a pane, for the "new line in prompt" keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Foreground<'a> {
+    /// A coding agent (Claude Code, Codex, Gemini CLI, OpenCode, ...).
+    Agent,
+    /// The shell itself, at its prompt (its program name, e.g. "bash").
+    Shell(&'a str),
+    /// Any other program (vim, a REPL, ...).
+    Program,
+}
+
+/// Bytes that start a new line in the input without submitting it, or
+/// `None` to leave the key alone.
+///
+/// - Agents: Ctrl+J (line feed), the newline key of Claude Code, Codex,
+///   Gemini CLI and OpenCode in every terminal.
+/// - bash/zsh: Ctrl+V Ctrl+J (quoted-insert of a line feed) puts a line break
+///   into the command being typed; Enter then runs all of it.
+/// - fish: Alt+Enter, fish's own "insert newline" binding.
+/// - Other programs: they get the plain key, as before.
+pub fn newline_input(fg: Foreground) -> Option<&'static [u8]> {
+    match fg {
+        Foreground::Agent => Some(b"\n"),
+        Foreground::Shell("bash" | "zsh") => Some(b"\x16\n"),
+        Foreground::Shell("fish") => Some(b"\x1b\r"),
+        Foreground::Shell(_) | Foreground::Program => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn newline_input_depends_on_what_has_the_keyboard() {
+        assert_eq!(newline_input(Foreground::Agent), Some(&b"\n"[..]));
+        assert_eq!(newline_input(Foreground::Shell("bash")), Some(&b"\x16\n"[..]));
+        assert_eq!(newline_input(Foreground::Shell("zsh")), Some(&b"\x16\n"[..]));
+        assert_eq!(newline_input(Foreground::Shell("fish")), Some(&b"\x1b\r"[..]));
+        assert_eq!(newline_input(Foreground::Shell("dash")), None);
+        assert_eq!(newline_input(Foreground::Program), None);
+    }
+
+    /// bash really treats Ctrl+V Ctrl+J as a line break inside one command line.
+    #[test]
+    fn bash_quoted_newline_runs_both_lines() {
+        let out = std::process::Command::new("bash")
+            .args(["--norc", "--noprofile", "-c", "eval \"$(printf 'echo one\\necho two')\""])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "one\ntwo\n");
+    }
 
     #[test]
     fn parses_env_names() {
