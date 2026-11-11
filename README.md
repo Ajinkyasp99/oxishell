@@ -4,24 +4,34 @@
 
 # oxishell
 
-**A native Linux terminal for running many shells and AI coding agents side by side.**
+**The terminal for AI coding agents on Linux. Run Claude Code, Codex and Gemini CLI side by side, and get notified the moment one needs you.**
 
-Workspaces in a sidebar · split panes · notification rings when an agent needs you · 41 Warp themes
+Workspaces in a sidebar · split panes · agent notifications · 41 Warp themes · Ubuntu, Debian, X11 and Wayland
 
 [![CI](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml/badge.svg)](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Ajinkyasp99/oxishell?display_name=tag)](https://github.com/Ajinkyasp99/oxishell/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Ajinkyasp99/oxishell/total)](https://github.com/Ajinkyasp99/oxishell/releases)
+[![Stars](https://img.shields.io/github/stars/Ajinkyasp99/oxishell?style=flat)](https://github.com/Ajinkyasp99/oxishell/stargazers)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 ![Platform: Linux](https://img.shields.io/badge/platform-Linux%20(X11%20%2B%20Wayland)-informational)
 
-<img src="docs/assets/hero.png" alt="oxishell with three workspaces, split panes, git branch and port info in the sidebar, and unread notification badges" width="900">
+<img src="docs/assets/hero.png" alt="oxishell terminal on Ubuntu Linux: three workspaces in the sidebar with git branch and ports, split panes, and a Claude Code 'needs input' notification badge" width="900">
 
 </div>
 
-oxishell brings the workflow of [cmux](https://github.com/manaflow-ai/cmux) (a macOS app) to Linux as a
-real native app: **Rust + GTK4/libadwaita**, with terminals rendered by **VTE**, the engine behind GNOME
+**oxishell** is a free, open-source terminal app for Ubuntu, Debian and other Linux desktops, made for
+developers who run several AI coding agents and dev servers at once. It is a **cmux alternative for Linux**:
+it brings the workflow of [cmux](https://github.com/manaflow-ai/cmux) (macOS only) to Linux as a real native
+app, written in **Rust + GTK4/libadwaita**, with terminals rendered by **VTE**, the engine behind GNOME
 Terminal. No Electron, no browser, no web terminal.
 
-## Why
+Install on Ubuntu 24.04 / Debian 13 in one line ([details](#install-on-ubuntu-and-debian)):
+
+```bash
+wget -qO /tmp/oxishell.deb https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_amd64.deb && sudo apt install /tmp/oxishell.deb
+```
+
+## Why oxishell
 
 When you run Claude Code, Codex or Gemini in several terminals, you keep checking each one to see whether it
 finished or is waiting for you. oxishell keeps every project in its own **workspace**, shows each one's git
@@ -45,7 +55,7 @@ input.
 | 💾 **Sessions** | Workspaces, layouts, directories and agent sessions come back after a restart, each terminal clean at the top. Commands are never re-run. |
 | 🐧 **Native** | GTK4, X11 and Wayland, light/dark aware, ~180 ms startup, ~1 % idle CPU with 20 panes ([measured](docs/PERFORMANCE.md)). |
 
-## Install
+## Install on Ubuntu and Debian
 
 ### Requirements
 
@@ -69,7 +79,7 @@ done
 On Ubuntu 24.04 this prints GTK `4.14`, libadwaita `1.5` and VTE `0.76`. If a line shows `(none)`, run
 `sudo apt update` first; if it is still missing, your release is too old.
 
-### Ubuntu / Debian (.deb), recommended
+### Ubuntu / Debian .deb package (recommended)
 
 On a fresh Ubuntu install:
 
@@ -89,7 +99,7 @@ Then open **oxishell** from your app menu, or run `oxishell`. The `oxi` command-
 On desktops whose notification server cannot play sounds itself (not GNOME or KDE), also install
 `sudo apt install gnome-session-canberra` so oxishell can play them.
 
-### Build from source
+### Build from source (Ubuntu, Fedora, Arch)
 
 On a fresh Ubuntu 24.04:
 
@@ -251,7 +261,7 @@ oxi pane read --lines 50                       # last 50 lines of output
 
 Use it from scripts, git hooks or your own agent tooling. Reference: [docs/CLI.md](docs/CLI.md).
 
-## Supported agents
+## Supported AI coding agents
 
 | Agent | Running | Needs input | Finished |
 |---|:-:|:-:|:-:|
@@ -291,6 +301,41 @@ its input, output and settings, and is restored by `oxi hooks uninstall claude`.
 Missing limits remain unavailable (including API-key sessions that do not report subscription quotas).
 Expired snapshots wait for updated data instead of assuming the allowance was replenished. No API keys,
 credentials or network requests are used by oxishell for this feature.
+
+## Comparison with cmux, tmux, Warp and GNOME Terminal
+
+oxishell isn't trying to replace your favourite terminal. It's built for one job: keeping track of many
+agent and shell sessions on a Linux desktop.
+
+- **cmux:** oxishell is modelled on cmux's workflow. cmux is macOS only; oxishell is the Linux version
+  (an independent implementation, no shared code).
+- **tmux / Zellij:** great for SSH and multiplexing inside one terminal. oxishell adds a GUI sidebar,
+  desktop notifications and per-pane rings driven by the agents' own hooks. You can still run tmux inside a pane.
+- **GNOME Terminal, Ptyxis, Tilix, Terminator:** these use the same VTE engine as oxishell, so rendering and
+  compatibility are the same. oxishell adds workspaces with git branch, ports and agent status, plus agent
+  notifications and usage limits.
+- **Warp:** oxishell uses Warp's open-source themes and has Warp-style context chips and history suggestions.
+  It is GPL free software that works fully offline, with no account and no telemetry.
+- **Kitty, Alacritty, WezTerm, Ghostty:** fast, highly configurable terminals. oxishell focuses on
+  organising agent sessions rather than on rendering speed or configuration depth.
+
+## FAQ
+
+**Is there a cmux for Linux?**
+Yes, that's what oxishell is: workspaces, split panes and agent notifications, as a native GTK4 app for Ubuntu,
+Debian and other Linux distributions.
+
+**How do I get a notification when Claude Code finishes or needs input on Linux?**
+Run Claude Code inside oxishell and run `oxi hooks install claude` once. When Claude finishes or asks for
+permission, you get a desktop notification, a ring on the pane and a badge on the workspace. Codex, Gemini CLI,
+Qoder and OpenCode work the same way.
+
+**Does it work on Wayland?** Yes, on both Wayland and X11.
+
+**Can I use Warp themes on Linux?** Yes. 41 are built in, and any Warp `.yaml` theme you drop into
+`~/.config/oxishell/themes/` shows up right away.
+
+**Does it send my data anywhere?** No. See [Privacy & security](#privacy--security).
 
 ## Configuration
 

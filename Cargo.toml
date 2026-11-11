@@ -1,6 +1,6 @@
 [package]
 name = "oxishell"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Native Linux terminal workspace manager for AI coding agents, inspired by cmux"
 license = "GPL-3.0-or-later"

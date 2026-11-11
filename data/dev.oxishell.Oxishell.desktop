@@ -8,4 +8,4 @@ Icon=dev.oxishell.Oxishell
 Terminal=false
 Categories=System;TerminalEmulator;
 StartupWMClass=dev.oxishell.Oxishell
-Keywords=terminal;shell;agent;
+Keywords=terminal;shell;console;command line;prompt;split;tab;workspace;tmux;agent;ai;claude;codex;gemini;cmux;

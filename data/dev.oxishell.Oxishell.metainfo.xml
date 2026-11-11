@@ -41,11 +41,28 @@
     <binary>oxishell</binary>
     <binary>oxi</binary>
   </provides>
+  <keywords>
+    <keyword>terminal</keyword>
+    <keyword>terminal emulator</keyword>
+    <keyword>split panes</keyword>
+    <keyword>workspace</keyword>
+    <keyword>AI coding agent</keyword>
+    <keyword>Claude Code</keyword>
+    <keyword>Codex</keyword>
+    <keyword>Gemini CLI</keyword>
+    <keyword>cmux</keyword>
+    <keyword>tmux</keyword>
+  </keywords>
   <categories>
     <category>System</category>
     <category>TerminalEmulator</category>
   </categories>
   <releases>
+    <release version="0.1.1" date="2026-11-11">
+      <description>
+        <p>Renamed to oxishell. Codex lifecycle hooks, Codex and Claude Code usage limits, bundled Hack font, and stability fixes.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-11-07">
       <description>
         <p>First release: terminals, workspaces, splits, notifications, agent hooks, CLI, sessions.</p>
