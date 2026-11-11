@@ -144,7 +144,39 @@ fn build_popover(term: &vte4::Terminal) -> (gtk4::Popover, gtk4::Label) {
 
 /// Make links in `term` clickable. `menu` is the pane's normal context menu;
 /// over a link it is shown with "Open Link" / "Copy Link" on top.
+/// Mark VTE's visible-row cache ("ringview") stale. Toggling BiDi and back
+/// is the only public call that does this; the redraw it queues coincides
+/// with the one the scroll already queued.
+fn invalidate_row_cache(term: &vte4::Terminal) {
+    let bidi = term.enables_bidi();
+    term.set_enable_bidi(!bidi);
+    term.set_enable_bidi(bidi);
+}
+
+/// VTE 0.76 (Ubuntu 24.04) moves the view on GtkAdjustment changes
+/// (scrollbar, wheel, kinetic scrolling) without invalidating its row cache,
+/// and `check_hyperlink_at` / `check_match_at` only rebuild a cache marked
+/// stale. Our hover handler runs before VTE's own motion handler (which
+/// would rebuild it), so a link check between a scroll and the next redraw
+/// read outside the cache and crashed. Newer VTE always rebuilds; until
+/// then, mark the cache stale ourselves whenever the view scrolls.
+fn keep_row_cache_in_sync_with_scrolling(term: &vte4::Terminal) {
+    let hook = |t: &vte4::Terminal| {
+        if let Some(adj) = t.vadjustment() {
+            let t = t.downgrade();
+            adj.connect_value_changed(move |_| {
+                if let Some(t) = t.upgrade() {
+                    invalidate_row_cache(&t);
+                }
+            });
+        }
+    };
+    hook(term);
+    term.connect_notify_local(Some("vadjustment"), move |t, _| hook(t));
+}
+
 pub fn attach(app: &AppRc, term: &vte4::Terminal, menu: &gio::Menu) {
+    keep_row_cache_in_sync_with_scrolling(term);
     match vte4::Regex::for_match(URL_PATTERN, PCRE2_UTF | PCRE2_MULTILINE | PCRE2_CASELESS) {
         Ok(re) => {
             let tag = term.match_add_regex(&re, 0);

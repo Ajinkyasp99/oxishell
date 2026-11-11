@@ -277,6 +277,43 @@ fn scrollback_uses_pixels_and_preserves_terminal_app_wheel_input() {
     });
 }
 
+/// VTE 0.76 does not invalidate its visible-row cache ("ringview") when the
+/// view moves through the GtkAdjustment (scrollbar, wheel, kinetic scroll),
+/// and check_hyperlink_at/check_match_at only rebuild a cache marked invalid.
+/// Hit-testing (our link hover runs before VTE's own motion handler) between
+/// such a scroll and the next redraw read outside the cache and crashed.
+#[test]
+fn link_hit_testing_right_after_an_adjustment_scroll_is_safe() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("hittest");
+        let term = h.app.inner.borrow().panes.values().next().unwrap().term.clone();
+        let output: String = (0..600).map(|i| format!("LINE-{i} https://example.com/{i}\r\n")).collect();
+        term.feed(output.as_bytes());
+        // Let VTE draw: its row cache now covers the bottom of the scrollback.
+        pump(300);
+        let adjustment = term.vadjustment().unwrap();
+        let height = term.height() as f64;
+        for pages in [3.0, 1.5, 6.0, 0.25] {
+            // Scroll up as the scrollbar or wheel would, then hit-test before
+            // any redraw, at the top, middle and bottom of the view.
+            adjustment.set_value((adjustment.value() - pages * adjustment.page_size()).max(adjustment.lower()));
+            for y in [2.0, height / 2.0, height - 3.0] {
+                let _ = term.check_hyperlink_at(12.0, y);
+                let _ = term.check_match_at(12.0, y);
+            }
+        }
+        // The cache is correct again: the link under the pointer is found.
+        let (link, _) = term.check_match_at(12.0 + 12.0 * term.char_width() as f64, 2.0);
+        assert!(
+            link.as_deref().is_some_and(|l| l.starts_with("https://example.com/")),
+            "link under the pointer after scrolling: {link:?}"
+        );
+    });
+}
+
 #[test]
 fn mouse_wheel_scales_real_reports_to_a_mouse_reporting_pty_app() {
     if !have_input() {
