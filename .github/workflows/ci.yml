@@ -5,15 +5,27 @@ on:
     branches: [main]
   pull_request:
 
+# A newer push to the same branch or PR supersedes the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-24.04
+    # A normal run takes about 4 minutes; the default limit is 6 hours.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
+        # A stalled mirror or package step must fail fast, not hold the job for hours.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          APT="sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120"
+          # CI needs no man pages; the man-db trigger is slow on hosted runners.
+          sudo rm -f /var/lib/man-db/auto-update
+          $APT update
+          $APT install -y --no-install-recommends \
             build-essential pkg-config libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
             xvfb xdotool dbus-x11 git python3 dpkg-dev appstream desktop-file-utils
       - uses: dtolnay/rust-toolchain@stable

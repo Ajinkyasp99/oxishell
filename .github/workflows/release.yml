@@ -10,12 +10,18 @@ permissions:
 jobs:
   deb:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
+        # A stalled mirror or package step must fail fast, not hold the job for hours.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          APT="sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120"
+          # CI needs no man pages; the man-db trigger is slow on hosted runners.
+          sudo rm -f /var/lib/man-db/auto-update
+          $APT update
+          $APT install -y --no-install-recommends \
             build-essential pkg-config libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev dpkg-dev
       - uses: dtolnay/rust-toolchain@stable
       - name: Build .deb
