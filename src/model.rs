@@ -203,6 +203,84 @@ impl Node {
             _ => false,
         }
     }
+
+    /// Panes laid side by side along `o` at the top of this subtree: a split
+    /// in the other direction (or a leaf) counts as one slot.
+    fn slots(&self, o: Orient) -> usize {
+        match self {
+            Node::Split { orient, a, b, .. } if *orient == o => a.slots(o) + b.slots(o),
+            _ => 1,
+        }
+    }
+
+    /// Give every slot of the row/column along `o` rooted here the same size.
+    fn equalize(&mut self, o: Orient) {
+        if let Node::Split { orient, ratio, a, b } = self {
+            if *orient == o {
+                let (sa, sb) = (a.slots(o), b.slots(o));
+                *ratio = sa as f64 / (sa + sb) as f64;
+                a.equalize(o);
+                b.equalize(o);
+            }
+        }
+    }
+
+    /// Splits from the root down to leaf `pane`: (went to `b`, orientation).
+    fn path_to(&self, pane: PaneId) -> Option<Vec<(bool, Orient)>> {
+        match self {
+            Node::Leaf { pane: p } => (*p == pane).then(Vec::new),
+            Node::Split { orient, a, b, .. } => {
+                for (side, child) in [(false, a), (true, b)] {
+                    if let Some(mut rest) = child.path_to(pane) {
+                        rest.insert(0, (side, *orient));
+                        return Some(rest);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    fn at_mut(&mut self, dirs: &[bool]) -> &mut Node {
+        match (self, dirs.split_first()) {
+            (Node::Split { a, b, .. }, Some((go_b, rest))) => if *go_b { b } else { a }.at_mut(rest),
+            (n, _) => n,
+        }
+    }
+
+    /// Equalize the row/column along `o` formed by the trailing splits of
+    /// `path` that all run along `o`.
+    fn equalize_line(&mut self, path: &[(bool, Orient)], o: Orient) {
+        let top = path.iter().rposition(|(_, x)| *x != o).map_or(0, |i| i + 1);
+        let dirs: Vec<bool> = path[..top].iter().map(|(d, _)| *d).collect();
+        self.at_mut(&dirs).equalize(o);
+    }
+
+    /// Split `target` like [`Node::split`], then share the row/column the new
+    /// pane joined equally, so repeated splits make equal panes instead of
+    /// halving the newest one each time.
+    pub fn split_balanced(&mut self, target: PaneId, new: PaneId, orient: Orient) -> bool {
+        if !self.split(target, new, orient) {
+            return false;
+        }
+        if let Some(path) = self.path_to(new) {
+            self.equalize_line(&path, orient);
+        }
+        true
+    }
+
+    /// Remove `target` like [`Node::remove`], then re-share the row/column
+    /// it left so the freed space goes to all its neighbours.
+    pub fn remove_balanced(self, target: PaneId) -> Option<Node> {
+        let path = self.path_to(target);
+        let mut rest = self.remove(target)?;
+        if let Some(path) = path {
+            if let Some((_, o)) = path.last().copied() {
+                rest.equalize_line(&path[..path.len() - 1], o);
+            }
+        }
+        Some(rest)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,7 +442,7 @@ impl AppState {
         let wid = self.workspace_of(pane).ok_or(ModelError::NoSuchPane(pane))?;
         let new = self.alloc();
         let ws = self.workspace_mut(wid)?;
-        ws.layout.split(pane, new, orient);
+        ws.layout.split_balanced(pane, new, orient);
         ws.focused = new;
         Ok(new)
     }
@@ -374,7 +452,7 @@ impl AppState {
         let ws = self.workspace_mut(wid)?;
         let order = ws.layout.panes();
         let layout = std::mem::replace(&mut ws.layout, Node::leaf(0));
-        match layout.remove(pane) {
+        match layout.remove_balanced(pane) {
             Some(rest) => {
                 ws.layout = rest;
                 if ws.focused == pane {
@@ -552,6 +630,51 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: AppState = serde_json::from_str(&json).unwrap();
         assert_eq!(back.workspaces[0].layout, s.workspaces[0].layout);
+    }
+
+    fn widths(l: &Node) -> Vec<f64> {
+        l.rects().iter().map(|(_, r)| (r.w * 1000.0).round() / 1000.0).collect()
+    }
+
+    #[test]
+    fn repeated_splits_share_space_equally() {
+        let (mut s, w, p1) = state_with_ws();
+        let mut last = p1;
+        for _ in 0..3 {
+            last = s.split(last, Orient::Horizontal).unwrap();
+        }
+        assert_eq!(widths(&s.workspace(w).unwrap().layout), vec![0.25; 4]);
+        // Splitting a middle pane keeps the row equal too.
+        s.split(p1, Orient::Horizontal).unwrap();
+        assert_eq!(widths(&s.workspace(w).unwrap().layout), vec![0.2; 5]);
+        assert!(s.validate().is_ok());
+    }
+
+    #[test]
+    fn cross_direction_split_only_balances_its_own_line() {
+        let (mut s, w, p1) = state_with_ws();
+        let p2 = s.split(p1, Orient::Horizontal).unwrap();
+        s.workspace_mut(w).unwrap().layout.set_ratio_at(&[], 0.7);
+        let p3 = s.split(p2, Orient::Vertical).unwrap();
+        s.split(p3, Orient::Vertical).unwrap();
+        let rects = s.workspace(w).unwrap().layout.rects();
+        // The user's 70/30 column split survives; the right column is thirds.
+        assert!((rects[0].1.w - 0.7).abs() < 1e-9);
+        for (_, r) in &rects[1..] {
+            assert!((r.h - 1.0 / 3.0).abs() < 1e-9, "{rects:?}");
+        }
+    }
+
+    #[test]
+    fn closing_a_pane_rebalances_its_line() {
+        let (mut s, w, p1) = state_with_ws();
+        let p2 = s.split(p1, Orient::Horizontal).unwrap();
+        let p3 = s.split(p2, Orient::Horizontal).unwrap();
+        s.split(p3, Orient::Horizontal).unwrap();
+        s.close_pane(p3).unwrap();
+        assert_eq!(widths(&s.workspace(w).unwrap().layout), vec![0.333; 3]);
+        s.close_pane(p1).unwrap();
+        assert_eq!(widths(&s.workspace(w).unwrap().layout), vec![0.5; 2]);
     }
 
     #[test]

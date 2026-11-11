@@ -601,6 +601,7 @@ impl App {
 
     pub fn split(self: &Rc<Self>, pane: Option<PaneId>, orient: Orient, cwd: Option<PathBuf>) -> Result<PaneId, String> {
         let pane = pane.or_else(|| self.focused_pane()).ok_or("no pane to split")?;
+        self.check_split_room(pane, orient)?;
         let cwd = cwd.or_else(|| self.inner.borrow().panes.get(&pane).and_then(|p| p.cwd.clone()));
         let new = self.inner.borrow_mut().state.split(pane, orient).map_err(|e| e.to_string())?;
         let wid = self.inner.borrow().state.workspace_of(new).unwrap();
@@ -612,26 +613,64 @@ impl App {
         Ok(new)
     }
 
+    /// Refuse a split that would leave any resized pane too small to use
+    /// (under `MIN_PANE_COLS` x `MIN_PANE_ROWS` cells plus pane chrome).
+    /// Skipped while the workspace has no size yet (hidden or not mapped).
+    fn check_split_room(&self, pane: PaneId, orient: Orient) -> Result<(), String> {
+        const MIN_PANE_COLS: i64 = 20;
+        const MIN_PANE_ROWS: i64 = 4;
+        let i = self.inner.borrow();
+        let Some(wid) = i.state.workspace_of(pane) else { return Ok(()) };
+        let (Some(ws), Some(page), Some(p)) = (i.state.workspace(wid), i.pages.get(&wid), i.panes.get(&pane)) else {
+            return Ok(());
+        };
+        let (w, h) = (page.width() as f64, page.height() as f64);
+        if w <= 0.0 || h <= 0.0 {
+            return Ok(());
+        }
+        // Pane chrome: borders, margins and the context-chip row. Never below what
+        // the pane widget itself needs, or GTK pushes the last panes off-screen.
+        let (frame_min_w, _, _, _) = p.frame.measure(Orientation::Horizontal, -1);
+        let (frame_min_h, _, _, _) = p.frame.measure(Orientation::Vertical, -1);
+        let min_w = ((p.term.char_width() * MIN_PANE_COLS) as f64 + 24.0).max(frame_min_w as f64);
+        let min_h = ((p.term.char_height() * MIN_PANE_ROWS) as f64 + 44.0).max(frame_min_h as f64);
+        let before: HashMap<PaneId, crate::model::Rect> = ws.layout.rects().into_iter().collect();
+        let mut after = ws.layout.clone();
+        after.split_balanced(pane, PaneId::MAX, orient);
+        let cramped = after.rects().into_iter().any(|(id, r)| {
+            let changed = before.get(&id).is_none_or(|b| *b != r);
+            changed && (r.w * w < min_w || r.h * h < min_h)
+        });
+        if cramped {
+            return Err("No room for another pane here — close a pane or make the window bigger".into());
+        }
+        Ok(())
+    }
+
     pub fn close_pane(self: &Rc<Self>, pane: PaneId, force: bool, interactive: bool) -> Result<(), String> {
-        let (running, confirm) = {
+        let (running, confirm, program) = {
             let i = self.inner.borrow();
             let p = i.panes.get(&pane).ok_or(format!("no such pane: {pane}"))?;
-            (p.has_running_child(), i.config.terminal.confirm_close_running)
+            let running = p.has_running_child();
+            let program = running
+                .then(|| crate::meta::foreground_pgrp(p.pty_fd()))
+                .flatten()
+                .filter(|pg| *pg > 0)
+                .and_then(crate::meta::comm);
+            (running, i.config.terminal.confirm_close_running, program)
         };
         if running && !force && confirm {
             if interactive {
                 let w = self.weak();
-                dialogs::confirm(
-                    self,
-                    "Close pane?",
-                    "A program is still running in this pane. Closing it will terminate it.",
-                    "Close",
-                    move || {
-                        if let Some(a) = w.upgrade() {
-                            let _ = a.close_pane(pane, true, false);
-                        }
-                    },
-                );
+                let body = match program {
+                    Some(name) => format!("“{name}” is still running in this pane. Closing it will terminate it."),
+                    None => "A program is still running in this pane. Closing it will terminate it.".to_string(),
+                };
+                dialogs::confirm(self, "Close pane?", &body, "Close", move || {
+                    if let Some(a) = w.upgrade() {
+                        let _ = a.close_pane(pane, true, false);
+                    }
+                });
                 return Ok(());
             }
             return Err("pane has a running program; pass force to close it".into());
@@ -817,41 +856,97 @@ impl App {
                 let ready = Rc::new(Cell::new(false));
                 let ratio = *ratio;
                 {
+                    // Nested dividers get their final size only after their parents
+                    // have been positioned, so keep applying the ratio until the size
+                    // has settled for a few frames (bounded; no lasting frame clock).
                     let ready = ready.clone();
+                    let last = Cell::new(-1);
+                    let frames = Cell::new(0u32);
+                    let stable = Cell::new(0u32);
                     paned.add_tick_callback(move |p, _| {
+                        frames.set(frames.get() + 1);
+                        let size = if p.orientation() == Orientation::Horizontal {
+                            p.width()
+                        } else {
+                            p.height()
+                        };
+                        if size > 0 && size != last.get() {
+                            p.set_position((ratio * size as f64).round() as i32);
+                            last.set(size);
+                            stable.set(0);
+                            ready.set(true);
+                        } else if size > 0 {
+                            stable.set(stable.get() + 1);
+                        }
+                        if stable.get() >= 3 || frames.get() > 240 {
+                            ready.set(true);
+                            return glib::ControlFlow::Break;
+                        }
+                        glib::ControlFlow::Continue
+                    });
+                }
+                // Only a divider drag by the user changes the saved ratio. GTK also
+                // moves the position on its own (clamping when panes are cramped,
+                // reallocating on resize); saving those would corrupt the layout.
+                let dragging = Rc::new(Cell::new(false));
+                let save: Rc<dyn Fn(&gtk4::Paned)> = {
+                    let my_path = path.clone();
+                    let w = self.weak();
+                    Rc::new(move |p: &gtk4::Paned| {
                         let size = if p.orientation() == Orientation::Horizontal {
                             p.width()
                         } else {
                             p.height()
                         };
                         if size <= 0 {
-                            return glib::ControlFlow::Continue;
+                            return;
                         }
-                        p.set_position((ratio * size as f64).round() as i32);
-                        ready.set(true);
-                        glib::ControlFlow::Break
+                        if let Some(a) = w.upgrade() {
+                            let r = p.position() as f64 / size as f64;
+                            if let Ok(ws) = a.inner.borrow_mut().state.workspace_mut(wid) {
+                                ws.layout.set_ratio_at(&my_path, r);
+                            }
+                            a.schedule_save();
+                        }
+                    })
+                };
+                {
+                    // Capture phase: runs before the paned's own drag gesture claims the press.
+                    let press = gtk4::GestureClick::new();
+                    press.set_button(gdk::BUTTON_PRIMARY);
+                    press.set_propagation_phase(gtk4::PropagationPhase::Capture);
+                    let dragging = dragging.clone();
+                    press.connect_pressed(move |g, _, x, y| {
+                        let Some(p) = g.widget().and_downcast::<gtk4::Paned>() else {
+                            return;
+                        };
+                        let on_handle = p
+                            .pick(x, y, gtk4::PickFlags::DEFAULT)
+                            .is_some_and(|h| h.css_name() == "separator" && h.parent().as_ref() == Some(p.upcast_ref()));
+                        dragging.set(on_handle);
                     });
+                    paned.add_controller(press);
                 }
-                let my_path = path.clone();
-                let w = self.weak();
-                paned.connect_position_notify(move |p| {
-                    if !ready.get() {
-                        return;
-                    }
-                    let size = if p.orientation() == Orientation::Horizontal {
-                        p.width()
-                    } else {
-                        p.height()
-                    };
-                    if size <= 0 {
-                        return;
-                    }
-                    if let Some(a) = w.upgrade() {
-                        let r = p.position() as f64 / size as f64;
-                        if let Ok(ws) = a.inner.borrow_mut().state.workspace_mut(wid) {
-                            ws.layout.set_ratio_at(&my_path, r);
+                {
+                    // The press gesture is cancelled once the paned claims the drag,
+                    // so watch the raw release to know when the drag is over.
+                    let release = gtk4::EventControllerLegacy::new();
+                    release.set_propagation_phase(gtk4::PropagationPhase::Capture);
+                    let dragging = dragging.clone();
+                    let save = save.clone();
+                    release.connect_event(move |c, ev| {
+                        if ev.event_type() == gdk::EventType::ButtonRelease && dragging.replace(false) {
+                            if let Some(p) = c.widget().and_downcast::<gtk4::Paned>() {
+                                save(&p);
+                            }
                         }
-                        a.schedule_save();
+                        glib::Propagation::Proceed
+                    });
+                    paned.add_controller(release);
+                }
+                paned.connect_position_notify(move |p| {
+                    if ready.get() && dragging.get() {
+                        save(p);
                     }
                 });
                 paned.upcast()

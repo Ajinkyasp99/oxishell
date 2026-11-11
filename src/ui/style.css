@@ -223,6 +223,59 @@
 .chip-dir { color: @accent_color; }
 .chip-git { color: @success_color; }
 
+/* Count pills inside the git chip: changed files, commits ahead/behind. */
+.chip-badge {
+  border-radius: 999px;
+  padding: 0 6px;
+  margin: 1px 0;
+  font-size: 0.92em;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+.chip-badge image {
+  -gtk-icon-size: 10px;
+}
+.chip-badge.badge-dirty {
+  color: @warning_color;
+  background-color: alpha(@warning_color, 0.16);
+  border-color: alpha(@warning_color, 0.38);
+}
+.chip-badge.badge-ahead {
+  color: @accent_color;
+  background-color: alpha(@accent_color, 0.15);
+  border-color: alpha(@accent_color, 0.35);
+}
+.chip-badge.badge-behind {
+  color: @error_color;
+  background-color: alpha(@error_color, 0.14);
+  border-color: alpha(@error_color, 0.34);
+}
+
+/* Per-pane close button, top-right level with the chip row. Faint until
+   hovered; the chip row leaves room for it on the right. */
+.chips {
+  padding-right: 34px;
+}
+.pane-close {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  margin: 4px 6px 0 0;
+  opacity: 0.35;
+  transition: opacity 120ms ease-out, background-color 120ms ease-out;
+}
+.pane:hover .pane-close {
+  opacity: 0.7;
+}
+.pane .pane-close:hover {
+  opacity: 1;
+  background-color: alpha(@error_color, 0.18);
+  color: @error_color;
+}
+.pane-close image {
+  -gtk-icon-size: 12px;
+}
+
 /* Inline command suggestion (ghost text). */
 .ghost {
   color: alpha(@window_fg_color, 0.4);
