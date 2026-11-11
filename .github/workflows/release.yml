@@ -17,18 +17,7 @@ jobs:
         # A stalled mirror or package step must fail fast, not hold the job for hours.
         timeout-minutes: 10
         run: |
-          APT="sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120"
-          # CI needs no man pages; the man-db trigger is slow on hosted runners.
-          sudo rm -f /var/lib/man-db/auto-update
-          # If Ubuntu's mirrors don't resolve (Canonical DNS outage, 2026-11-11,
-          # actions/runner-images#15297), use kernel.org's mirror instead. apt still
-          # verifies every package against Ubuntu's archive signing key.
-          if ! timeout 10 getent hosts azure.archive.ubuntu.com >/dev/null; then
-            echo "::warning::azure.archive.ubuntu.com does not resolve; using mirrors.edge.kernel.org"
-            printf 'https://mirrors.edge.kernel.org/ubuntu/\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          fi
-          $APT update
-          $APT install -y --no-install-recommends \
+          scripts/ci-apt-install.sh \
             build-essential pkg-config libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev dpkg-dev
       - uses: dtolnay/rust-toolchain@stable
       - name: Build .deb
