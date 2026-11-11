@@ -1,10 +1,14 @@
 # Release notes
 
-## Unreleased
+## 0.1.1 — 2026-11-11
 
+- **Renamed from cmux-linux to oxishell.** The package, binary and app are now `oxishell`, and the
+  download is `oxishell_amd64.deb`. The CLI is `oxi`.
 - Codex lifecycle hooks report running, needs input (approvals and explicit questions), completion,
   interruption and session end. Installation preserves custom hooks and notification programs and
   migrates the old oxishell notifier. Restart Codex and review and trust the hooks in `/hooks`.
+- Codex and Claude Code 5-hour and weekly usage limits in the sidebar.
+- Bundled Hack font, font zoom shortcuts, improved link detection, and scroll and crash fixes.
 
 ## 0.1.0 — 2026-11-07 (first release)
 
