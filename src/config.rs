@@ -36,6 +36,11 @@ pub struct Appearance {
     pub sidebar_visible: bool,
     /// Show Warp-style context chips (environment, directory, git) above terminals.
     pub chips: bool,
+    /// Faint workspace name centred behind the terminals.
+    pub watermark: bool,
+    /// Hide the header buttons (not the window controls) until the pointer
+    /// reaches the header.
+    pub autohide_buttons: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -124,6 +129,8 @@ impl Default for Appearance {
             sidebar_width: 230,
             sidebar_visible: true,
             chips: true,
+            watermark: true,
+            autohide_buttons: true,
         }
     }
 }

@@ -12,6 +12,8 @@ font = "Hack 11"         # bundled Hack font; any Pango font description is acce
 sidebar_width = 230
 sidebar_visible = true   # also hidden automatically below 640 px window width
 chips = true             # context chips (Python env, folder, git) above each terminal
+watermark = true         # faint workspace name centred behind the terminals
+autohide_buttons = true  # header buttons slide in on hover; window controls always show
 
 [terminal]
 shell = ""               # empty: $SHELL, then your passwd shell, then /bin/sh

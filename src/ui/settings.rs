@@ -228,6 +228,22 @@ fn appearance_page(app: &AppRc, d: &adw::PreferencesDialog, cfg: &Config, ap: &A
         cfg.appearance.chips,
         |c, v| c.appearance.chips = v,
     );
+    switch(
+        &win,
+        ap,
+        "Workspace watermark",
+        "Faint workspace name in the middle, behind the terminals",
+        cfg.appearance.watermark,
+        |c, v| c.appearance.watermark = v,
+    );
+    switch(
+        &win,
+        ap,
+        "Auto-hide header buttons",
+        "Show them when the pointer reaches the header. Minimize, maximize and close always show",
+        cfg.appearance.autohide_buttons,
+        |c, v| c.appearance.autohide_buttons = v,
+    );
 
     let text = group(&p, "Text and Cursor", "");
     let font_btn = gtk4::FontDialogButton::new(Some(gtk4::FontDialog::builder().title("Terminal font").build()));

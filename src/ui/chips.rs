@@ -14,6 +14,50 @@ pub struct Chips {
     env: Chip,
     dir: Chip,
     git: Chip,
+    /// Badges inside the git chip: commits ahead/behind and changed files.
+    ahead: Badge,
+    behind: Badge,
+    dirty: Badge,
+}
+
+/// Small pill inside a chip: an optional icon and a count.
+struct Badge {
+    root: gtk4::Box,
+    label: gtk4::Label,
+}
+
+fn badge(kind: &str, icon: Option<&str>, glyph: Option<&str>) -> Badge {
+    let b = gtk4::Box::new(Orientation::Horizontal, 3);
+    b.add_css_class("chip-badge");
+    b.add_css_class(kind);
+    b.set_valign(gtk4::Align::Center);
+    if let Some(i) = icon {
+        let img = gtk4::Image::from_icon_name(i);
+        img.set_pixel_size(10);
+        b.append(&img);
+    }
+    if let Some(g) = glyph {
+        b.append(&gtk4::Label::new(Some(g)));
+    }
+    let label = gtk4::Label::new(None);
+    b.append(&label);
+    b.set_visible(false);
+    Badge { root: b, label }
+}
+
+impl Badge {
+    fn set(&self, n: u32, tip: String) {
+        if n == 0 {
+            self.root.set_visible(false);
+            return;
+        }
+        let t = n.to_string();
+        if self.label.label() != t {
+            self.label.set_label(&t);
+        }
+        self.root.set_tooltip_text(Some(&tip));
+        self.root.set_visible(true);
+    }
 }
 
 struct Chip {
@@ -96,8 +140,24 @@ impl Chips {
         git.label.set_max_width_chars(32);
         bar.append(&env.root);
         bar.append(&dir.root);
+        let ahead = badge("badge-ahead", None, Some("↑"));
+        let behind = badge("badge-behind", None, Some("↓"));
+        let dirty = badge("badge-dirty", Some("document-edit-symbolic"), None);
+        let mut after = git.label.clone().upcast::<gtk4::Widget>();
+        for b in [&ahead, &behind, &dirty] {
+            git.root.insert_child_after(&b.root, Some(&after));
+            after = b.root.clone().upcast();
+        }
         bar.append(&git.root);
-        Chips { bar, env, dir, git }
+        Chips {
+            bar,
+            env,
+            dir,
+            git,
+            ahead,
+            behind,
+            dirty,
+        }
     }
 
     pub fn update(&self, env: Option<&str>, cwd: Option<&Path>, git: Option<&GitInfo>, enabled: bool) {
@@ -117,21 +177,16 @@ impl Chips {
         set(&self.dir, cwd.map(crate::meta::display_path), cwd.map(|c| c.display().to_string()));
         set(
             &self.git,
-            git.map(|g| {
-                let mut s = g.branch.clone();
-                if g.ahead > 0 {
-                    s.push_str(&format!(" ↑{}", g.ahead));
-                }
-                if g.behind > 0 {
-                    s.push_str(&format!(" ↓{}", g.behind));
-                }
-                if g.changes > 0 {
-                    s.push_str(&format!(" ●{}", g.changes));
-                }
-                s
-            }),
+            git.map(|g| g.branch.clone()),
             git.map(|g| format!("Branch {} — {} changed file(s)", g.branch, g.changes)),
         );
+        let g = git.cloned().unwrap_or_default();
+        let plural = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        self.ahead
+            .set(g.ahead, format!("{} ahead of upstream", plural(g.ahead, "commit", "commits")));
+        self.behind
+            .set(g.behind, format!("{} behind upstream", plural(g.behind, "commit", "commits")));
+        self.dirty.set(g.changes, format!("{} changed", plural(g.changes, "file", "files")));
         let any = self.env.root.get_visible() || self.dir.root.get_visible() || self.git.root.get_visible();
         self.bar.set_visible(enabled && any);
     }

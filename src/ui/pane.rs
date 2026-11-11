@@ -30,6 +30,8 @@ pub struct Pane {
     pub fg_agent: Option<&'static str>,
     /// Last state reported by agent hooks: (agent, state, message).
     pub agent: Option<(String, AgentState, Option<String>)>,
+    /// When the agent's current turn started (first Running report).
+    pub agent_since: Option<Instant>,
     /// (agent, session id) reported by hooks, offered for explicit resume.
     pub agent_session: Option<(String, String)>,
     pub last_bell: Cell<Option<Instant>>,
@@ -217,6 +219,9 @@ impl App {
             .placeholder_text("Search scrollback")
             .hexpand(true)
             .build();
+        // A hidden SearchBar still reserves its entry's width; keep that small so
+        // narrow panes are not forced wider than their share of the window.
+        entry.set_width_chars(4);
         let search = gtk4::SearchBar::builder().child(&entry).show_close_button(true).build();
         search.connect_entry(&entry);
         {
@@ -267,14 +272,41 @@ impl App {
         frame.set_vexpand(true);
         let chips = super::chips::Chips::new();
         frame.append(&search);
-        frame.append(&chips.bar);
+        // Clip the chip row instead of letting it set the pane's minimum width.
+        let chips_clip = gtk4::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk4::PolicyType::External)
+            .vscrollbar_policy(gtk4::PolicyType::Never)
+            .propagate_natural_height(true)
+            .child(&chips.bar)
+            .build();
+        chips.bar.bind_property("visible", &chips_clip, "visible").sync_create().build();
         // Overlay so inline suggestions can be drawn over the terminal.
         let overlay = gtk4::Overlay::new();
         overlay.set_child(Some(&scroll));
         let suggest = super::suggest::Suggest::new(&overlay);
         super::suggest::attach(self, id, &term, &suggest);
         super::history_panel::attach(self, id, &term);
-        frame.append(&overlay);
+        let body = gtk4::Box::new(Orientation::Vertical, 0);
+        body.append(&chips_clip);
+        body.append(&overlay);
+        // Close button in the pane's top-right corner, level with the chip row.
+        // Same path as the context menu's "Close Pane": idle panes close at once,
+        // a running program asks first.
+        let close_btn = gtk4::Button::from_icon_name("window-close-symbolic");
+        close_btn.add_css_class("flat");
+        close_btn.add_css_class("circular");
+        close_btn.add_css_class("pane-close");
+        close_btn.set_tooltip_text(Some("Close pane"));
+        close_btn.set_focus_on_click(false);
+        close_btn.set_can_focus(false);
+        close_btn.set_halign(gtk4::Align::End);
+        close_btn.set_valign(gtk4::Align::Start);
+        close_btn.set_action_name(Some("app.pane-close"));
+        close_btn.set_action_target_value(Some(&id.to_variant()));
+        let top = gtk4::Overlay::new();
+        top.set_child(Some(&body));
+        top.add_overlay(&close_btn);
+        frame.append(&top);
 
         // Pane context menu.
         let menu = gio::Menu::new();
@@ -491,6 +523,7 @@ impl App {
                 ports: vec![],
                 fg_agent: None,
                 agent: None,
+                agent_since: None,
                 agent_session: None,
                 last_bell: Cell::new(None),
                 pending_input: pending,

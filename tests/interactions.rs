@@ -169,6 +169,57 @@ fn workspace_switches_on_each_single_click_during_refresh() {
 }
 
 #[test]
+fn quick_clicks_across_rows_are_not_a_double_click_but_a_real_one_renames() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        use libadwaita::prelude::*;
+        let h = Harness::new("dblclick");
+        let first = h.app.inner.borrow().state.active.unwrap();
+        let (second, _) = h.app.new_workspace(Some("Second"), Some(h.root.join("home"))).unwrap();
+        pump(300);
+        // Widen the double-click window so A, B, A, B clicks always land inside it.
+        let settings = gtk4::Settings::default().unwrap();
+        let saved = settings.gtk_double_click_time();
+        settings.set_gtk_double_click_time(1500);
+        for (index, expected) in [(0, first), (1, second), (0, first), (1, second)] {
+            let row = h.app.sidebar_list.row_at_index(index).unwrap();
+            h.point(&row);
+            xdo(&["click", "1"]);
+            pump(100);
+            assert!(
+                h.app.window.visible_dialog().is_none(),
+                "clicking another row in between must reset the double-click count"
+            );
+            assert_eq!(
+                h.app.inner.borrow().state.active,
+                Some(expected),
+                "one click must switch workspace {expected}"
+            );
+        }
+
+        // A genuine double click on one row still opens the rename dialog.
+        pump(1600);
+        let row = h.app.sidebar_list.row_at_index(0).unwrap();
+        h.point(&row);
+        xdo(&["click", "--repeat", "2", "--delay", "60", "1"]);
+        pump(200);
+        let dialog = h.app.window.visible_dialog().expect("double click must open rename");
+        dialog.force_close();
+        // Wait out the closing animation: while a dialog is still visible,
+        // closing the window (Harness::drop) only closes the dialog and leaves
+        // this window and its terminals alive under the next test.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while h.app.window.visible_dialog().is_some() {
+            assert!(Instant::now() < deadline, "rename dialog did not close");
+            pump(20);
+        }
+        settings.set_gtk_double_click_time(saved);
+    });
+}
+
+#[test]
 fn scrollback_uses_pixels_and_preserves_terminal_app_wheel_input() {
     if !have_input() {
         return;

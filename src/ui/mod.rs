@@ -5,9 +5,11 @@ mod blocks;
 mod chips;
 mod desktop_notify;
 mod dialogs;
+mod edge_reveal;
 mod fonts;
 mod history_panel;
 mod ipc_handler;
+mod island;
 mod links;
 mod meta_worker;
 mod pane;
@@ -60,8 +62,14 @@ pub struct App {
     pub split: gtk4::Paned,
     pub status: gtk4::Label,
     pub toasts: adw::ToastOverlay,
+    /// Owns the notifications popover; it is the island's button.
     pub notif_button: gtk4::MenuButton,
-    pub notif_badge: gtk4::Label,
+    /// Header capsule: workspace name, agent state, flashes, unread count.
+    pub island: island::Island,
+    /// Workspace name drawn faintly in the middle of the terminal area.
+    pub watermark: gtk4::Label,
+    /// Header buttons that auto-hide until the pointer reaches the header.
+    pub edge: Rc<edge_reveal::EdgeReveal>,
     /// Desktop (OS) notifications with sound; see `desktop_notify`.
     pub desktop: Rc<desktop_notify::Desktop>,
     /// Generated CSS for the current theme (whole-window colours, gradients).
@@ -129,8 +137,11 @@ impl App {
 
         // Header bar
         let header = adw::HeaderBar::new();
-        let title = adw::WindowTitle::new("oxishell", "");
-        header.set_title_widget(Some(&title));
+        header.add_css_class("oxi-header");
+        let island = island::Island::new();
+        header.set_title_widget(Some(&island.button));
+        // Window controls always sit on the right, whatever the desktop's layout.
+        header.set_decoration_layout(Some(":minimize,maximize,close"));
         let sidebar_btn = gtk4::Button::builder()
             .icon_name("sidebar-show-symbolic")
             .tooltip_text("Toggle sidebar (Ctrl+Shift+B)")
@@ -141,8 +152,6 @@ impl App {
             .tooltip_text("New workspace (Ctrl+Shift+N)")
             .action_name("app.new-workspace")
             .build();
-        header.pack_start(&sidebar_btn);
-        header.pack_start(&new_ws);
         let split_r = gtk4::Button::builder()
             .icon_name("view-dual-symbolic")
             .tooltip_text("Split right (Ctrl+Shift+E)")
@@ -166,21 +175,16 @@ impl App {
             .tooltip_text("Main menu")
             .build();
 
-        let notif_badge = gtk4::Label::new(None);
-        notif_badge.add_css_class("badge");
-        notif_badge.set_visible(false);
-        let bell_box = gtk4::Box::new(Orientation::Horizontal, 4);
-        bell_box.append(&gtk4::Image::from_icon_name("preferences-system-notifications-symbolic"));
-        bell_box.append(&notif_badge);
-        let notif_button = gtk4::MenuButton::builder()
-            .child(&bell_box)
-            .tooltip_text("Notifications (Ctrl+Shift+I)")
-            .build();
+        // Notifications open from the island; there is no separate bell.
+        let notif_button = island.button.clone();
 
-        header.pack_end(&menu_btn);
-        header.pack_end(&notif_button);
-        header.pack_end(&split_d);
-        header.pack_end(&split_r);
+        // Everything but the window controls can slide away (auto-hide setting).
+        let edge = edge_reveal::EdgeReveal::new(
+            &header,
+            &[sidebar_btn.upcast_ref(), new_ws.upcast_ref()],
+            &[split_r.upcast_ref(), split_d.upcast_ref(), menu_btn.upcast_ref()],
+            vec![menu_btn.clone()],
+        );
 
         // Sidebar
         let sidebar_box = gtk4::Box::new(Orientation::Vertical, 0);
@@ -208,9 +212,24 @@ impl App {
         stack.set_hhomogeneous(false);
         stack.set_vhomogeneous(false);
 
+        // Faint workspace name centred behind the terminals; never takes input.
+        let watermark = gtk4::Label::builder()
+            .halign(gtk4::Align::Center)
+            .valign(gtk4::Align::Center)
+            .justify(gtk4::Justification::Center)
+            .can_target(false)
+            .can_focus(false)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .build();
+        watermark.add_css_class("ws-watermark");
+        let stack_overlay = gtk4::Overlay::new();
+        stack_overlay.set_child(Some(&stack));
+        stack_overlay.add_overlay(&watermark);
+        stack_overlay.set_clip_overlay(&watermark, true);
+
         let split = gtk4::Paned::new(Orientation::Horizontal);
         split.set_start_child(Some(&sidebar_box));
-        split.set_end_child(Some(&stack));
+        split.set_end_child(Some(&stack_overlay));
         split.set_shrink_start_child(false);
         split.set_resize_start_child(false);
         split.set_position(config.appearance.sidebar_width);
@@ -283,7 +302,9 @@ impl App {
             status,
             toasts,
             notif_button,
-            notif_badge,
+            island,
+            watermark,
+            edge,
             desktop: desktop_notify::Desktop::new(gapp),
             theme_css,
             inner: RefCell::new(Inner {
@@ -303,19 +324,12 @@ impl App {
             quitting: Cell::new(false),
         });
 
-        // Keep the title in sync.
+        // Keep the island and watermark in sync with the visible workspace.
         {
             let w = Rc::downgrade(&app);
             app.stack.connect_visible_child_name_notify(move |_| {
                 if let Some(a) = w.upgrade() {
-                    let name = a
-                        .inner
-                        .borrow()
-                        .state
-                        .active_workspace()
-                        .map(|w| w.name.clone())
-                        .unwrap_or_default();
-                    title.set_subtitle(&name);
+                    a.sync_island();
                 }
             });
         }
@@ -587,6 +601,7 @@ impl App {
 
     pub fn split(self: &Rc<Self>, pane: Option<PaneId>, orient: Orient, cwd: Option<PathBuf>) -> Result<PaneId, String> {
         let pane = pane.or_else(|| self.focused_pane()).ok_or("no pane to split")?;
+        self.check_split_room(pane, orient)?;
         let cwd = cwd.or_else(|| self.inner.borrow().panes.get(&pane).and_then(|p| p.cwd.clone()));
         let new = self.inner.borrow_mut().state.split(pane, orient).map_err(|e| e.to_string())?;
         let wid = self.inner.borrow().state.workspace_of(new).unwrap();
@@ -598,26 +613,64 @@ impl App {
         Ok(new)
     }
 
+    /// Refuse a split that would leave any resized pane too small to use
+    /// (under `MIN_PANE_COLS` x `MIN_PANE_ROWS` cells plus pane chrome).
+    /// Skipped while the workspace has no size yet (hidden or not mapped).
+    fn check_split_room(&self, pane: PaneId, orient: Orient) -> Result<(), String> {
+        const MIN_PANE_COLS: i64 = 20;
+        const MIN_PANE_ROWS: i64 = 4;
+        let i = self.inner.borrow();
+        let Some(wid) = i.state.workspace_of(pane) else { return Ok(()) };
+        let (Some(ws), Some(page), Some(p)) = (i.state.workspace(wid), i.pages.get(&wid), i.panes.get(&pane)) else {
+            return Ok(());
+        };
+        let (w, h) = (page.width() as f64, page.height() as f64);
+        if w <= 0.0 || h <= 0.0 {
+            return Ok(());
+        }
+        // Pane chrome: borders, margins and the context-chip row. Never below what
+        // the pane widget itself needs, or GTK pushes the last panes off-screen.
+        let (frame_min_w, _, _, _) = p.frame.measure(Orientation::Horizontal, -1);
+        let (frame_min_h, _, _, _) = p.frame.measure(Orientation::Vertical, -1);
+        let min_w = ((p.term.char_width() * MIN_PANE_COLS) as f64 + 24.0).max(frame_min_w as f64);
+        let min_h = ((p.term.char_height() * MIN_PANE_ROWS) as f64 + 44.0).max(frame_min_h as f64);
+        let before: HashMap<PaneId, crate::model::Rect> = ws.layout.rects().into_iter().collect();
+        let mut after = ws.layout.clone();
+        after.split_balanced(pane, PaneId::MAX, orient);
+        let cramped = after.rects().into_iter().any(|(id, r)| {
+            let changed = before.get(&id).is_none_or(|b| *b != r);
+            changed && (r.w * w < min_w || r.h * h < min_h)
+        });
+        if cramped {
+            return Err("No room for another pane here — close a pane or make the window bigger".into());
+        }
+        Ok(())
+    }
+
     pub fn close_pane(self: &Rc<Self>, pane: PaneId, force: bool, interactive: bool) -> Result<(), String> {
-        let (running, confirm) = {
+        let (running, confirm, program) = {
             let i = self.inner.borrow();
             let p = i.panes.get(&pane).ok_or(format!("no such pane: {pane}"))?;
-            (p.has_running_child(), i.config.terminal.confirm_close_running)
+            let running = p.has_running_child();
+            let program = running
+                .then(|| crate::meta::foreground_pgrp(p.pty_fd()))
+                .flatten()
+                .filter(|pg| *pg > 0)
+                .and_then(crate::meta::comm);
+            (running, i.config.terminal.confirm_close_running, program)
         };
         if running && !force && confirm {
             if interactive {
                 let w = self.weak();
-                dialogs::confirm(
-                    self,
-                    "Close pane?",
-                    "A program is still running in this pane. Closing it will terminate it.",
-                    "Close",
-                    move || {
-                        if let Some(a) = w.upgrade() {
-                            let _ = a.close_pane(pane, true, false);
-                        }
-                    },
-                );
+                let body = match program {
+                    Some(name) => format!("“{name}” is still running in this pane. Closing it will terminate it."),
+                    None => "A program is still running in this pane. Closing it will terminate it.".to_string(),
+                };
+                dialogs::confirm(self, "Close pane?", &body, "Close", move || {
+                    if let Some(a) = w.upgrade() {
+                        let _ = a.close_pane(pane, true, false);
+                    }
+                });
                 return Ok(());
             }
             return Err("pane has a running program; pass force to close it".into());
@@ -803,41 +856,97 @@ impl App {
                 let ready = Rc::new(Cell::new(false));
                 let ratio = *ratio;
                 {
+                    // Nested dividers get their final size only after their parents
+                    // have been positioned, so keep applying the ratio until the size
+                    // has settled for a few frames (bounded; no lasting frame clock).
                     let ready = ready.clone();
+                    let last = Cell::new(-1);
+                    let frames = Cell::new(0u32);
+                    let stable = Cell::new(0u32);
                     paned.add_tick_callback(move |p, _| {
+                        frames.set(frames.get() + 1);
+                        let size = if p.orientation() == Orientation::Horizontal {
+                            p.width()
+                        } else {
+                            p.height()
+                        };
+                        if size > 0 && size != last.get() {
+                            p.set_position((ratio * size as f64).round() as i32);
+                            last.set(size);
+                            stable.set(0);
+                            ready.set(true);
+                        } else if size > 0 {
+                            stable.set(stable.get() + 1);
+                        }
+                        if stable.get() >= 3 || frames.get() > 240 {
+                            ready.set(true);
+                            return glib::ControlFlow::Break;
+                        }
+                        glib::ControlFlow::Continue
+                    });
+                }
+                // Only a divider drag by the user changes the saved ratio. GTK also
+                // moves the position on its own (clamping when panes are cramped,
+                // reallocating on resize); saving those would corrupt the layout.
+                let dragging = Rc::new(Cell::new(false));
+                let save: Rc<dyn Fn(&gtk4::Paned)> = {
+                    let my_path = path.clone();
+                    let w = self.weak();
+                    Rc::new(move |p: &gtk4::Paned| {
                         let size = if p.orientation() == Orientation::Horizontal {
                             p.width()
                         } else {
                             p.height()
                         };
                         if size <= 0 {
-                            return glib::ControlFlow::Continue;
+                            return;
                         }
-                        p.set_position((ratio * size as f64).round() as i32);
-                        ready.set(true);
-                        glib::ControlFlow::Break
+                        if let Some(a) = w.upgrade() {
+                            let r = p.position() as f64 / size as f64;
+                            if let Ok(ws) = a.inner.borrow_mut().state.workspace_mut(wid) {
+                                ws.layout.set_ratio_at(&my_path, r);
+                            }
+                            a.schedule_save();
+                        }
+                    })
+                };
+                {
+                    // Capture phase: runs before the paned's own drag gesture claims the press.
+                    let press = gtk4::GestureClick::new();
+                    press.set_button(gdk::BUTTON_PRIMARY);
+                    press.set_propagation_phase(gtk4::PropagationPhase::Capture);
+                    let dragging = dragging.clone();
+                    press.connect_pressed(move |g, _, x, y| {
+                        let Some(p) = g.widget().and_downcast::<gtk4::Paned>() else {
+                            return;
+                        };
+                        let on_handle = p
+                            .pick(x, y, gtk4::PickFlags::DEFAULT)
+                            .is_some_and(|h| h.css_name() == "separator" && h.parent().as_ref() == Some(p.upcast_ref()));
+                        dragging.set(on_handle);
                     });
+                    paned.add_controller(press);
                 }
-                let my_path = path.clone();
-                let w = self.weak();
-                paned.connect_position_notify(move |p| {
-                    if !ready.get() {
-                        return;
-                    }
-                    let size = if p.orientation() == Orientation::Horizontal {
-                        p.width()
-                    } else {
-                        p.height()
-                    };
-                    if size <= 0 {
-                        return;
-                    }
-                    if let Some(a) = w.upgrade() {
-                        let r = p.position() as f64 / size as f64;
-                        if let Ok(ws) = a.inner.borrow_mut().state.workspace_mut(wid) {
-                            ws.layout.set_ratio_at(&my_path, r);
+                {
+                    // The press gesture is cancelled once the paned claims the drag,
+                    // so watch the raw release to know when the drag is over.
+                    let release = gtk4::EventControllerLegacy::new();
+                    release.set_propagation_phase(gtk4::PropagationPhase::Capture);
+                    let dragging = dragging.clone();
+                    let save = save.clone();
+                    release.connect_event(move |c, ev| {
+                        if ev.event_type() == gdk::EventType::ButtonRelease && dragging.replace(false) {
+                            if let Some(p) = c.widget().and_downcast::<gtk4::Paned>() {
+                                save(&p);
+                            }
                         }
-                        a.schedule_save();
+                        glib::Propagation::Proceed
+                    });
+                    paned.add_controller(release);
+                }
+                paned.connect_position_notify(move |p| {
+                    if ready.get() && dragging.get() {
+                        save(p);
                     }
                 });
                 paned.upcast()
@@ -860,6 +969,12 @@ impl App {
     }
 
     pub fn notify_kind(self: &Rc<Self>, pane: Option<PaneId>, title: &str, body: &str, source: &str, kind: Kind) -> u64 {
+        self.notify_with(pane, title, body, source, kind, None)
+    }
+
+    /// `notify_kind`, plus `extra` text (e.g. how long an agent worked) for
+    /// the island flash only.
+    fn notify_with(self: &Rc<Self>, pane: Option<PaneId>, title: &str, body: &str, source: &str, kind: Kind, extra: Option<String>) -> u64 {
         let wid = pane.and_then(|p| self.inner.borrow().state.workspace_of(p));
         let seen = self.pane_seen(pane);
         let (id, title, body, desktop, sound) = {
@@ -873,6 +988,15 @@ impl App {
                 }
             }
             (r.0, r.1, r.2, desktop, sound)
+        };
+        let flash = {
+            // Name the workspace when the event happened somewhere else.
+            let i = self.inner.borrow();
+            let other_ws = wid
+                .filter(|w| Some(*w) != i.state.active_workspace().map(|a| a.id))
+                .and_then(|w| i.state.workspace(w).map(|w| w.name.clone()));
+            let extra = [extra, other_ws].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+            island::flash_text(kind, &title, &body, Some(&extra))
         };
         if !seen && desktop {
             let ws_name = wid.and_then(|w| self.inner.borrow().state.workspace(w).map(|w| w.name.clone()));
@@ -890,6 +1014,7 @@ impl App {
                 sound,
             });
         }
+        self.island.flash(kind, &flash);
         self.refresh();
         id
     }
@@ -926,26 +1051,39 @@ impl App {
         message: Option<String>,
         session: Option<String>,
     ) -> Result<(), String> {
-        {
+        let worked = {
             let mut i = self.inner.borrow_mut();
             let p = i.panes.get_mut(&pane).ok_or(format!("no such pane: {pane}"))?;
+            // Time the turn: from the first Running report to the next stop.
+            let worked = match state {
+                AgentState::Running => {
+                    if p.agent_since.is_none() {
+                        p.agent_since = Some(std::time::Instant::now());
+                    }
+                    None
+                }
+                AgentState::Waiting => None,
+                AgentState::Idle | AgentState::Ended => p.agent_since.take().map(|t| t.elapsed()),
+            };
             p.agent = Some((agent.to_string(), state, message.clone()));
             if let Some(s) = session {
                 p.agent_session = Some((agent.to_string(), s));
             }
-        }
+            worked
+        };
         if state.notifies() {
             let name = crate::agents::display_name(agent);
             let (title, kind) = match state {
                 AgentState::Waiting => (format!("{name} needs input"), Kind::AgentInput),
                 _ => (format!("{name} finished"), Kind::AgentDone),
             };
-            self.notify_kind(
+            self.notify_with(
                 Some(pane),
                 &title,
                 message.as_deref().unwrap_or(""),
                 &format!("agent:{agent}"),
                 kind,
+                worked.filter(|d| d.as_secs() >= 1).map(blocks::fmt_duration),
             );
         } else {
             self.refresh();
@@ -970,17 +1108,44 @@ impl App {
         }
         // Desktop notifications go away once their entry has been seen.
         self.desktop.sync(|id| i.notes.is_unread(id));
-        let unread = i.notes.unread_total();
-        self.notif_badge.set_label(&unread.to_string());
-        self.notif_badge.set_visible(unread > 0);
+        self.island.set_unread(i.notes.unread_total());
         self.status.set_label(&status_text(&i));
         let title = i.state.active_workspace().map(|w| w.name.clone()).unwrap_or_default();
         drop(i);
+        self.sync_island();
         self.window.set_title(Some(&if title.is_empty() {
             "oxishell".to_string()
         } else {
             format!("{title} — oxishell")
         }));
+    }
+
+    /// Island name/dot and the background watermark follow the active workspace.
+    fn sync_island(&self) {
+        let i = self.inner.borrow();
+        let Some(ws) = i.state.active_workspace() else {
+            self.island.set_workspace("", island::Activity::None);
+            self.watermark.set_label("");
+            return;
+        };
+        let mut activity = island::Activity::None;
+        for p in ws.layout.panes().iter().filter_map(|id| i.panes.get(id)) {
+            let a = match &p.agent {
+                Some((_, AgentState::Waiting, _)) => island::Activity::Waiting,
+                Some((_, AgentState::Running, _)) => island::Activity::Working,
+                Some((_, AgentState::Idle, _)) => island::Activity::Present,
+                _ if p.fg_agent.is_some() => island::Activity::Present,
+                _ => island::Activity::None,
+            };
+            activity = strongest(activity, a);
+        }
+        let show_mark = i.config.appearance.watermark;
+        self.island.set_workspace(&ws.name, activity);
+        let mark = if show_mark { ws.name.as_str() } else { "" };
+        if self.watermark.label() != mark {
+            self.watermark.set_label(mark);
+        }
+        self.watermark.set_visible(show_mark);
     }
 
     fn fit_sidebar_to_width(&self) {
@@ -1017,10 +1182,11 @@ impl App {
 
     /// Apply appearance, fonts, colors and shortcuts from the current config.
     pub fn apply_config(self: &Rc<Self>) {
-        let (mode, name) = {
+        let (mode, name, autohide) = {
             let c = &self.inner.borrow().config.appearance;
-            (c.mode.clone(), c.theme.clone())
+            (c.mode.clone(), c.theme.clone(), c.autohide_buttons)
         };
+        self.edge.set_autohide(autohide);
         let sm = adw::StyleManager::default();
         let (theme, found) = crate::theme::resolve(&name, sm.is_dark());
         if !found {
@@ -1548,6 +1714,22 @@ fn set_class(w: &impl IsA<gtk4::Widget>, class: &str, on: bool) {
         w.add_css_class(class);
     } else {
         w.remove_css_class(class);
+    }
+}
+
+/// The more urgent of two activities (Waiting > Working > Present > None).
+fn strongest(a: island::Activity, b: island::Activity) -> island::Activity {
+    use island::Activity::*;
+    let rank = |x| match x {
+        Waiting => 3,
+        Working => 2,
+        Present => 1,
+        None => 0,
+    };
+    if rank(b) > rank(a) {
+        b
+    } else {
+        a
     }
 }
 

@@ -30,6 +30,23 @@ pub fn connect(app: &AppRc) {
             });
         }
     });
+
+    // Double click renames. One gesture on the whole list (not one per row) so
+    // a press on another row resets the press count: quickly clicking A, B, A
+    // must switch workspaces three times, not open "rename A".
+    let dbl = gtk4::GestureClick::new();
+    let w = app.weak();
+    let list = app.sidebar_list.clone();
+    dbl.connect_pressed(move |_, n, _, y| {
+        if n != 2 {
+            return;
+        }
+        let (Some(a), Some(id)) = (w.upgrade(), list.row_at_y(y as i32).as_ref().and_then(row_id)) else {
+            return;
+        };
+        super::dialogs::rename_workspace(&a, id);
+    });
+    app.sidebar_list.add_controller(dbl);
 }
 
 /// Keep row and button identity across metadata refreshes so an in-flight
@@ -269,14 +286,4 @@ fn attach_menu(app: &AppRc, row: &gtk4::ListBoxRow, id: WorkspaceId) {
         pop.popup();
     });
     row.add_controller(click);
-    let dbl = gtk4::GestureClick::new();
-    let w = app.weak();
-    dbl.connect_pressed(move |_, n, _, _| {
-        if n == 2 {
-            if let Some(a) = w.upgrade() {
-                super::dialogs::rename_workspace(&a, id);
-            }
-        }
-    });
-    row.add_controller(dbl);
 }

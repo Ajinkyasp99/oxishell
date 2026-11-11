@@ -90,6 +90,9 @@ chmod 755 "$R/DEBIAN/postinst" "$R/DEBIAN/postrm"
 find "$R" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 
 mkdir -p dist
+# Only the package just built is left in dist/, so an older one (another
+# version, or the pre-rename cmux-linux_*.deb) can't be installed by mistake.
+find dist -maxdepth 1 -name '*.deb' -print -delete | sed 's/^/removed old package: /'
 OUT=dist/${PKG}_${VERSION}_${ARCH}.deb
 dpkg-deb --root-owner-group --build "$R" "$OUT" >/dev/null
 echo "$OUT"
