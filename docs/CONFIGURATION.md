@@ -23,6 +23,10 @@ suggestions = true       # ghost-text suggestions from shell history; accept wit
 compact_prompt = true    # prompt is just ❯ (red after a failed command) inside oxishell; new terminals
 cursor_shape = "block"   # block (solid bar) | ibeam (vertical line) | underline (horizontal line)
 cursor_blink = true
+command_blocks = true    # Warp-style header above each command: folder, branch, ✓/✗ exit status, duration; new terminals
+highlight_commands = true # typed commands in bold cyan, output in the normal colour (needs compact_prompt); new terminals
+history_panel = true     # ↑ at the shell prompt opens the history panel, filtered by what is already typed
+vivid_colors = true      # brighten the theme's pastel ANSI colours so coloured output (git, ls, compilers) stands out
 
 [notifications]
 desktop = true           # desktop notification when the window/pane is not focused

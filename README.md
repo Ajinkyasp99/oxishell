@@ -15,7 +15,7 @@ Workspaces in a sidebar · split panes · agent notifications · 41 Warp themes 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 ![Platform: Linux](https://img.shields.io/badge/platform-Linux%20(X11%20%2B%20Wayland)-informational)
 
-<img src="docs/assets/hero.png" alt="oxishell terminal on Ubuntu Linux: three workspaces in the sidebar with git branch and ports, split panes, and a Claude Code 'needs input' notification badge" width="900">
+<img src="docs/assets/hero.png" alt="oxishell terminal on Ubuntu Linux: three workspaces in the sidebar with git branch and ports, split panes, a Claude Code 'needs input' notification badge, and Codex and Claude usage limits at the bottom of the sidebar" width="900">
 
 </div>
 
@@ -49,6 +49,8 @@ input.
 | 🎨 **Warp themes** | 41 built-in themes from [Warp](https://github.com/warpdotdev/themes), including gradients. They colour the whole window, not just the text. Drop any Warp `.yaml` theme in to add your own. |
 | 💡 **Command suggestions** | As you type, the newest matching command from your bash/zsh/fish history appears dimmed after the cursor. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> searches your whole history. |
 | 🏷 **Context chips** | Warp-style chips above each terminal: active Python venv/conda env, folder, git branch and changes. The prompt becomes a clean `❯` (red after a failed command). |
+| 🧱 **Command blocks** | Warp-style: every command gets a header with its folder, git branch, ✓/✗ exit status and run time. Failed commands get a red edge. Commands you type are highlighted so they stand out from output. |
+| 🔗 **Clickable links** | URLs in any output (agents, builds, logs) are clickable. A click opens a small popup with **Open Link** and **Copy Link**; <kbd>Ctrl</kbd>+click opens the link straight away. |
 | ▮ **Cursor** | Block, vertical line or horizontal line, blinking or steady. |
 | ⌘ **Command palette** | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>: every action, workspace, theme and your own project commands, with fuzzy search. |
 | 🤖 **Scriptable** | The `oxi` CLI controls the running app over a private local socket: create workspaces, split, read output, send notifications. |
@@ -178,6 +180,10 @@ When an agent finishes or asks for permission, its workspace gets a badge. Press
 <td width="50%"><img src="docs/assets/palette.png" alt="Command palette searching themes"><br><sub><b>Command palette:</b> actions, workspaces, themes, custom commands</sub></td>
 <td width="50%"><img src="docs/assets/notifications.png" alt="Notifications panel with a Claude Code permission request"><br><sub><b>Notifications:</b> which agent needs you, and where</sub></td>
 </tr>
+<tr>
+<td width="50%"><img src="docs/assets/agent-hooks.png" alt="Settings, Notifications page: Agent Hooks with Claude Code and Codex switched on"><br><sub><b>Agent hooks:</b> one switch per agent in Settings → Notifications</sub></td>
+<td width="50%"><img src="docs/assets/resume.png" alt="Command palette listing Resume Codex session and Resume Claude Code session after a restart"><br><sub><b>Sessions:</b> after a restart, resume agent sessions from the palette or pane menu</sub></td>
+</tr>
 </table>
 
 ## Suggestions and context chips
@@ -198,6 +204,25 @@ turned off in Settings.
 Because the chips already show where you are, panes use a compact **`❯` prompt** (green, red after a
 failed command) instead of `user@host:~/path$`. This only applies inside oxishell; your `~/.bashrc`,
 other terminals and SSH sessions keep their own prompt. Turn it off in Settings → Compact prompt.
+
+## Command blocks and clickable links
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/cli.png" alt="Command blocks: each oxi command has a header with folder, branch, exit status and duration; a refused oxi pane close shows a red block with exit 1"><br><sub><b>Command blocks:</b> folder, branch, ✓/✗ and run time for every command. Shown here with the <code>oxi</code> CLI</sub></td>
+<td width="50%"><img src="docs/assets/links.png" alt="Clicking a pull request URL in agent output opens a popup with Open Link and Copy Link"><br><sub><b>Links:</b> click any URL for Open / Copy; <kbd>Ctrl</kbd>+click opens it directly</sub></td>
+</tr>
+</table>
+
+Each command you run at the prompt becomes a **block**: a thin separator, then a header with the folder and git
+branch it ran in and, once it ends, ✓ or ✗ with the exit code and how long it took. Failed blocks get a red
+edge, so a failing build is easy to spot when you scroll back. Turn blocks off in Settings → Terminal →
+Command blocks.
+
+**Links** work in everything that prints a URL: agent replies, test runners, `git push` output, logs.
+Clicking one opens a small popup showing the full address with **Open Link** (default browser) and
+**Copy Link**. <kbd>Ctrl</kbd>+click skips the popup, and right-clicking a link puts the same two actions at
+the top of the context menu. Dragging or double-clicking to select text never opens anything.
 
 ## Themes
 
@@ -291,6 +316,8 @@ times appear directly below each value, with the weekly date (and the 5-hour dat
 Hover for full reset details, or click the row to open usage bars and setup details. Unavailable limits show `—`.
 Rows disappear when the sessions close. Limits are account-wide snapshots, refreshed from data
 reported after agent responses; usage from other devices can lag until the CLI reports again.
+
+<img src="docs/assets/usage.png" alt="Sidebar usage section with Codex and Claude rows; the Codex row is open, showing 5-hour and weekly limit bars with reset dates" width="900">
 
 Codex works automatically from local session logs (`CODEX_HOME` is respected). For Claude, run
 `oxi hooks install claude` once with the updated `oxi` binary, then restart Claude. This also installs
