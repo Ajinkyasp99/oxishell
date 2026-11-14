@@ -4,6 +4,7 @@
   border: 2px solid transparent;
   border-radius: 6px;
   margin: 2px;
+  transition: opacity 180ms ease-out, transform 180ms ease-out;
 }
 .pane.focused {
   border-color: alpha(@accent_bg_color, 0.45);
@@ -251,10 +252,89 @@
   border-color: alpha(@error_color, 0.34);
 }
 
-/* Per-pane close button, top-right level with the chip row. Faint until
-   hovered; the chip row leaves room for it on the right. */
+/* Per-pane drag handle and close button, top-right level with the chip row.
+   Faint until hovered; the chip row leaves room for them on the right. */
 .chips {
-  padding-right: 34px;
+  padding-right: 60px;
+}
+.pane-drag {
+  min-width: 22px;
+  min-height: 22px;
+  margin: 4px 2px 0 0;
+  border-radius: 999px;
+  -gtk-icon-size: 12px;
+  opacity: 0.35;
+  transition: opacity 120ms ease-out, background-color 120ms ease-out, transform 120ms ease-out;
+}
+.pane:hover .pane-drag {
+  opacity: 0.7;
+}
+.pane .pane-drag:hover {
+  opacity: 1;
+  background-color: alpha(@accent_bg_color, 0.18);
+}
+/* Drag to swap. Short transitions: press the handle, the pane lifts, the
+   target fades in, and both panes settle after the drop. GTK skips them
+   all when animations are turned off. */
+.pane .pane-drag.pressed {
+  opacity: 1;
+  transform: scale(0.86);
+  background-color: alpha(@accent_bg_color, 0.32);
+}
+.pane.pane-dragging {
+  opacity: 0.55;
+  transform: scale(0.985);
+}
+.pane-drop-hint {
+  margin: 4px;
+  border: 2px dashed @accent_color;
+  border-radius: 6px;
+  background-color: alpha(@accent_bg_color, 0.18);
+  opacity: 0;
+  transform: scale(0.97);
+  transition: opacity 140ms ease-out, transform 180ms ease-out;
+}
+.pane-drop-hint.active {
+  opacity: 1;
+  transform: none;
+}
+.pane.pane-landed {
+  animation: oxi-pane-land 380ms ease-out;
+}
+@keyframes oxi-pane-land {
+  from {
+    opacity: 0.45;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pane-drop-hint-label {
+  font-weight: bold;
+  color: @accent_color;
+  background-color: alpha(@window_bg_color, 0.85);
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+.pane-drag-icon {
+  animation: oxi-drag-pop 160ms ease-out;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
+  font-weight: bold;
+}
+@keyframes oxi-drag-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .pane-close {
   min-width: 22px;

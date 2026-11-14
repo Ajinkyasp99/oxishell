@@ -1,5 +1,13 @@
 # Release notes
 
+## 0.1.3 — 2026-11-14
+
+- Swap panes by dragging: every pane has a ✥ move handle left of its ✕ close button. Drop it on another
+  pane in the same workspace and the two trade places, with short animations while you drag.
+  Shells, scrollback and running agents keep going.
+- Drag where two dividers meet (┤ ├ ┬ ┴ ┼) to resize in both directions at once.
+- History panel: the newest command is no longer cut off at the bottom.
+
 ## 0.1.1 — 2026-11-11
 
 - **Renamed from cmux-linux to oxishell.** The package, binary and app are now `oxishell`, and the

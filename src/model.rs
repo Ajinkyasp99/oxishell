@@ -225,6 +225,28 @@ impl Node {
         }
     }
 
+    /// Exchange the positions of leaves `x` and `y`; split sizes stay put.
+    /// Returns false (and changes nothing) unless both are in this tree.
+    pub fn swap(&mut self, x: PaneId, y: PaneId) -> bool {
+        if !self.contains(x) || !self.contains(y) {
+            return false;
+        }
+        self.swap_ids(x, y);
+        true
+    }
+
+    fn swap_ids(&mut self, x: PaneId, y: PaneId) {
+        match self {
+            Node::Leaf { pane } if *pane == x => *pane = y,
+            Node::Leaf { pane } if *pane == y => *pane = x,
+            Node::Leaf { .. } => {}
+            Node::Split { a, b, .. } => {
+                a.swap_ids(x, y);
+                b.swap_ids(x, y);
+            }
+        }
+    }
+
     /// Splits from the root down to leaf `pane`: (went to `b`, orientation).
     fn path_to(&self, pane: PaneId) -> Option<Vec<(bool, Orient)>> {
         match self {
@@ -303,6 +325,7 @@ pub enum ModelError {
     NoSuchWorkspace(WorkspaceId),
     NoSuchPane(PaneId),
     InvalidName,
+    DifferentWorkspaces,
 }
 
 impl std::fmt::Display for ModelError {
@@ -311,6 +334,7 @@ impl std::fmt::Display for ModelError {
             ModelError::NoSuchWorkspace(id) => write!(f, "no such workspace: {id}"),
             ModelError::NoSuchPane(id) => write!(f, "no such pane: {id}"),
             ModelError::InvalidName => write!(f, "name must be 1-64 characters without control characters"),
+            ModelError::DifferentWorkspaces => write!(f, "panes are in different workspaces"),
         }
     }
 }
@@ -468,6 +492,20 @@ impl AppState {
                 Ok(PaneClosed::WorkspaceRemoved(wid))
             }
         }
+    }
+
+    /// Swap the positions of two panes in the same workspace. Focus and the
+    /// split sizes are unchanged. Swapping a pane with itself is a no-op.
+    pub fn swap_panes(&mut self, x: PaneId, y: PaneId) -> Result<WorkspaceId, ModelError> {
+        let wid = self.workspace_of(x).ok_or(ModelError::NoSuchPane(x))?;
+        let wy = self.workspace_of(y).ok_or(ModelError::NoSuchPane(y))?;
+        if wid != wy {
+            return Err(ModelError::DifferentWorkspaces);
+        }
+        if x != y {
+            self.workspace_mut(wid)?.layout.swap(x, y);
+        }
+        Ok(wid)
     }
 
     pub fn focus(&mut self, pane: PaneId) -> Result<WorkspaceId, ModelError> {
@@ -675,6 +713,40 @@ mod tests {
         assert_eq!(widths(&s.workspace(w).unwrap().layout), vec![0.333; 3]);
         s.close_pane(p1).unwrap();
         assert_eq!(widths(&s.workspace(w).unwrap().layout), vec![0.5; 2]);
+    }
+
+    #[test]
+    fn swap_panes_exchanges_positions_and_keeps_sizes() {
+        let (mut s, w, p1) = state_with_ws();
+        let p2 = s.split(p1, Orient::Horizontal).unwrap();
+        let p3 = s.split(p2, Orient::Vertical).unwrap();
+        s.workspace_mut(w).unwrap().layout.set_ratio_at(&[], 0.7);
+        let before = s.workspace(w).unwrap().layout.rects();
+        let focused = s.workspace(w).unwrap().focused;
+
+        assert_eq!(s.swap_panes(p1, p3).unwrap(), w);
+        let ws = s.workspace(w).unwrap();
+        assert_eq!(ws.layout.panes(), vec![p3, p2, p1]);
+        assert_eq!(ws.focused, focused);
+        let after = ws.layout.rects();
+        // Same slots, same sizes; only the occupants changed.
+        let rect_of = |rs: &[(PaneId, Rect)], p| rs.iter().find(|(id, _)| *id == p).unwrap().1;
+        assert_eq!(rect_of(&after, p3), rect_of(&before, p1));
+        assert_eq!(rect_of(&after, p1), rect_of(&before, p3));
+        assert_eq!(rect_of(&after, p2), rect_of(&before, p2));
+        assert!(s.validate().is_ok());
+    }
+
+    #[test]
+    fn swap_panes_rejects_other_workspaces_and_unknown_panes() {
+        let (mut s, w, p1) = state_with_ws();
+        let p2 = s.split(p1, Orient::Horizontal).unwrap();
+        let (_, other) = s.create_workspace(None).unwrap();
+        assert_eq!(s.swap_panes(p1, other), Err(ModelError::DifferentWorkspaces));
+        assert_eq!(s.swap_panes(p1, 9999), Err(ModelError::NoSuchPane(9999)));
+        // Swapping with itself changes nothing.
+        s.swap_panes(p2, p2).unwrap();
+        assert_eq!(s.workspace(w).unwrap().layout.panes(), vec![p1, p2]);
     }
 
     #[test]

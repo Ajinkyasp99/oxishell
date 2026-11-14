@@ -42,9 +42,17 @@ fn have_input() -> bool {
 
 impl Harness {
     fn new(name: &str) -> Self {
+        Self::with_history(name, &[])
+    }
+
+    /// Like `new`, with `history` (oldest first) as the shell's ~/.bash_history.
+    fn with_history(name: &str, history: &[&str]) -> Self {
         let root = std::env::temp_dir().join(format!("oxishell-pointer-{}-{name}", std::process::id()));
         for dir in ["home", "config/oxishell", "state", "run"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        if !history.is_empty() {
+            std::fs::write(root.join("home/.bash_history"), history.join("\n") + "\n").unwrap();
         }
         for (key, dir) in [
             ("HOME", "home"),
@@ -392,5 +400,270 @@ while True:
             before,
             "Ctrl-wheel must not scroll the app"
         );
+    });
+}
+
+fn find_by_class(root: &gtk4::Widget, class: &str) -> Option<gtk4::Widget> {
+    if root.has_css_class(class) {
+        return Some(root.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(c) = child {
+        if let Some(found) = find_by_class(&c, class) {
+            return Some(found);
+        }
+        child = c.next_sibling();
+    }
+    None
+}
+
+#[test]
+fn dragging_a_pane_handle_onto_another_pane_swaps_them() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("pane-swap");
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        let first = h.app.focused_pane().unwrap();
+        let second = h.app.split(Some(first), oxishell::model::Orient::Horizontal, None).unwrap();
+        pump(400);
+        let layout = || h.app.inner.borrow().state.workspace(wid).unwrap().layout.panes();
+        assert_eq!(layout(), vec![first, second]);
+        let (first_frame, second_frame, first_term) = {
+            let i = h.app.inner.borrow();
+            (
+                i.panes[&first].frame.clone(),
+                i.panes[&second].frame.clone(),
+                i.panes[&first].term.clone(),
+            )
+        };
+        let handle = find_by_class(first_frame.upcast_ref(), "pane-drag").expect("pane has a drag handle");
+        // The bundled four-way move icon is installed and found by GTK.
+        let icon = handle.downcast_ref::<gtk4::Image>().unwrap().icon_name();
+        assert_eq!(icon.as_deref(), Some("oxishell-pane-move-symbolic"));
+        assert!(gtk4::IconTheme::for_display(&handle.display()).has_icon("oxishell-pane-move-symbolic"));
+        let center = |w: &gtk4::Widget| {
+            let p = w
+                .compute_point(
+                    &h.app.window,
+                    &gtk4::graphene::Point::new(w.width() as f32 / 2.0, w.height() as f32 / 2.0),
+                )
+                .unwrap();
+            (p.x() as i32, p.y() as i32)
+        };
+        let to = |(x, y): (i32, i32)| {
+            xdo(&["mousemove", "--window", &h.window, &x.to_string(), &y.to_string()]);
+            pump(60);
+        };
+        // While dragging, move in small real steps: the drag only follows
+        // pointer motion, not warps.
+        let drag_to = |from: (i32, i32), (x, y): (i32, i32)| {
+            let steps = 12;
+            let (dx, dy) = ((x - from.0) / steps, (y - from.1) / steps);
+            for _ in 0..steps {
+                xdo(&["mousemove_relative", "--", &dx.to_string(), &dy.to_string()]);
+                pump(25);
+            }
+            pump(100);
+        };
+
+        // Dropping a pane on itself changes nothing.
+        to(center(&handle));
+        xdo(&["mousedown", "1"]);
+        pump(60);
+        drag_to(center(&handle), center(first_frame.upcast_ref()));
+        xdo(&["mouseup", "1"]);
+        pump(200);
+        assert_eq!(layout(), vec![first, second], "dropping on itself must not swap");
+
+        // Drag the left pane's handle onto the right pane.
+        to(center(&handle));
+        xdo(&["mousedown", "1"]);
+        pump(60);
+        drag_to(center(&handle), center(second_frame.upcast_ref()));
+        let hint = find_by_class(second_frame.upcast_ref(), "pane-drop-hint").unwrap();
+        assert!(hint.has_css_class("active"), "the target pane shows the swap hint");
+        assert!(handle.has_css_class("pressed"), "the held handle shows it is pressed");
+        xdo(&["mouseup", "1"]);
+        pump(400);
+
+        assert_eq!(layout(), vec![second, first], "drop must swap the panes");
+        assert!(!hint.has_css_class("active"), "hint hides after the drop");
+        assert!(!handle.has_css_class("pressed"));
+        assert!(first_frame.has_css_class("pane-landed"), "swapped panes play the settle animation");
+        pump(500);
+        assert!(!first_frame.has_css_class("pane-landed"), "settle class clears so it can replay");
+        assert_eq!(h.app.focused_pane(), Some(first), "the dragged pane keeps focus");
+        assert!(h.app.dragging_pane.get().is_none());
+        // The same terminal (and its shell) moved; nothing was recreated.
+        assert!(first_term.is_mapped());
+        assert_eq!(h.app.inner.borrow().panes[&first].term, first_term);
+        let (fx, _) = center(first_frame.upcast_ref());
+        let (sx, _) = center(second_frame.upcast_ref());
+        assert!(fx > sx, "the dragged pane is now on the right");
+    });
+}
+
+fn paned_handle(p: &gtk4::Paned) -> gtk4::Widget {
+    let mut child = p.first_child();
+    while let Some(c) = child {
+        if c.css_name() == "separator" {
+            return c;
+        }
+        child = c.next_sibling();
+    }
+    panic!("paned without a handle");
+}
+
+#[test]
+fn dragging_where_dividers_meet_resizes_both_directions() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("corner-resize");
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        let first = h.app.focused_pane().unwrap();
+        // ├ layout: first | (second over third).
+        let second = h.app.split(Some(first), oxishell::model::Orient::Horizontal, None).unwrap();
+        h.app.split(Some(second), oxishell::model::Orient::Vertical, None).unwrap();
+        pump(700);
+        let page = h.app.inner.borrow().pages[&wid].clone();
+        let root = page.first_child().and_downcast::<gtk4::Paned>().unwrap();
+        let column = root.end_child().and_downcast::<gtk4::Paned>().unwrap();
+        let (root_handle, column_handle) = (paned_handle(&root), paned_handle(&column));
+        // Exact X coordinates: include the window's client-side shadow, which
+        // sits between the X window's origin and the GTK window's.
+        let (sx, sy) = h.app.window.surface_transform();
+        let at = |w: &gtk4::Widget, fx: f32, fy: f32| {
+            let p = w
+                .compute_point(
+                    &h.app.window,
+                    &gtk4::graphene::Point::new(w.width() as f32 * fx, w.height() as f32 * fy),
+                )
+                .unwrap();
+            ((p.x() as f64 + sx).round() as i32, (p.y() as f64 + sy).round() as i32)
+        };
+        let to = |(x, y): (i32, i32)| {
+            xdo(&["mousemove", "--window", &h.window, &x.to_string(), &y.to_string()]);
+            pump(80);
+        };
+        let drag = |dx: i32, dy: i32| {
+            xdo(&["mousedown", "1"]);
+            pump(60);
+            for _ in 0..10 {
+                xdo(&["mousemove_relative", "--", &(dx / 10).to_string(), &(dy / 10).to_string()]);
+                pump(25);
+            }
+            pump(100);
+            xdo(&["mouseup", "1"]);
+            pump(200);
+        };
+        let cursor = |w: &gtk4::Widget| w.cursor().and_then(|c| c.name()).map(|n| n.to_string());
+
+        // The ├ junction: on the vertical divider, level with the horizontal one.
+        let junction = (at(&root_handle, 0.5, 0.0).0, at(&column_handle, 0.0, 0.5).1);
+        to(junction);
+        assert_eq!(cursor(&root_handle).as_deref(), Some("move"), "junction shows the four-way cursor");
+
+        let (root_before, column_before) = (root.position(), column.position());
+        drag(-60, -40);
+        assert!(
+            (root.position() - (root_before - 60)).abs() <= 3,
+            "vertical divider follows x: {root_before} -> {}",
+            root.position()
+        );
+        assert!(
+            (column.position() - (column_before - 40)).abs() <= 3,
+            "horizontal divider follows y: {column_before} -> {}",
+            column.position()
+        );
+        // Both new ratios are saved in the layout.
+        let rects = h.app.inner.borrow().state.workspace(wid).unwrap().layout.rects();
+        assert!(rects[0].1.w < 0.49, "first pane got narrower: {rects:?}");
+        assert!(rects[1].1.h < 0.49, "top-right pane got shorter: {rects:?}");
+
+        // Away from the junction a divider still moves in one direction only.
+        let (root_before, column_before) = (root.position(), column.position());
+        to(at(&root_handle, 0.5, 0.85));
+        assert_ne!(cursor(&root_handle).as_deref(), Some("move"), "cursor restored off the junction");
+        drag(30, 30);
+        assert!((root.position() - (root_before + 30)).abs() <= 3, "plain divider drag still works");
+        assert_eq!(column.position(), column_before, "the other divider stays put");
+    });
+}
+
+fn find_descendant<T: IsA<gtk4::Widget>>(root: &gtk4::Widget) -> Option<T> {
+    if let Some(w) = root.downcast_ref::<T>() {
+        return Some(w.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(c) = child {
+        if let Some(found) = find_descendant::<T>(&c) {
+            return Some(found);
+        }
+        child = c.next_sibling();
+    }
+    None
+}
+
+#[test]
+fn history_panel_shows_the_newest_command_in_full() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        // More commands than the panel shows at once, so it has to scroll.
+        let cmds: Vec<String> = (1..=25).map(|n| format!("echo history-entry-{n:02}")).collect();
+        let refs: Vec<&str> = cmds.iter().map(String::as_str).collect();
+        let h = Harness::with_history("history-panel", &refs);
+        let pane = h.app.focused_pane().unwrap();
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        // Wait for the shell prompt, then open the panel with ↑.
+        pump(2500);
+        h.point(&term);
+        xdo(&["click", "1"]);
+        pump(200);
+        xdo(&["key", "Up"]);
+        pump(600);
+
+        let mut pop = None;
+        let mut child = term.first_child();
+        while let Some(c) = child {
+            if c.has_css_class("history-panel") {
+                pop = Some(c.clone());
+            }
+            child = c.next_sibling();
+        }
+        let pop = pop.expect("↑ at the prompt opens the history panel");
+        assert!(pop.is_visible());
+        let scroll: gtk4::ScrolledWindow = find_descendant(&pop).unwrap();
+        let list: gtk4::ListBox = find_descendant(scroll.upcast_ref()).unwrap();
+        let newest = list.row_at_index(cmds.len() as i32 - 1).unwrap();
+        assert_eq!(list.selected_row().as_ref(), Some(&newest), "the newest command is selected");
+        let b = newest.compute_bounds(&scroll).unwrap();
+        let (top, bottom, view) = (b.y(), b.y() + b.height(), scroll.height() as f32);
+        assert!(
+            top >= -0.5 && bottom <= view + 0.5,
+            "newest row must be fully visible: row {top}..{bottom}, viewport 0..{view}"
+        );
+        // Moving up past the top of the visible rows scrolls each one fully in.
+        for _ in 0..12 {
+            xdo(&["key", "Up"]);
+            pump(60);
+        }
+        pump(200);
+        let selected = list.selected_row().unwrap();
+        assert_eq!(selected.index(), cmds.len() as i32 - 13);
+        let b = selected.compute_bounds(&scroll).unwrap();
+        assert!(
+            b.y() >= -0.5 && b.y() + b.height() <= scroll.height() as f32 + 0.5,
+            "selected row must be fully visible after moving up: {}..{}",
+            b.y(),
+            b.y() + b.height()
+        );
+        xdo(&["key", "Escape"]);
+        pump(200);
     });
 }
