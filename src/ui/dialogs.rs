@@ -347,11 +347,14 @@ pub fn connect_notifications_popover(app: &AppRc) {
                     row.add_css_class("notif-unread");
                 }
                 let vb = gtk4::Box::new(Orientation::Vertical, 2);
-                let ws = n
-                    .workspace
-                    .and_then(|w| i.state.workspace(w))
-                    .map(|w| w.name.clone())
-                    .unwrap_or_else(|| "closed".into());
+                // App-wide notes (usage alerts, `oxi notify --global`) have no
+                // workspace; "closed" is only for a workspace that is gone.
+                let ws = n.workspace.map(|w| {
+                    i.state
+                        .workspace(w)
+                        .map(|w| format!("{} · ", w.name))
+                        .unwrap_or_else(|| "closed · ".into())
+                });
                 let t = gtk4::Label::builder()
                     .label(format!("{}{}", if n.read { "" } else { "● " }, n.title))
                     .xalign(0.0)
@@ -366,7 +369,8 @@ pub fn connect_notifications_popover(app: &AppRc) {
                     .unwrap_or_default();
                 let sub = gtk4::Label::builder()
                     .label(format!(
-                        "{ws} · {when} · {}{}",
+                        "{}{when} · {}{}",
+                        ws.unwrap_or_default(),
                         n.source,
                         if n.body.is_empty() {
                             String::new()

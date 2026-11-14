@@ -12,9 +12,11 @@
 //! is the exit status), so no extra process runs per command.
 //!
 //! Positions are kept as absolute VTE rows. The scroll adjustment counts from
-//! the first *retained* scrollback row (`clear` and the scrollback limit drop
-//! rows), so the offset between the two is re-measured whenever the shell is
-//! idle at its prompt.
+//! the first *retained* scrollback row (`clear`, the scrollback limit and
+//! programs that clear the scrollback with `ESC[3J` drop rows), so the offset
+//! between the two is re-measured whenever the shell is idle at its prompt,
+//! and re-anchored from the screen's text after any output (see
+//! [`Blocks::resync`]), so headers never drift onto a running program's output.
 
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
@@ -24,6 +26,13 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::time::{Duration, SystemTime};
 use vte4::prelude::*;
+
+/// A block's position on screen (see `Blocks::placed`).
+struct Placed {
+    index: usize,
+    top: f64,
+    end: f64,
+}
 
 /// Blocks kept per pane (older ones scroll out of the scrollback anyway).
 const MAX_BLOCKS: usize = 5000;
@@ -109,6 +118,9 @@ pub struct Blocks {
     next_id: Cell<u64>,
     /// Absolute row of the first retained scrollback row.
     offset: Cell<Option<i64>>,
+    /// Output arrived since `offset` was last confirmed: rows may have been
+    /// dropped, so it may be stale.
+    dirty: Cell<bool>,
     pub enabled: Cell<bool>,
     pub red: Cell<gdk::RGBA>,
     pub green: Cell<gdk::RGBA>,
@@ -129,6 +141,7 @@ impl Blocks {
             list: RefCell::new(Vec::new()),
             next_id: Cell::new(0),
             offset: Cell::new(None),
+            dirty: Cell::new(false),
             enabled: Cell::new(true),
             red: Cell::new(gdk::RGBA::new(1.0, 0.42, 0.42, 1.0)),
             green: Cell::new(gdk::RGBA::new(0.49, 0.9, 0.53, 1.0)),
@@ -146,7 +159,13 @@ impl Blocks {
         };
         {
             let r = redraw.clone();
-            term.connect_contents_changed(move |_| r());
+            let w = Rc::downgrade(&b);
+            term.connect_contents_changed(move |_| {
+                if let Some(b) = w.upgrade() {
+                    b.dirty.set(true);
+                }
+                r();
+            });
         }
         {
             let r = redraw.clone();
@@ -209,6 +228,7 @@ impl Blocks {
         let top = (adj.value() / ch as f64).round() as i64;
         let (_, cursor) = term.cursor_position();
         self.offset.set(Some(cursor - (top + line.end as i64)));
+        self.dirty.set(false);
         let off = self.offset.get().unwrap_or(0);
         self.list.borrow_mut().retain(|b| b.row >= off);
         Some(line)
@@ -307,36 +327,100 @@ impl Blocks {
         });
     }
 
-    fn draw(&self, area: &BlocksArea, snap: &gtk4::Snapshot) {
-        let Some(term) = self.term.upgrade() else { return };
-        let (Some(offset), Some(adj)) = (self.offset.get(), term.vadjustment()) else {
-            return;
+    /// Confirm or correct `offset` from what is on screen, without needing a
+    /// shell prompt (a program may be running). While scrolled to the bottom,
+    /// the screen's top row is one of the `rows` rows ending at the cursor; the
+    /// right one is where VTE's text for that range equals the visible text.
+    /// Returns false when the offset cannot be confirmed now (scrolled up,
+    /// ambiguous screen such as an empty one).
+    fn resync(&self, term: &vte4::Terminal) -> bool {
+        let Some(adj) = term.vadjustment() else { return false };
+        let ch = term.char_height();
+        if ch <= 0 || !Self::at_bottom(term) {
+            return false;
+        }
+        let Some(visible) = term.text_format(vte4::Format::Text) else {
+            return false;
         };
-        if !self.enabled.get() {
-            return;
+        let visible = visible.trim_end();
+        let rows = term.row_count();
+        let cols = term.column_count();
+        let scrolled = (adj.value() / ch as f64).round() as i64;
+        let (_, cursor) = term.cursor_position();
+        let screen_starts_at = |top: i64| {
+            top >= 0
+                && term
+                    .text_range_format(vte4::Format::Text, top as _, 0, (top + rows - 1) as _, cols as _)
+                    .0
+                    .is_some_and(|t| t.trim_end() == visible)
+        };
+        // Try the likeliest tops first and stop at the first match: the
+        // current offset (usually nothing moved), then the cursor on the
+        // screen's last row (where programs that print a lot keep it), then
+        // higher. Another top could match too only on a screen that repeats
+        // itself, where keeping the earlier choice is right.
+        let current = self.offset.get().map(|off| off + scrolled);
+        let lowest = cursor - rows + 1;
+        let candidates = current
+            .into_iter()
+            .filter(|t| (lowest..=cursor).contains(t))
+            .chain((lowest..=cursor).filter(|t| Some(*t) != current));
+        for top in candidates {
+            if screen_starts_at(top) {
+                self.offset.set(Some(top - scrolled));
+                self.dirty.set(false);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Header positions as they are drawn: (y in pixels, place text).
+    pub fn visible_headers(&self) -> Vec<(f64, String)> {
+        let Some(term) = self.term.upgrade() else { return Vec::new() };
+        let list = self.list.borrow();
+        self.placed(&term, self.area.height() as f64)
+            .into_iter()
+            .filter(|p| list[p.index].has_header)
+            .map(|p| (p.top, list[p.index].place.clone()))
+            .collect()
+    }
+
+    /// Where each block on screen is drawn, in pixels from the top.
+    fn placed(&self, term: &vte4::Terminal, height: f64) -> Vec<Placed> {
+        let Some(adj) = term.vadjustment() else {
+            return Vec::new();
+        };
+        if self.offset.get().is_none() || !self.enabled.get() {
+            return Vec::new();
         }
         // A full-screen program (vim, htop…) uses the alternate screen, which
         // has no scrollback: the blocks belong to the normal screen.
-        if adj.upper() <= adj.page_size() + 0.5 && self.running(&term) {
-            return;
+        if adj.upper() <= adj.page_size() + 0.5 && self.running(term) {
+            return Vec::new();
         }
         let ch = term.char_height() as f64;
         if ch <= 0.0 {
-            return;
+            return Vec::new();
         }
-        let width = area.width() as f32;
-        let height = area.height() as f64;
+        // After output the offset may be stale (rows dropped). Re-anchor it; if
+        // that is not possible at the bottom, draw nothing rather than draw in
+        // the wrong place. Scrolled up, the last known offset is kept.
+        if self.dirty.get() && !self.resync(term) && Self::at_bottom(term) {
+            return Vec::new();
+        }
+        let Some(offset) = self.offset.get() else {
+            return Vec::new();
+        };
         let value = adj.value();
         let y_of = |row: i64| (row - offset) as f64 * ch - value + PAD_Y;
-        let fg = area.color();
-        let with_alpha = |c: gdk::RGBA, a: f32| gdk::RGBA::new(c.red(), c.green(), c.blue(), a);
-        let (red, green) = (self.red.get(), self.green.get());
         let (_, cursor) = term.cursor_position();
         let list = self.list.borrow();
-        for (i, b) in list.iter().enumerate() {
+        let mut out = Vec::new();
+        for (index, b) in list.iter().enumerate() {
             let top = y_of(b.row);
             // The block runs until the next one (or the current prompt row).
-            let end = match list.get(i + 1) {
+            let end = match list.get(index + 1) {
                 Some(n) => y_of(n.row),
                 None if b.result.is_some() => y_of(cursor) - ch,
                 None => y_of(cursor) + ch,
@@ -344,6 +428,25 @@ impl Blocks {
             if end < 0.0 || top > height {
                 continue;
             }
+            out.push(Placed { index, top, end });
+        }
+        out
+    }
+
+    fn draw(&self, area: &BlocksArea, snap: &gtk4::Snapshot) {
+        let Some(term) = self.term.upgrade() else { return };
+        let placed = self.placed(&term, area.height() as f64);
+        if placed.is_empty() {
+            return;
+        }
+        let ch = term.char_height() as f64;
+        let width = area.width() as f32;
+        let fg = area.color();
+        let with_alpha = |c: gdk::RGBA, a: f32| gdk::RGBA::new(c.red(), c.green(), c.blue(), a);
+        let (red, green) = (self.red.get(), self.green.get());
+        let list = self.list.borrow();
+        for &Placed { index, top, end } in &placed {
+            let b = &list[index];
             let failed = matches!(b.result, Some((s, _)) if s != 0);
             let rect = |x: f32, y: f64, w: f32, h: f64| graphene::Rect::new(x, y as f32, w, h as f32);
             if failed {

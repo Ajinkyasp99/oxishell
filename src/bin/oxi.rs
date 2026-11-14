@@ -106,6 +106,16 @@ enum WsCmd {
         id: u64,
         index: u64,
     },
+    /// Set the sidebar colour and/or icon ("none" clears it)
+    Set {
+        id: u64,
+        /// red, yellow, green, cyan, blue, magenta, gray or none
+        #[arg(long)]
+        color: Option<String>,
+        /// terminal, server, database, web, tools, docs, science, star, lock, cloud, warning, home or none
+        #[arg(long)]
+        icon: Option<String>,
+    },
     Close {
         id: u64,
         /// Close even if programs are running
@@ -222,6 +232,7 @@ fn main() -> ExitCode {
             WsCmd::Prev => call("workspace.prev", json!({})),
             WsCmd::Rename { id, name } => call("workspace.rename", json!({"workspace": id, "name": name})),
             WsCmd::Move { id, index } => call("workspace.move", json!({"workspace": id, "index": index})),
+            WsCmd::Set { id, color, icon } => call("workspace.set", json!({"workspace": id, "color": color, "icon": icon})),
             WsCmd::Close { id, force } => call("workspace.close", json!({"workspace": id, "force": force})),
         },
         Cmd::Pane(c) => match c {

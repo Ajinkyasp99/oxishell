@@ -65,6 +65,7 @@ pub const METHODS: &[&str] = &[
     "workspace.rename",
     "workspace.close",
     "workspace.move",
+    "workspace.set",
     "pane.list",
     "pane.split",
     "pane.focus",

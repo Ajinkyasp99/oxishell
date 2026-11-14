@@ -154,8 +154,10 @@ pub fn style_terminal(t: &vte4::Terminal, cfg: &Config, scale: f64, theme: &crat
     t.set_font_scale(scale);
     t.set_scrollback_lines(cfg.terminal.scrollback_lines);
     let c = |c: crate::theme::Rgb, a: f32| gdk::RGBA::new(c.0 as f32 / 255.0, c.1 as f32 / 255.0, c.2 as f32 / 255.0, a);
-    // Gradient/image themes paint the window background; the terminal stays transparent over it.
-    let bg_alpha = if theme.layered_background() { 0.0 } else { 1.0 };
+    // Gradient/image themes and a see-through window paint the background
+    // behind the terminal; the terminal stays transparent over it.
+    let transparent = theme.transparent_terminal(cfg.appearance.opacity);
+    let bg_alpha = if transparent { 0.0 } else { 1.0 };
     let (normal, bright) = if cfg.terminal.vivid_colors {
         theme.vivid_palette()
     } else {
@@ -169,7 +171,7 @@ pub fn style_terminal(t: &vte4::Terminal, cfg: &Config, scale: f64, theme: &crat
         &refs,
     );
     // VTE paints its background unless told not to; let the window gradient show through.
-    t.set_clear_background(!theme.layered_background());
+    t.set_clear_background(!transparent);
     t.set_color_cursor(theme.cursor.map(|x| c(x, 1.0)).as_ref());
     // Programs like vim may still change the shape temporarily (DECSCUSR).
     t.set_cursor_shape(match cfg.terminal.cursor_shape.as_str() {
@@ -356,7 +358,7 @@ impl App {
         menu.append_section(None, &agent);
         menu.append_section(None, &close);
         term.set_context_menu_model(Some(&menu));
-        super::links::attach(self, &term, &menu);
+        super::links::attach(self, id, &term, &menu);
 
         let pid_cell: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
         let pending: Rc<std::cell::RefCell<Option<Vec<u8>>>> = Rc::new(std::cell::RefCell::new(Some(Vec::new())));

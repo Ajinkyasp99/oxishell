@@ -20,6 +20,7 @@ mod settings;
 mod sidebar;
 mod suggest;
 mod themes;
+mod updates;
 mod usage_footer;
 pub mod vte_fix;
 mod zoom;
@@ -76,6 +77,8 @@ pub struct App {
     pub desktop: Rc<desktop_notify::Desktop>,
     /// Generated CSS for the current theme (whole-window colours, gradients).
     pub theme_css: gtk4::CssProvider,
+    /// The "new version available" toast, once shown (see `updates`).
+    pub update_notice: RefCell<Option<adw::Toast>>,
     pub inner: RefCell<Inner>,
     pub meta_tx: std::sync::mpsc::Sender<meta_worker::Job>,
     suppress_select: Cell<bool>,
@@ -289,6 +292,8 @@ impl App {
             .height_request(320)
             .content(&toasts)
             .build();
+        // Target for a see-through background (Settings → Background opacity).
+        window.add_css_class("oxishell-window");
 
         // Optional initial size, e.g. OXISHELL_GEOMETRY=900x600.
         if let Some((w, h)) = std::env::var("OXISHELL_GEOMETRY").ok().and_then(|g| {
@@ -316,6 +321,7 @@ impl App {
             edge,
             desktop: desktop_notify::Desktop::new(gapp),
             theme_css,
+            update_notice: RefCell::new(None),
             inner: RefCell::new(Inner {
                 state: AppState::default(),
                 config,
@@ -373,6 +379,7 @@ impl App {
         meta_worker::attach(&app, meta_rx);
         usage_footer::attach(&app, usage_rx);
         app.apply_config();
+        updates::attach(&app);
 
         // Restore or start fresh.
         let restore = app.inner.borrow().config.session.restore;
@@ -515,6 +522,36 @@ impl App {
         self.refresh();
         self.schedule_save();
         Ok(())
+    }
+
+    /// Change a workspace's sidebar colour and/or icon. `None` leaves that one
+    /// unchanged; `Some(None)` clears it. Nothing changes if either is invalid.
+    pub fn set_workspace_look(
+        self: &Rc<Self>,
+        wid: WorkspaceId,
+        color: Option<Option<&str>>,
+        icon: Option<Option<&str>>,
+    ) -> Result<(), String> {
+        {
+            let mut i = self.inner.borrow_mut();
+            let mut next = i.state.clone();
+            next.workspace_mut(wid).map_err(|e| e.to_string())?;
+            if let Some(c) = color {
+                next.set_color(wid, c).map_err(|e| e.to_string())?;
+            }
+            if let Some(ic) = icon {
+                next.set_icon(wid, ic).map_err(|e| e.to_string())?;
+            }
+            i.state = next;
+        }
+        self.refresh();
+        self.schedule_save();
+        Ok(())
+    }
+
+    /// Ask for a newer release if that is turned on and a day has passed.
+    pub fn check_for_updates(self: &Rc<Self>) {
+        updates::check(self);
     }
 
     pub fn move_workspace(self: &Rc<Self>, wid: WorkspaceId, to: usize) -> Result<(), String> {
@@ -1252,7 +1289,8 @@ impl App {
             });
             theme
         };
-        self.theme_css.load_from_string(&theme.css());
+        let opacity = self.inner.borrow().config.appearance.opacity;
+        self.theme_css.load_from_string(&(theme.css() + &theme.opacity_css(opacity)));
         self.inner.borrow_mut().theme = theme;
         {
             let w = self.weak();
@@ -1405,6 +1443,28 @@ impl App {
                 if let Some(a) = w.upgrade() {
                     a.run_action(&n);
                 }
+            });
+            self.app.add_action(&act);
+        }
+        // Workspace colour / icon: "<id>:<value>", empty value = none.
+        for name in ["ws-color", "ws-icon"] {
+            let act = gio::SimpleAction::new(name, Some(glib::VariantTy::STRING));
+            let w = self.weak();
+            let color = name == "ws-color";
+            act.connect_activate(move |_, v| {
+                let (Some(a), Some(arg)) = (w.upgrade(), v.and_then(|v| v.get::<String>())) else {
+                    return;
+                };
+                let Some((id, value)) = arg.split_once(':').and_then(|(i, v)| Some((i.parse().ok()?, v))) else {
+                    return;
+                };
+                let value = (!value.is_empty()).then_some(value);
+                let r = if color {
+                    a.set_workspace_look(id, Some(value), None)
+                } else {
+                    a.set_workspace_look(id, None, Some(value))
+                };
+                a.report(r);
             });
             self.app.add_action(&act);
         }

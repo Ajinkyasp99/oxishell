@@ -756,3 +756,101 @@ fn stress_many_panes_and_heavy_output() {
         assert!(wait_dead(pid), "shell {pid} survived shutdown");
     }
 }
+
+#[test]
+fn usage_limit_alerts_notify_once_per_threshold_and_survive_a_restart() {
+    if !have_display() {
+        return;
+    }
+    let e = Env::new("usage-alerts");
+    let reset = oxishell::usage::now() + 3600;
+    let send = |pane: u64, used: f64, resets_at: i64| {
+        e.ok(
+            "agent.usage",
+            json!({"pane": pane, "rate_limits": {"five_hour": {"used_percentage": used, "resets_at": resets_at}}}),
+        );
+    };
+    let titles = || -> Vec<String> {
+        let mut t: Vec<String> = e
+            .ok("notification.list", json!({}))
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["title"].as_str().unwrap().to_string())
+            .collect();
+        t.sort();
+        t
+    };
+
+    let app = e.start();
+    let pane = first_pane(&e);
+    send(pane, 50.0, reset);
+    assert!(titles().is_empty(), "below 80% nothing is posted");
+    send(pane, 85.0, reset);
+    assert_eq!(titles(), ["Claude Code usage at 80%"]);
+    send(pane, 86.0, reset);
+    assert_eq!(titles(), ["Claude Code usage at 80%"], "80% is announced once");
+    send(pane, 96.0, reset);
+    assert_eq!(titles(), ["Claude Code usage at 80%", "Claude Code usage at 95%"]);
+    e.stop(app);
+
+    // After a restart the same window does not alert again.
+    let app = e.start();
+    let pane = first_pane(&e);
+    send(pane, 97.0, reset);
+    assert!(titles().is_empty(), "already announced before the restart");
+    e.stop(app);
+
+    // Turned off: a new window past 80% stays quiet.
+    std::fs::write(
+        e.root.join("config/oxishell/config.toml"),
+        "[notifications]\ndesktop = false\nusage_alerts = false\n[terminal]\nshell = \"/bin/bash\"\n",
+    )
+    .unwrap();
+    let app = e.start();
+    let pane = first_pane(&e);
+    send(pane, 85.0, reset + 5 * 3600);
+    assert!(titles().is_empty(), "alerts are off");
+    e.stop(app);
+}
+
+#[test]
+fn workspace_colour_and_icon_are_set_from_the_cli_and_restored() {
+    if !have_display() {
+        return;
+    }
+    let e = Env::new("ws-look");
+    let app = e.start();
+    let ws = e.ok("workspace.list", json!({}))[0]["id"].as_u64().unwrap();
+    let id = ws.to_string();
+    let (ok, out) = e.cli(&["workspace", "set", &id, "--color", "red", "--icon", "server"], None);
+    assert!(ok, "{out}");
+    let list = e.ok("workspace.list", json!({}));
+    assert_eq!(list[0]["color"], "red");
+    assert_eq!(list[0]["icon"], "server");
+
+    let (ok, out) = e.cli(&["workspace", "set", &id, "--color", "chartreuse"], None);
+    assert!(!ok);
+    assert!(out.contains("red, yellow, green"), "{out}");
+    let (ok, out) = e.cli(&["workspace", "set", &id, "--icon", "unicorn"], None);
+    assert!(!ok);
+    assert!(out.contains("terminal"), "{out}");
+    assert_eq!(
+        e.ok("workspace.list", json!({}))[0]["color"],
+        "red",
+        "a refused change keeps the old colour"
+    );
+    e.stop(app);
+
+    let app = e.start();
+    let list = e.ok("workspace.list", json!({}));
+    assert_eq!(list[0]["color"], "red", "restored after restart");
+    assert_eq!(list[0]["icon"], "server");
+    let ws = list[0]["id"].as_u64().unwrap().to_string();
+    let (ok, out) = e.cli(&["workspace", "set", &ws, "--color", "none"], None);
+    assert!(ok, "{out}");
+    let list = e.ok("workspace.list", json!({}));
+    assert!(list[0]["color"].is_null());
+    assert_eq!(list[0]["icon"], "server", "only the given option changes");
+    e.stop(app);
+}

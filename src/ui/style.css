@@ -125,6 +125,26 @@
 .ws-name {
   font-weight: 700;
 }
+/* Workspace colour (sidebar stripe and icon). Themes override these with
+   colours from their own palette. */
+.ws-stripe {
+  min-width: 3px;
+  border-radius: 2px;
+}
+.ws-color-red { background: #e01b24; }
+.ws-icon.ws-color-red { color: #e01b24; background: none; }
+.ws-color-yellow { background: #e5a50a; }
+.ws-icon.ws-color-yellow { color: #e5a50a; background: none; }
+.ws-color-green { background: #2ec27e; }
+.ws-icon.ws-color-green { color: #2ec27e; background: none; }
+.ws-color-cyan { background: #1c9fa8; }
+.ws-icon.ws-color-cyan { color: #1c9fa8; background: none; }
+.ws-color-blue { background: #3584e4; }
+.ws-icon.ws-color-blue { color: #3584e4; background: none; }
+.ws-color-magenta { background: #c061cb; }
+.ws-icon.ws-color-magenta { color: #c061cb; background: none; }
+.ws-color-gray { background: alpha(@window_fg_color, 0.45); }
+.ws-icon.ws-color-gray { color: alpha(@window_fg_color, 0.6); background: none; }
 .ws-sub {
   font-size: 0.82em;
   opacity: 0.7;

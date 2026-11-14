@@ -311,6 +311,36 @@ pub struct Workspace {
     pub name: String,
     pub layout: Node,
     pub focused: PaneId,
+    /// Stripe colour in the sidebar, one of [`WORKSPACE_COLORS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Sidebar icon, a key of [`WORKSPACE_ICONS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+/// Workspace colours. Themes draw them from their own palette.
+pub const WORKSPACE_COLORS: [&str; 7] = ["red", "yellow", "green", "cyan", "blue", "magenta", "gray"];
+
+/// Workspace icons: key (stored, used by `oxi`) and symbolic icon name.
+pub const WORKSPACE_ICONS: [(&str, &str); 12] = [
+    ("terminal", "utilities-terminal-symbolic"),
+    ("server", "network-server-symbolic"),
+    ("database", "drive-harddisk-symbolic"),
+    ("web", "web-browser-symbolic"),
+    ("tools", "applications-engineering-symbolic"),
+    ("docs", "folder-documents-symbolic"),
+    ("science", "applications-science-symbolic"),
+    ("star", "starred-symbolic"),
+    ("lock", "security-high-symbolic"),
+    ("cloud", "weather-overcast-symbolic"),
+    ("warning", "dialog-warning-symbolic"),
+    ("home", "user-home-symbolic"),
+];
+
+/// Symbolic icon name for a workspace icon key.
+pub fn icon_name(key: &str) -> Option<&'static str> {
+    WORKSPACE_ICONS.iter().find(|(k, _)| *k == key).map(|(_, n)| *n)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -326,6 +356,8 @@ pub enum ModelError {
     NoSuchPane(PaneId),
     InvalidName,
     DifferentWorkspaces,
+    InvalidColor,
+    InvalidIcon,
 }
 
 impl std::fmt::Display for ModelError {
@@ -335,6 +367,11 @@ impl std::fmt::Display for ModelError {
             ModelError::NoSuchPane(id) => write!(f, "no such pane: {id}"),
             ModelError::InvalidName => write!(f, "name must be 1-64 characters without control characters"),
             ModelError::DifferentWorkspaces => write!(f, "panes are in different workspaces"),
+            ModelError::InvalidColor => write!(f, "colour must be one of: {}, or none", WORKSPACE_COLORS.join(", ")),
+            ModelError::InvalidIcon => {
+                let keys: Vec<&str> = WORKSPACE_ICONS.iter().map(|(k, _)| *k).collect();
+                write!(f, "icon must be one of: {}, or none", keys.join(", "))
+            }
         }
     }
 }
@@ -402,6 +439,8 @@ impl AppState {
             name,
             layout: Node::leaf(pane),
             focused: pane,
+            color: None,
+            icon: None,
         });
         self.active = Some(id);
         Ok((id, pane))
@@ -410,6 +449,28 @@ impl AppState {
     pub fn rename(&mut self, id: WorkspaceId, name: &str) -> Result<(), ModelError> {
         let name = validate_name(name)?;
         self.workspace_mut(id)?.name = name;
+        Ok(())
+    }
+
+    /// Set or clear (`None`) a workspace's sidebar colour.
+    pub fn set_color(&mut self, id: WorkspaceId, color: Option<&str>) -> Result<(), ModelError> {
+        let color = match color.map(str::to_ascii_lowercase) {
+            Some(c) if WORKSPACE_COLORS.contains(&c.as_str()) => Some(c),
+            Some(_) => return Err(ModelError::InvalidColor),
+            None => None,
+        };
+        self.workspace_mut(id)?.color = color;
+        Ok(())
+    }
+
+    /// Set or clear (`None`) a workspace's sidebar icon.
+    pub fn set_icon(&mut self, id: WorkspaceId, icon: Option<&str>) -> Result<(), ModelError> {
+        let icon = match icon.map(str::to_ascii_lowercase) {
+            Some(i) if icon_name(&i).is_some() => Some(i),
+            Some(_) => return Err(ModelError::InvalidIcon),
+            None => None,
+        };
+        self.workspace_mut(id)?.icon = icon;
         Ok(())
     }
 
@@ -575,6 +636,60 @@ fn check_ratios(n: &Node) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn workspace_colour_and_icon_can_be_set_and_cleared() {
+        let mut s = AppState::default();
+        let (w, _) = s.create_workspace(Some("prod")).unwrap();
+        assert_eq!(s.workspace(w).unwrap().color, None);
+        s.set_color(w, Some("Red")).unwrap();
+        assert_eq!(s.workspace(w).unwrap().color.as_deref(), Some("red"));
+        s.set_icon(w, Some("server")).unwrap();
+        assert_eq!(s.workspace(w).unwrap().icon.as_deref(), Some("server"));
+        s.set_color(w, None).unwrap();
+        s.set_icon(w, None).unwrap();
+        assert_eq!(s.workspace(w).unwrap().color, None);
+        assert_eq!(s.workspace(w).unwrap().icon, None);
+    }
+
+    #[test]
+    fn unknown_colours_and_icons_are_rejected() {
+        let mut s = AppState::default();
+        let (w, _) = s.create_workspace(None).unwrap();
+        s.set_color(w, Some("blue")).unwrap();
+        assert_eq!(s.set_color(w, Some("chartreuse")), Err(ModelError::InvalidColor));
+        assert_eq!(s.set_icon(w, Some("unicorn")), Err(ModelError::InvalidIcon));
+        assert_eq!(s.workspace(w).unwrap().color.as_deref(), Some("blue"), "unchanged");
+        assert_eq!(s.set_color(999, Some("red")), Err(ModelError::NoSuchWorkspace(999)));
+        assert!(ModelError::InvalidColor
+            .to_string()
+            .contains("red, yellow, green, cyan, blue, magenta, gray"));
+        assert!(ModelError::InvalidIcon.to_string().contains("terminal"));
+    }
+
+    #[test]
+    fn every_icon_has_a_symbolic_icon_name() {
+        assert_eq!(WORKSPACE_ICONS.len(), 12);
+        for (key, _) in WORKSPACE_ICONS {
+            assert!(icon_name(key).is_some_and(|n| n.ends_with("-symbolic")), "{key}");
+        }
+        assert_eq!(icon_name("nope"), None);
+    }
+
+    #[test]
+    fn sessions_without_colour_or_icon_still_load() {
+        let old = r#"{"id":1,"name":"api","layout":{"type":"leaf","pane":2},"focused":2}"#;
+        let w: Workspace = serde_json::from_str(old).unwrap();
+        assert_eq!((w.color, w.icon), (None, None));
+        let mut s = AppState::default();
+        let (id, _) = s.create_workspace(None).unwrap();
+        s.set_color(id, Some("green")).unwrap();
+        s.set_icon(id, Some("web")).unwrap();
+        let back: AppState = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.workspace(id).unwrap().color.as_deref(), Some("green"));
+        assert_eq!(back.workspace(id).unwrap().icon.as_deref(), Some("web"));
+    }
+
     use super::*;
 
     fn state_with_ws() -> (AppState, WorkspaceId, PaneId) {
