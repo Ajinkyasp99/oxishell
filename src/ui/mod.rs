@@ -3,11 +3,13 @@
 
 mod blocks;
 mod chips;
+mod corner_resize;
 mod desktop_notify;
 mod dialogs;
 mod edge_reveal;
 mod fonts;
 mod history_panel;
+mod icons;
 mod ipc_handler;
 mod island;
 mod links;
@@ -77,6 +79,8 @@ pub struct App {
     pub inner: RefCell<Inner>,
     pub meta_tx: std::sync::mpsc::Sender<meta_worker::Job>,
     suppress_select: Cell<bool>,
+    /// Pane whose drag handle is being dragged (see `pane::attach_swap_dnd`).
+    pub dragging_pane: Cell<Option<PaneId>>,
     save_pending: Cell<bool>,
     quitting: Cell<bool>,
 }
@@ -119,6 +123,11 @@ impl App {
     pub fn build(gapp: &adw::Application) -> AppRc {
         let font_err = fonts::register().err();
         let (config, config_err) = Config::load_from(&Config::path());
+
+        // A missing bundled icon falls back to a theme icon; not worth a toast.
+        if let Err(e) = icons::register(&gdk::Display::default().expect("display")) {
+            eprintln!("oxishell: bundled icons unavailable: {e}");
+        }
 
         let css = gtk4::CssProvider::new();
         css.load_from_string(include_str!("style.css"));
@@ -320,6 +329,7 @@ impl App {
             }),
             meta_tx,
             suppress_select: Cell::new(false),
+            dragging_pane: Cell::new(None),
             save_pending: Cell::new(false),
             quitting: Cell::new(false),
         });
@@ -475,10 +485,11 @@ impl App {
         Ok((wid, pid))
     }
 
-    fn add_page(&self, wid: WorkspaceId) {
+    fn add_page(self: &Rc<Self>, wid: WorkspaceId) {
         let page = gtk4::Box::new(Orientation::Vertical, 0);
         page.set_hexpand(true);
         page.set_vexpand(true);
+        corner_resize::attach(self, &page, wid);
         self.stack.add_named(&page, Some(&wid.to_string()));
         self.inner.borrow_mut().pages.insert(wid, page);
     }
@@ -611,6 +622,36 @@ impl App {
         self.focus_pane(new);
         self.schedule_save();
         Ok(new)
+    }
+
+    /// Swap the positions of two panes in the same workspace (drag handle).
+    /// Shells keep running; focus stays on `pane`, now in `target`'s place.
+    pub fn swap_panes(self: &Rc<Self>, pane: PaneId, target: PaneId) -> Result<(), String> {
+        if pane == target {
+            return Ok(());
+        }
+        let wid = self.inner.borrow_mut().state.swap_panes(pane, target).map_err(|e| e.to_string())?;
+        self.rebuild_workspace(wid);
+        // Both panes settle into their new places (CSS "pane-landed").
+        let frames: Vec<gtk4::Box> = {
+            let i = self.inner.borrow();
+            [pane, target]
+                .iter()
+                .filter_map(|p| i.panes.get(p).map(|x| x.frame.clone()))
+                .collect()
+        };
+        for f in &frames {
+            f.remove_css_class("pane-landed");
+            f.add_css_class("pane-landed");
+        }
+        glib::timeout_add_local_once(std::time::Duration::from_millis(450), move || {
+            for f in &frames {
+                f.remove_css_class("pane-landed");
+            }
+        });
+        self.focus_pane(pane);
+        self.schedule_save();
+        Ok(())
     }
 
     /// Refuse a split that would leave any resized pane too small to use
@@ -838,6 +879,8 @@ impl App {
                     Orient::Vertical => Orientation::Vertical,
                 };
                 let paned = gtk4::Paned::new(o);
+                // Lets a junction drag find this split's ratio (corner_resize).
+                paned.set_widget_name(&corner_resize::split_name(path));
                 paned.set_wide_handle(true);
                 paned.set_hexpand(true);
                 paned.set_vexpand(true);

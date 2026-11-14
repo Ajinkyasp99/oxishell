@@ -303,10 +303,34 @@ impl App {
         close_btn.set_valign(gtk4::Align::Start);
         close_btn.set_action_name(Some("app.pane-close"));
         close_btn.set_action_target_value(Some(&id.to_variant()));
+        // Drag handle left of the close button: drop it on another pane to swap
+        // the two panes' places.
+        let handle = gtk4::Image::from_icon_name(super::icons::pane_move());
+        handle.add_css_class("pane-drag");
+        handle.set_tooltip_text(Some("Drag onto another pane to swap places"));
+        handle.set_cursor_from_name(Some("grab"));
+        let actions = gtk4::Box::new(Orientation::Horizontal, 0);
+        actions.set_halign(gtk4::Align::End);
+        actions.set_valign(gtk4::Align::Start);
+        actions.append(&handle);
+        actions.append(&close_btn);
+        // Fades in over the pane under the pointer while another pane is
+        // dragged (CSS class "active"); invisible and click-through otherwise.
+        let drop_hint = gtk4::Box::new(Orientation::Vertical, 0);
+        drop_hint.add_css_class("pane-drop-hint");
+        drop_hint.set_can_target(false);
+        let hint_label = gtk4::Label::new(Some("Swap here"));
+        hint_label.add_css_class("pane-drop-hint-label");
+        hint_label.set_vexpand(true);
+        hint_label.set_valign(gtk4::Align::Center);
+        hint_label.set_halign(gtk4::Align::Center);
+        drop_hint.append(&hint_label);
         let top = gtk4::Overlay::new();
         top.set_child(Some(&body));
-        top.add_overlay(&close_btn);
+        top.add_overlay(&drop_hint);
+        top.add_overlay(&actions);
         frame.append(&top);
+        attach_swap_dnd(self, id, &handle, &frame, &drop_hint);
 
         // Pane context menu.
         let menu = gio::Menu::new();
@@ -533,6 +557,135 @@ impl App {
                 blocks,
             },
         );
+    }
+}
+
+/// Prefix of the string a pane drag carries. Drags go through the display
+/// protocol even inside the app, so the payload must be a string (a raw
+/// integer has no MIME type and would never match a drop target).
+const PANE_DRAG_PREFIX: &str = "oxishell-pane:";
+
+/// Drag-to-swap: `handle` starts a drag carrying pane `id`; `frame` accepts a
+/// drop of any other pane and swaps the two. Workspace rows reject the pane
+/// string (not a workspace id) and panes reject workspace drags.
+fn attach_swap_dnd(app: &AppRc, id: PaneId, handle: &gtk4::Image, frame: &gtk4::Box, hint: &gtk4::Box) {
+    let src = gtk4::DragSource::new();
+    src.set_actions(gdk::DragAction::MOVE);
+    {
+        let w = app.weak();
+        src.connect_prepare(move |_, _, _| {
+            let a = w.upgrade()?;
+            a.dragging_pane.set(Some(id));
+            Some(gdk::ContentProvider::for_value(&format!("{PANE_DRAG_PREFIX}{id}").to_value()))
+        });
+    }
+    {
+        let w = app.weak();
+        let f = frame.clone();
+        src.connect_drag_begin(move |_, drag| {
+            f.add_css_class("pane-dragging");
+            let name = w
+                .upgrade()
+                .and_then(|a| {
+                    let i = a.inner.borrow();
+                    let cwd = i.panes.get(&id)?.cwd.clone()?;
+                    Some(
+                        cwd.file_name()
+                            .map_or_else(|| cwd.display().to_string(), |n| n.to_string_lossy().into_owned()),
+                    )
+                })
+                .unwrap_or_else(|| "Terminal".into());
+            let label = gtk4::Label::new(Some(&name));
+            label.add_css_class("pane-drag-icon");
+            gtk4::DragIcon::for_drag(drag).set_child(Some(&label));
+        });
+    }
+    {
+        let w = app.weak();
+        let f = frame.clone();
+        let h = handle.clone();
+        src.connect_drag_end(move |_, _, _| {
+            f.remove_css_class("pane-dragging");
+            h.remove_css_class("pressed");
+            if let Some(a) = w.upgrade() {
+                a.dragging_pane.set(None);
+            }
+        });
+    }
+    {
+        let h = handle.clone();
+        src.connect_begin(move |_, _| h.add_css_class("pressed"));
+    }
+    {
+        // GTK ends the gesture as soon as the drag starts; stay pressed until
+        // the drag itself ends (drag-end below).
+        let w = app.weak();
+        let h = handle.clone();
+        src.connect_end(move |_, _| {
+            if w.upgrade().and_then(|a| a.dragging_pane.get()) != Some(id) {
+                h.remove_css_class("pressed");
+            }
+        });
+    }
+    handle.add_controller(src);
+
+    let drop = gtk4::DropTarget::new(glib::Type::STRING, gdk::DragAction::MOVE);
+    // Capture: the frame decides before the terminal inside it sees the drop.
+    drop.set_propagation_phase(gtk4::PropagationPhase::Capture);
+    // Accept only another pane of this window; highlight while hovering.
+    let accepts = {
+        let w = app.weak();
+        let hint = hint.clone();
+        move || {
+            let other = w.upgrade().and_then(|a| a.dragging_pane.get()).is_some_and(|d| d != id);
+            set_class(&hint, "active", other);
+            if other {
+                gdk::DragAction::MOVE
+            } else {
+                gdk::DragAction::empty()
+            }
+        }
+    };
+    {
+        let accepts = accepts.clone();
+        drop.connect_enter(move |_, _, _| accepts());
+    }
+    drop.connect_motion(move |_, _, _| accepts());
+    {
+        let hint = hint.clone();
+        drop.connect_leave(move |_| hint.remove_css_class("active"));
+    }
+    {
+        let w = app.weak();
+        let hint = hint.clone();
+        drop.connect_drop(move |_, value, _, _| {
+            hint.remove_css_class("active");
+            let dragged = value
+                .get::<String>()
+                .ok()
+                .and_then(|s| s.strip_prefix(PANE_DRAG_PREFIX)?.parse::<PaneId>().ok());
+            let Some(dragged) = dragged else { return false };
+            if dragged == id {
+                return false;
+            }
+            // Defer: the swap rebuilds the widget tree this drop runs inside.
+            let w = w.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(a) = w.upgrade() {
+                    a.report(a.swap_panes(dragged, id));
+                }
+            });
+            true
+        });
+    }
+    frame.add_controller(drop);
+}
+
+fn set_class(w: &impl IsA<gtk4::Widget>, class: &str, on: bool) {
+    if on {
+        w.add_css_class(class);
+    } else {
+        w.remove_css_class(class);
     }
 }
 

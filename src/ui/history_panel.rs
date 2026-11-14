@@ -12,7 +12,7 @@ use crate::history::{now_secs, relative_time, Event};
 use crate::model::PaneId;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use vte4::prelude::*;
 
@@ -28,6 +28,8 @@ struct Panel {
     empty: gtk4::Label,
     /// Commands in display order (oldest first, newest last).
     items: RefCell<Vec<String>>,
+    /// Bumped by each `reveal`, so an older pending reveal stops.
+    reveal_gen: Rc<Cell<u32>>,
 }
 
 pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal) {
@@ -203,6 +205,7 @@ fn build(term: &vte4::Terminal) -> Panel {
         scroll,
         empty,
         items: RefCell::new(Vec::new()),
+        reveal_gen: Rc::new(Cell::new(0)),
     }
 }
 
@@ -290,19 +293,37 @@ fn move_sel(panel: &Panel, delta: i32) -> bool {
     true
 }
 
-/// Scroll so `row` is visible (after layout, so sizes are known).
+/// Scroll so `row` is fully visible. The row is measured against the visible
+/// area (the viewport), not the list: list coordinates start inside the
+/// list's padding while the scroll range includes it, which left the newest
+/// row 4px cut off. Runs on the next few frames so a just-filled panel is
+/// measured after layout.
 fn reveal(panel: &Panel, row: &gtk4::ListBoxRow) {
-    let scroll = panel.scroll.clone();
-    let list = panel.list.clone();
+    const FRAMES: u32 = 3;
+    let generation = panel.reveal_gen.get().wrapping_add(1);
+    panel.reveal_gen.set(generation);
+    let current = panel.reveal_gen.clone();
     let row = row.clone();
-    glib::idle_add_local_once(move || {
-        let Some(b) = row.compute_bounds(&list) else { return };
-        let adj = scroll.vadjustment();
-        let (top, bottom) = (b.y() as f64, (b.y() + b.height()) as f64);
-        if top < adj.value() {
-            adj.set_value(top);
-        } else if bottom > adj.value() + adj.page_size() {
-            adj.set_value(bottom - adj.page_size());
+    let frames = Cell::new(0u32);
+    panel.scroll.add_tick_callback(move |scroll, _| {
+        if current.get() != generation {
+            return glib::ControlFlow::Break; // a newer reveal took over
+        }
+        // The viewport is the scrolled window's child: what is on screen.
+        if let Some(b) = scroll.child().and_then(|view| row.compute_bounds(&view)) {
+            let adj = scroll.vadjustment();
+            let (top, bottom) = (b.y() as f64, (b.y() + b.height()) as f64);
+            if top < 0.0 {
+                adj.set_value(adj.value() + top);
+            } else if bottom > adj.page_size() {
+                adj.set_value(adj.value() + bottom - adj.page_size());
+            }
+        }
+        frames.set(frames.get() + 1);
+        if frames.get() >= FRAMES {
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
         }
     });
 }

@@ -58,6 +58,11 @@
     <category>TerminalEmulator</category>
   </categories>
   <releases>
+    <release version="0.1.3" date="2026-11-14">
+      <description>
+        <p>Swap panes by dragging the move handle next to each pane's close button, resize from where dividers meet, and a history panel fix.</p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-11-11">
       <description>
         <p>Renamed to oxishell. Codex lifecycle hooks, Codex and Claude Code usage limits, bundled Hack font, and stability fixes.</p>
