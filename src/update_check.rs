@@ -25,19 +25,21 @@ pub fn url() -> String {
 /// Body of a GET request to `url`: short timeouts, a generic user agent, at
 /// most 256 KiB read. Blocking; call it off the main thread.
 pub fn fetch(url: &str) -> Result<String, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout(Duration::from_secs(20))
-        .redirects(3)
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_global(Some(Duration::from_secs(20)))
+        .max_redirects(3)
         .user_agent(concat!("oxishell/", env!("CARGO_PKG_VERSION")))
-        .build();
+        .build()
+        .into();
     let response = agent
         .get(url)
-        .set("Accept", "application/vnd.github+json")
+        .header("Accept", "application/vnd.github+json")
         .call()
         .map_err(|e| e.to_string())?;
     let mut body = String::new();
     response
+        .into_body()
         .into_reader()
         .take(256 * 1024)
         .read_to_string(&mut body)
