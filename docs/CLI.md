@@ -13,6 +13,7 @@
 | `oxi workspace select ID` / `next` / `prev` | Switch workspace |
 | `oxi workspace rename ID NAME` | Rename |
 | `oxi workspace move ID INDEX` | Reorder |
+| `oxi workspace set ID [--color C] [--icon I]` | Sidebar colour (red, yellow, green, cyan, blue, magenta, gray) and icon (terminal, server, database, web, tools, docs, science, star, lock, cloud, warning, home); `none` clears |
 | `oxi workspace close ID [--force]` | Close; refuses if programs are running unless `--force` |
 | `oxi pane list [--workspace ID]` | List panes with cwd, git, ports, agent state |
 | `oxi pane split [--pane ID] [-d right\|down] [--cwd DIR]` | Split a pane |

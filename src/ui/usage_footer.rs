@@ -3,6 +3,7 @@
 use super::AppRc;
 use crate::agents::AgentState;
 use crate::usage::{ClaudeReports, Usage, Window};
+use crate::usage_alerts::Alerts;
 use gtk4::prelude::*;
 use gtk4::{glib, Orientation};
 use std::cell::RefCell;
@@ -16,6 +17,12 @@ pub struct Footer {
     tx: std::sync::mpsc::SyncSender<(bool, bool)>,
     codex_row: UsageRow,
     claude_row: UsageRow,
+    /// Limit thresholds already announced (saved across restarts).
+    alerts: RefCell<Alerts>,
+}
+
+fn alerts_path() -> std::path::PathBuf {
+    crate::paths::state_dir().join("usage-alerts.json")
 }
 
 /// What the background thread reads from disk.
@@ -215,6 +222,7 @@ impl Footer {
                 tx,
                 codex_row,
                 claude_row,
+                alerts: RefCell::new(Alerts::load(&alerts_path())),
             },
             urx,
         )
@@ -282,7 +290,37 @@ pub fn refresh(app: &AppRc) {
 
 fn render(app: &AppRc) {
     let (codex, claude) = active(app);
-    render_cards(&app.usage_footer, codex, claude, crate::usage::now());
+    let now = crate::usage::now();
+    render_cards(&app.usage_footer, codex, claude, now);
+    announce(app, now);
+}
+
+/// Notify once when a limit passes 80% or 95%, and when such a window resets.
+fn announce(app: &AppRc, now: i64) {
+    if !app.inner.borrow().config.notifications.usage_alerts {
+        return;
+    }
+    let due = {
+        let footer = &app.usage_footer;
+        let mut alerts = footer.alerts.borrow_mut();
+        let mut due = Vec::new();
+        if let Some(usage) = footer.codex.borrow().as_ref() {
+            due.extend(alerts.check("codex", usage, now).into_iter().map(|a| ("codex", a)));
+        }
+        let claude = footer.claude.borrow().latest.clone();
+        due.extend(alerts.check("claude", &claude, now).into_iter().map(|a| ("claude", a)));
+        if !due.is_empty() {
+            if let Err(e) = alerts.save(&alerts_path()) {
+                eprintln!("oxishell: saving usage alerts: {e}");
+            }
+        }
+        due
+    };
+    // Borrows are released: notifying refreshes the footer again.
+    for (agent, alert) in due {
+        let (title, body) = crate::usage_alerts::message(&crate::agents::display_name(agent), &alert, now);
+        app.notify(None, &title, &body, "usage");
+    }
 }
 
 fn render_cards(footer: &Footer, codex: bool, claude: bool, now: i64) {

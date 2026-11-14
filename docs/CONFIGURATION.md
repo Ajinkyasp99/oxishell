@@ -14,6 +14,8 @@ sidebar_visible = true   # also hidden automatically below 640 px window width
 chips = true             # context chips (Python env, folder, git) above each terminal
 watermark = true         # faint workspace name centred behind the terminals
 autohide_buttons = true  # header buttons slide in on hover; window controls always show
+opacity = 100            # 50–100: background opacity in percent; text stays solid. Needs a compositor;
+                         # themes with a background image stay opaque
 
 [terminal]
 shell = ""               # empty: $SHELL, then your passwd shell, then /bin/sh
@@ -34,11 +36,21 @@ bell_attention = true    # terminal bell marks the pane for attention (max once 
 sound = true             # play a sound-theme sound with desktop notifications
 command_finished = true  # notify when a long shell command ends in a pane you are not looking at
 command_min_seconds = 10 # ... that ran at least this long
+usage_alerts = true      # notify once when Codex/Claude Code passes 80% and 95% of a 5-hour or weekly limit
+
+[editor]
+command = ""             # opens file:line links (src/main.rs:42) from terminal output, e.g. "code" or "nvim".
+                         # Empty = $VISUAL, then $EDITOR, then the first of code, zed, codium, subl, kate,
+                         # gnome-text-editor, gedit that is installed. Terminal editors open in a new pane.
 
 [session]
 restore = true           # restore workspaces, layouts and directories on start
 replay_lines = 0         # replay N lines of each pane's old output after restart (0 = off: clean prompt at the top,
                          # nothing written to disk). Replayed output moves down when the window is resized.
+
+[updates]
+check = false            # ask GitHub once a day whether a newer version is out and show a notice (off by default;
+                         # the only network request oxishell can make; nothing is downloaded)
 
 [ipc]
 enabled = true

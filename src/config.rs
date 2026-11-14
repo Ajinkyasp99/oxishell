@@ -16,6 +16,8 @@ pub struct Config {
     pub ipc: Ipc,
     pub session: Session,
     pub notifications: Notifications,
+    pub editor: Editor,
+    pub updates: Updates,
     /// Action name -> GTK accelerator string (e.g. "<Ctrl><Shift>e").
     pub shortcuts: BTreeMap<String, String>,
     /// Custom project commands shown in the command palette.
@@ -41,6 +43,8 @@ pub struct Appearance {
     /// Hide the header buttons (not the window controls) until the pointer
     /// reaches the header.
     pub autohide_buttons: bool,
+    /// Window background opacity in percent (50–100). Text stays opaque.
+    pub opacity: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -111,6 +115,25 @@ pub struct Notifications {
     pub command_finished: bool,
     /// How long (seconds) a command must run before its end is notified.
     pub command_min_seconds: u64,
+    /// Notify once when an agent's 5-hour or weekly limit passes 80% and 95%.
+    pub usage_alerts: bool,
+}
+
+/// Optional check for a newer release (the only network request oxishell can make).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Updates {
+    /// Ask GitHub at most once a day whether a newer version is out. Off by default.
+    pub check: bool,
+}
+
+/// Editor used for `path:line` links in terminal output.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Editor {
+    /// Program and arguments, e.g. "code" or "nvim". Empty = `$VISUAL`,
+    /// `$EDITOR`, then the first installed graphical editor.
+    pub command: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -131,6 +154,7 @@ impl Default for Appearance {
             chips: true,
             watermark: true,
             autohide_buttons: true,
+            opacity: 100,
         }
     }
 }
@@ -177,6 +201,7 @@ impl Default for Notifications {
             sound: true,
             command_finished: true,
             command_min_seconds: 10,
+            usage_alerts: true,
         }
     }
 }
@@ -242,6 +267,9 @@ impl Config {
         }
         if !(120..=600).contains(&self.appearance.sidebar_width) {
             return Err("appearance.sidebar_width must be between 120 and 600".into());
+        }
+        if !(50..=100).contains(&self.appearance.opacity) {
+            return Err("appearance.opacity must be between 50 and 100".into());
         }
         if !(0..=1_000_000).contains(&self.terminal.scrollback_lines) {
             return Err("terminal.scrollback_lines must be between 0 and 1000000".into());
@@ -330,6 +358,48 @@ mod tests {
         let text = toml::to_string_pretty(&c).unwrap();
         assert_eq!(Config::parse(&text).unwrap(), c);
         assert!(c.shortcut_conflicts().is_empty());
+    }
+
+    #[test]
+    fn editor_command_defaults_to_auto_detect_and_can_be_set() {
+        assert_eq!(Config::default().editor.command, "");
+        let c = Config::parse("[editor]\ncommand = \"code --new-window\"\n").unwrap();
+        assert_eq!(c.editor.command, "code --new-window");
+        assert!(Config::parse("[editor]\ncomand = \"zed\"").is_err());
+    }
+
+    #[test]
+    fn usage_alerts_are_on_by_default_and_can_be_turned_off() {
+        assert!(Config::default().notifications.usage_alerts);
+        assert!(
+            Config::parse("[notifications]\ndesktop = true\n")
+                .unwrap()
+                .notifications
+                .usage_alerts
+        );
+        assert!(
+            !Config::parse("[notifications]\nusage_alerts = false\n")
+                .unwrap()
+                .notifications
+                .usage_alerts
+        );
+    }
+
+    #[test]
+    fn background_opacity_defaults_to_opaque_and_is_range_checked() {
+        assert_eq!(Config::default().appearance.opacity, 100);
+        assert_eq!(Config::parse("[appearance]\nopacity = 85").unwrap().appearance.opacity, 85);
+        assert!(Config::parse("[appearance]\nopacity = 50").is_ok());
+        assert!(Config::parse("[appearance]\nopacity = 49").is_err());
+        assert!(Config::parse("[appearance]\nopacity = 101").is_err());
+    }
+
+    #[test]
+    fn update_checks_are_off_unless_turned_on() {
+        assert!(!Config::default().updates.check);
+        assert!(!Config::parse("[appearance]\nmode = \"dark\"\n").unwrap().updates.check);
+        assert!(Config::parse("[updates]\ncheck = true\n").unwrap().updates.check);
+        assert!(Config::parse("[updates]\ncheck_daily = true\n").is_err());
     }
 
     #[test]

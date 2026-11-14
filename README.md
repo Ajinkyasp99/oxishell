@@ -42,15 +42,15 @@ input.
 
 | | |
 |---|---|
-| 🗂 **Workspaces** | Vertical sidebar with git branch, uncommitted-change count, working directory, listening ports, agent status and unread badges. Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). |
+| 🗂 **Workspaces** | Vertical sidebar with git branch, uncommitted-change count, working directory, listening ports, agent status and unread badges. Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). Right-click → Colour / Icon to mark a workspace (say, red for production). |
 | ⊞ **Split panes** | Split right or down, nest them, drag dividers (or the point where two meet, to resize both ways at once), move focus with <kbd>Alt</kbd>+arrows. Drag a pane's ✥ move handle (next to its ✕) onto another pane to swap their places. Each pane is an independent shell. |
 | 🔔 **Agent notifications** | Hooks for **Claude Code, Codex, Gemini CLI, Qoder, OpenCode**. A blue ring on the pane, a badge on the workspace, a system notification with sound (stays on screen while an agent waits for input; click it to jump to the pane), and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> jumps to it. Long shell commands notify when they finish in a pane you are not watching. |
 | 📊 **Agent limits** | Open Codex and Claude Code sessions show **5-hour and weekly** usage percentages, progress bars and local reset dates/times in AM/PM format at the bottom of the sidebar. Uses local CLI data. |
-| 🎨 **Warp themes** | 41 built-in themes from [Warp](https://github.com/warpdotdev/themes), including gradients. They colour the whole window, not just the text. Drop any Warp `.yaml` theme in to add your own. |
+| 🎨 **Warp themes** | 41 built-in themes from [Warp](https://github.com/warpdotdev/themes), including gradients. They colour the whole window, not just the text. Drop any Warp `.yaml` theme in to add your own. Background opacity lets windows behind show through while text stays solid. |
 | 💡 **Command suggestions** | As you type, the newest matching command from your bash/zsh/fish history appears dimmed after the cursor. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> searches your whole history. |
 | 🏷 **Context chips** | Warp-style chips above each terminal: active Python venv/conda env, folder, git branch and changes. The prompt becomes a clean `❯` (red after a failed command). |
 | 🧱 **Command blocks** | Warp-style: every command gets a header with its folder, git branch, ✓/✗ exit status and run time. Failed commands get a red edge. Commands you type are highlighted so they stand out from output. |
-| 🔗 **Clickable links** | URLs in any output (agents, builds, logs) are clickable. A click opens a small popup with **Open Link** and **Copy Link**; <kbd>Ctrl</kbd>+click opens the link straight away. |
+| 🔗 **Clickable links** | URLs in any output (agents, builds, logs) are clickable. A click opens a small popup with **Open Link** and **Copy Link**; <kbd>Ctrl</kbd>+click opens the link straight away. File positions such as `src/main.rs:42:7` open in your editor at that line. |
 | ▮ **Cursor** | Block, vertical line or horizontal line, blinking or steady. |
 | ⌘ **Command palette** | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>: every action, workspace, theme and your own project commands, with fuzzy search. |
 | 🤖 **Scriptable** | The `oxi` CLI controls the running app over a private local socket: create workspaces, split, read output, send notifications. |
@@ -224,6 +224,12 @@ Clicking one opens a small popup showing the full address with **Open Link** (de
 **Copy Link**. <kbd>Ctrl</kbd>+click skips the popup, and right-clicking a link puts the same two actions at
 the top of the context menu. Dragging or double-clicking to select text never opens anything.
 
+**File positions** work the same way. When a compiler, test runner or agent prints `src/main.rs:42` or
+`src/main.rs:42:7` (or Python's `File "app.py", line 12`) and that file exists relative to the pane's folder,
+clicking it offers **Open in Editor** and **Copy Path**, and <kbd>Ctrl</kbd>+click opens your editor at that
+line. The editor is your `$VISUAL`/`$EDITOR` or an installed one (VS Code, Zed, …); set it in Settings →
+Terminal → Editor. Terminal editors such as vim or nano open in a new pane.
+
 ## Themes
 
 Every theme colours the whole window (background, sidebar, header, badges, focus rings and the terminal),
@@ -314,7 +320,11 @@ When either agent is open in any workspace, a compact row appears below the work
 `Codex  5h 21%  Wk 4%`. Both values show **percentage used** over horizontal usage fills. Small AM/PM reset
 times appear directly below each value, with the weekly date (and the 5-hour date when it is on another day).
 Hover for full reset details, or click the row to open usage bars and setup details. Unavailable limits show `—`.
-Rows disappear when the sessions close. Limits are account-wide snapshots, refreshed from data
+Rows disappear when the sessions close.
+You also get one notification when a limit passes **80%** and another at **95%** (for example *Claude Code
+usage at 80% · 81% of the 5-hour limit used · Resets in 1h 30m*), plus a short note when that window resets.
+Each threshold is announced once per window, also across restarts. Turn it off in Settings → Notifications →
+Usage limit alerts. Limits are account-wide snapshots, refreshed from data
 reported after agent responses; usage from other devices can lag until the CLI reports again.
 
 <img src="docs/assets/usage.png" alt="Sidebar usage section with Codex and Claude rows; the Codex row is open, showing 5-hour and weekly limit bars with reset dates" width="900">
@@ -385,6 +395,9 @@ All options: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 - Everything stays on your machine. No accounts, telemetry, cloud or network listeners.
 - The control socket is private to your user (mode 0600, peer-uid checked).
 - Typing into panes from the CLI (`oxi pane send`) is **off by default**.
+- The update check (Settings → Notifications → Check for updates) is **off by default**. When on, it asks
+  GitHub's public releases API at most once a day and only shows a notice; nothing is downloaded or installed.
+  oxishell makes no other network requests.
 - Restoring a session never re-runs commands; saved output is shown as plain text.
 
 Report vulnerabilities privately: [SECURITY.md](SECURITY.md).

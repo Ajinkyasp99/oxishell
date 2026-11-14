@@ -1,5 +1,25 @@
 # Release notes
 
+## 0.1.4 — 2026-11-14
+
+- **File links:** `src/main.rs:42:7` (or Python's `File "app.py", line 12`) in any output opens your editor at
+  that line when the file exists. Click for **Open in Editor / Copy Path**; Ctrl+click opens it directly.
+  Uses Settings → Terminal → Editor, else `$VISUAL`, `$EDITOR` or an installed editor; vim, nano and other
+  terminal editors open in a new pane.
+- **Usage limit alerts:** one notification when Codex or Claude Code passes 80% and 95% of a 5-hour or weekly
+  limit, and a note when that window resets. Once per window, also across restarts. Settings →
+  Notifications → Usage limit alerts.
+- **Workspace colour and icon:** right-click a workspace → Colour / Icon, or
+  `oxi workspace set ID --color red --icon server`. Colours follow the current theme.
+- **Background opacity:** Settings → Appearance → Background opacity (50–100%). Backgrounds become
+  see-through, text stays solid. Needs a compositor; themes with a background image stay opaque.
+- **Update notice (off by default):** Settings → Notifications → Check for updates asks GitHub at most
+  once a day and shows a notice with the release notes link. Nothing is downloaded or installed, and with
+  the setting off oxishell makes no network requests.
+- Fixed: command block headers (`~/folder ⎇ branch ✓ 0.01s`) could be drawn on top of a running program's
+  output, such as Claude Code's input box, after it cleared the scrollback or passed the scrollback limit.
+- Fixed: notifications that belong to no workspace no longer say "closed" in the notifications panel.
+
 ## 0.1.3 — 2026-11-14
 
 - Swap panes by dragging: every pane has a ✥ move handle left of its ✕ close button. Drop it on another

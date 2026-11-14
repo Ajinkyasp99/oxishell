@@ -106,6 +106,8 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
                         "cwd": fp.and_then(|p| p.cwd.as_ref()).map(|c| c.display().to_string()),
                         "branch": fp.and_then(|p| p.git.as_ref()).map(|g| g.branch.clone()),
                         "unread": i.notes.unread_for_workspace(w.id),
+                        "color": w.color,
+                        "icon": w.icon,
                     })
                 })
                 .collect();
@@ -146,6 +148,19 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
             let w = resolve_ws(a, p)?;
             let to = param_u64(p, "index")?.ok_or("missing index")? as usize;
             a.move_workspace(w, to)?;
+            Ok(json!({"workspace": w}))
+        }
+        "workspace.set" => {
+            let w = resolve_ws(a, p)?;
+            // Absent = keep; "none" or "" = clear.
+            let value = |key| -> Result<Option<Option<String>>, String> {
+                Ok(param_str(p, key)?.map(|v| match v.trim() {
+                    "" | "none" => None,
+                    v => Some(v.to_string()),
+                }))
+            };
+            let (color, icon) = (value("color")?, value("icon")?);
+            a.set_workspace_look(w, color.as_ref().map(Option::as_deref), icon.as_ref().map(Option::as_deref))?;
             Ok(json!({"workspace": w}))
         }
         "workspace.close" => {

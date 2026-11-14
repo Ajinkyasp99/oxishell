@@ -212,6 +212,22 @@ fn appearance_page(app: &AppRc, d: &adw::PreferencesDialog, cfg: &Config, ap: &A
     p.add(&more);
 
     let win = group(&p, "Window", "");
+    // Transparency needs a compositor (always present on Wayland).
+    let composited = gtk4::gdk::Display::default().is_some_and(|d| d.is_composited() && d.is_rgba());
+    let opacity = spin(
+        &win,
+        ap,
+        "Background opacity (%)",
+        if composited {
+            "Lower it to see windows behind the terminal; text stays solid. Not for themes with a background image"
+        } else {
+            "Needs a compositing window manager, which this session does not have"
+        },
+        (50.0, 100.0, 5.0),
+        f64::from(cfg.appearance.opacity),
+        |c, v| c.appearance.opacity = v.round().clamp(50.0, 100.0) as u8,
+    );
+    opacity.set_sensitive(composited);
     switch(
         &win,
         ap,
@@ -336,6 +352,33 @@ fn terminal_page(app: &AppRc, cfg: &Config, ap: &Ap) -> adw::PreferencesPage {
         |c, v| c.terminal.confirm_close_running = v,
     );
 
+    let editor = group(
+        &p,
+        "Editor",
+        "Opens file:line links such as src/main.rs:42. Leave empty to use $VISUAL, $EDITOR or an installed editor (VS Code, Zed, …).",
+    );
+    let editor_cmd = adw::EntryRow::builder()
+        .title("Editor command")
+        .text(&cfg.editor.command)
+        .show_apply_button(true)
+        .build();
+    editor.add(&editor_cmd);
+    {
+        let ap = ap.clone();
+        let w = app.weak();
+        editor_cmd.connect_apply(move |r| {
+            let text = r.text().trim().to_string();
+            let prog = text.split_whitespace().next().unwrap_or("");
+            if !prog.is_empty() && glib::find_program_in_path(prog).is_none() {
+                if let Some(a) = w.upgrade() {
+                    a.toast(&format!("Editor {prog:?} was not found"));
+                }
+                return;
+            }
+            ap(&move |c| c.editor.command = text.clone());
+        });
+    }
+
     let prompt = group(&p, "Prompt", "Changes apply to new terminals.");
     let compact = switch(
         &prompt,
@@ -432,6 +475,39 @@ fn notifications_page(app: &AppRc, cfg: &Config, ap: &Ap) -> adw::PreferencesPag
         n.bell_attention,
         |c, v| c.notifications.bell_attention = v,
     );
+    switch(
+        &when,
+        ap,
+        "Usage limit alerts",
+        "Once when Codex or Claude Code passes 80% and 95% of a 5-hour or weekly limit",
+        n.usage_alerts,
+        |c, v| c.notifications.usage_alerts = v,
+    );
+
+    let updates = group(
+        &p,
+        "Updates",
+        "The only network request oxishell can make. Nothing is downloaded or installed.",
+    );
+    let check = switch(
+        &updates,
+        ap,
+        "Check for updates",
+        "Ask GitHub once a day whether a newer version is out, and say so",
+        cfg.updates.check,
+        |c, v| c.updates.check = v,
+    );
+    {
+        // Check right away when turned on (still at most once a day).
+        let w = app.weak();
+        check.connect_active_notify(move |r| {
+            if r.is_active() {
+                if let Some(a) = w.upgrade() {
+                    a.check_for_updates();
+                }
+            }
+        });
+    }
 
     let hooks = group(
         &p,

@@ -367,6 +367,53 @@ impl Theme {
         matches!(self.background, Paint::Gradient(..)) || self.background_image.is_some()
     }
 
+    /// Background opacity that applies: themes with a background image stay opaque.
+    fn effective_opacity(&self, opacity: u8) -> u8 {
+        if self.background_image.is_some() {
+            100
+        } else {
+            opacity.clamp(50, 100)
+        }
+    }
+
+    /// The terminal paints no background of its own and shows the window's
+    /// (gradient and image themes, or a see-through window).
+    pub fn transparent_terminal(&self, opacity: u8) -> bool {
+        self.layered_background() || self.effective_opacity(opacity) < 100
+    }
+
+    /// CSS for a see-through window background at `opacity` percent. Only
+    /// backgrounds get alpha, so text stays fully opaque. Empty at 100%.
+    pub fn opacity_css(&self, opacity: u8) -> String {
+        let pct = self.effective_opacity(opacity);
+        if pct >= 100 {
+            return String::new();
+        }
+        let a = f64::from(pct) / 100.0;
+        let bg = match self.background {
+            Paint::Solid(c) => c.rgba(a),
+            Paint::Gradient(top, bottom) => format!("linear-gradient(to bottom, {}, {})", top.rgba(a), bottom.rgba(a)),
+        };
+        let (header, sidebar) = if self.native {
+            (
+                format!("alpha(@headerbar_bg_color, {a:.2})"),
+                format!("alpha(@sidebar_bg_color, {a:.2})"),
+            )
+        } else {
+            // Gradient themes already show their background through the panels.
+            let s = self.surface().rgba(if self.layered_background() { 0.0 } else { a });
+            (s.clone(), s)
+        };
+        format!(
+            ".oxishell-window {{ background: transparent; }}
+.oxishell-root vte-terminal, .oxishell-root scrolledwindow, .oxishell-root overlay, .oxishell-root stack, .oxishell-root paned {{ background: transparent; }}
+.oxishell-root {{ background: {bg}; }}
+.oxishell-root headerbar, .oxishell-root .statusbar {{ background: {header}; }}
+.oxishell-root .sidebar-pane {{ background: {sidebar}; }}
+"
+        )
+    }
+
     /// Panels (header, sidebar, status bar) shade.
     pub fn surface(&self) -> Rgb {
         let bg = self.background.average();
@@ -467,11 +514,115 @@ impl Theme {
                 chip_git = chip[2].hex(),
                 ghost = fg.rgba(0.4),
             )
+            + &workspace_color_css(&chip, fg)
     }
+}
+
+/// Sidebar stripe and icon colours for workspaces, from the theme's palette
+/// (the same slots the context chips use) so they always fit the theme.
+fn workspace_color_css(chip: &[Rgb; 8], fg: Rgb) -> String {
+    let mut css = String::new();
+    for name in crate::model::WORKSPACE_COLORS {
+        let color = match name {
+            "red" => chip[1].hex(),
+            "green" => chip[2].hex(),
+            "yellow" => chip[3].hex(),
+            "blue" => chip[4].hex(),
+            "magenta" => chip[5].hex(),
+            "cyan" => chip[6].hex(),
+            _ => fg.rgba(0.45),
+        };
+        css.push_str(&format!(
+            ".ws-color-{name} {{ background: {color}; }}\n.ws-icon.ws-color-{name} {{ color: {color}; background: none; }}\n"
+        ));
+    }
+    css
 }
 
 #[cfg(test)]
 mod tests {
+
+    fn solid_theme() -> Theme {
+        builtins()
+            .iter()
+            .find(|t| matches!(t.background, Paint::Solid(_)) && t.background_image.is_none())
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn full_opacity_changes_nothing() {
+        for t in builtins().iter().cloned().chain([default_theme(true), default_theme(false)]) {
+            assert_eq!(t.opacity_css(100), "", "{}", t.id);
+            assert_eq!(t.transparent_terminal(100), t.layered_background(), "{}", t.id);
+        }
+    }
+
+    #[test]
+    fn lower_opacity_makes_backgrounds_translucent_not_text() {
+        let t = solid_theme();
+        assert!(t.transparent_terminal(85));
+        let css = t.opacity_css(85);
+        let bg = t.background.average().rgba(0.85);
+        assert!(css.contains(&format!(".oxishell-root {{ background: {bg}; }}")), "{css}");
+        assert!(css.contains(&t.surface().rgba(0.85)), "{css}");
+        assert!(css.contains("vte-terminal") && css.contains("background: transparent"), "{css}");
+        assert!(!css.contains("opacity:"), "text must stay opaque: {css}");
+    }
+
+    #[test]
+    fn gradients_keep_their_shape_and_native_uses_libadwaita_colours() {
+        let g = builtins()
+            .iter()
+            .find(|t| matches!(t.background, Paint::Gradient(..)) && t.background_image.is_none())
+            .unwrap();
+        let css = g.opacity_css(80);
+        assert!(css.contains("linear-gradient(to bottom, rgba("), "{css}");
+        assert!(css.contains(",0.800)"), "{css}");
+
+        let native = default_theme(true);
+        let css = native.opacity_css(85);
+        let bg = native.background.average().rgba(0.85);
+        assert!(
+            css.contains(&format!(".oxishell-root {{ background: {bg}; }}")),
+            "terminal colour: {css}"
+        );
+        for c in ["headerbar_bg_color", "sidebar_bg_color"] {
+            assert!(css.contains(&format!("alpha(@{c}, 0.85)")), "{c}: {css}");
+        }
+        assert!(css.contains(".oxishell-window { background: transparent; }"), "{css}");
+    }
+
+    #[test]
+    fn image_themes_and_out_of_range_values_are_handled() {
+        let mut t = solid_theme();
+        t.background_image = Some(BackgroundImage {
+            path: "/x/bg.jpg".into(),
+            opacity: 40,
+        });
+        assert_eq!(t.opacity_css(70), "", "image backgrounds stay opaque");
+        assert!(t.transparent_terminal(70), "as before: the image shows through the terminal");
+        let s = solid_theme();
+        assert!(s.opacity_css(10).contains(",0.500)"), "clamped to 50%");
+    }
+
+    #[test]
+    fn workspace_colours_come_from_the_theme_palette() {
+        let t = builtins().iter().find(|t| t.id == "cyber_wave").unwrap();
+        let css = t.css();
+        let chip = if t.is_dark() { t.bright } else { t.normal };
+        for (name, slot) in [("red", 1), ("yellow", 3), ("green", 2), ("cyan", 6), ("blue", 4), ("magenta", 5)] {
+            let rule = format!(".ws-color-{name} {{ background: {}; }}", chip[slot].hex());
+            assert!(css.contains(&rule), "missing {rule}");
+            let icon = format!(".ws-icon.ws-color-{name} {{ color: {}; background: none; }}", chip[slot].hex());
+            assert!(css.contains(&icon), "missing {icon}");
+        }
+        assert!(css.contains(".ws-color-gray {"));
+        for name in crate::model::WORKSPACE_COLORS {
+            assert!(css.contains(&format!(".ws-color-{name} ")), "{name}");
+        }
+    }
+
     use super::*;
 
     #[test]

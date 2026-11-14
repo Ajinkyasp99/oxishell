@@ -53,6 +53,9 @@ pub fn connect(app: &AppRc) {
 /// click, double click, or drag is not cancelled by replacing its widget.
 pub(super) struct Row {
     widget: gtk4::ListBoxRow,
+    /// Colour bar at the left edge (hidden without a colour).
+    stripe: gtk4::Box,
+    icon: gtk4::Image,
     name: gtk4::Label,
     badge: gtk4::Label,
     context: gtk4::Label,
@@ -72,6 +75,10 @@ impl Row {
         handle.set_tooltip_text(Some("Drag to reorder workspace"));
         handle.set_cursor_from_name(Some("grab"));
         top.append(&handle);
+        let icon = gtk4::Image::new();
+        icon.add_css_class("ws-icon");
+        icon.set_visible(false);
+        top.append(&icon);
         let name = gtk4::Label::builder()
             .xalign(0.0)
             .hexpand(true)
@@ -111,17 +118,38 @@ impl Row {
         let ports = label("ws-sub", gtk4::pango::EllipsizeMode::None);
         let agent = label("ws-agent", gtk4::pango::EllipsizeMode::End);
         let attention = label("ws-attention", gtk4::pango::EllipsizeMode::End);
-        widget.set_child(Some(&v));
+        let stripe = gtk4::Box::new(Orientation::Vertical, 0);
+        stripe.add_css_class("ws-stripe");
+        stripe.set_visible(false);
+        let outer = gtk4::Box::new(Orientation::Horizontal, 6);
+        v.set_hexpand(true);
+        outer.append(&stripe);
+        outer.append(&v);
+        widget.set_child(Some(&outer));
         attach_dnd(app, &widget, id);
         attach_menu(app, &widget, id);
         Self {
             widget,
+            stripe,
+            icon,
             name,
             badge,
             context,
             ports,
             agent,
             attention,
+        }
+    }
+}
+
+/// Give `w` the class for `color` (`ws-color-red`, …), removing any other one.
+fn set_color_class(w: &impl IsA<gtk4::Widget>, color: Option<&str>) {
+    for c in crate::model::WORKSPACE_COLORS {
+        let class = format!("ws-color-{c}");
+        if Some(c) == color {
+            w.add_css_class(&class);
+        } else {
+            w.remove_css_class(&class);
         }
     }
 }
@@ -158,6 +186,14 @@ pub fn rebuild(app: &AppRc) {
         }
         let focused = i.panes.get(&ws.focused);
         set_optional_label(&row.name, &ws.name);
+        set_color_class(&row.stripe, ws.color.as_deref());
+        row.stripe.set_visible(ws.color.is_some());
+        let icon = ws.icon.as_deref().and_then(crate::model::icon_name);
+        if row.icon.icon_name().as_deref() != icon {
+            row.icon.set_icon_name(icon);
+        }
+        set_color_class(&row.icon, ws.color.as_deref());
+        row.icon.set_visible(icon.is_some());
         let unread = i.notes.unread_for_workspace(ws.id);
         set_optional_label(&row.badge, &if unread > 0 { unread.to_string() } else { String::new() });
         let mut sub = Vec::new();
@@ -265,6 +301,32 @@ fn attach_menu(app: &AppRc, row: &gtk4::ListBoxRow, id: WorkspaceId) {
         it.set_action_and_target_value(Some(action), t.as_ref());
         menu.append_item(&it);
     }
+    // Colour and Icon submenus: targets are "<id>:<value>", empty value = none.
+    let choice = |label: &str, action: &str, value: &str| {
+        let it = gio::MenuItem::new(Some(label), None);
+        it.set_action_and_target_value(Some(action), Some(&format!("{id}:{value}").to_variant()));
+        it
+    };
+    let title = |s: &str| -> String {
+        let mut c = s.chars();
+        c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+    };
+    let colors = gio::Menu::new();
+    colors.append_item(&choice("None", "app.ws-color", ""));
+    for c in crate::model::WORKSPACE_COLORS {
+        colors.append_item(&choice(&title(c), "app.ws-color", c));
+    }
+    let icons = gio::Menu::new();
+    icons.append_item(&choice("None", "app.ws-icon", ""));
+    for (key, icon) in crate::model::WORKSPACE_ICONS {
+        let it = choice(&title(key), "app.ws-icon", key);
+        it.set_icon(&gio::ThemedIcon::new(icon));
+        icons.append_item(&it);
+    }
+    let look = gio::Menu::new();
+    look.append_submenu(Some("Colour"), &colors);
+    look.append_submenu(Some("Icon"), &icons);
+    menu.insert_section(1, None, &look);
     let click = gtk4::GestureClick::new();
     click.set_button(gdk::BUTTON_SECONDARY);
     let list = app.sidebar_list.clone();

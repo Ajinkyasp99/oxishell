@@ -58,6 +58,11 @@
     <category>TerminalEmulator</category>
   </categories>
   <releases>
+    <release version="0.1.4" date="2026-11-14">
+      <description>
+        <p>Clickable file:line links, usage limit alerts, workspace colours and icons, background opacity, an optional update notice, and a fix for command block headers drawn over running programs.</p>
+      </description>
+    </release>
     <release version="0.1.3" date="2026-11-14">
       <description>
         <p>Swap panes by dragging the move handle next to each pane's close button, resize from where dividers meet, and a history panel fix.</p>
