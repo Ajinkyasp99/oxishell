@@ -3,6 +3,7 @@
 
 mod blocks;
 mod chips;
+pub mod compose_ui;
 mod corner_resize;
 mod desktop_notify;
 mod dialogs;
@@ -85,6 +86,9 @@ pub struct App {
     /// Pane whose drag handle is being dragged (see `pane::attach_swap_dnd`).
     pub dragging_pane: Cell<Option<PaneId>>,
     save_pending: Cell<bool>,
+    /// Crash notification id -> (pane, service) for its Restart button.
+    /// Desktop notification id -> (pane, stack id, service) its Restart button is for.
+    compose_restarts: RefCell<HashMap<u64, (PaneId, u64, String)>>,
     quitting: Cell<bool>,
 }
 
@@ -338,6 +342,7 @@ impl App {
             dragging_pane: Cell::new(None),
             save_pending: Cell::new(false),
             quitting: Cell::new(false),
+            compose_restarts: RefCell::default(),
         });
 
         // Keep the island and watermark in sync with the visible workspace.
@@ -362,6 +367,12 @@ impl App {
         }
         {
             let w = Rc::downgrade(&app);
+            let wa = app.weak();
+            app.desktop.set_on_action(move |id, action| {
+                if let Some(a) = wa.upgrade() {
+                    a.compose_notification_action(id, &action);
+                }
+            });
             app.desktop.set_on_activate(move |id, token| {
                 if let Some(a) = w.upgrade() {
                     if let Some(t) = token {
@@ -1048,13 +1059,66 @@ impl App {
         self.notify_kind(pane, title, body, source, Kind::from_source(source))
     }
 
+    /// A button of desktop notification `id` was clicked.
+    pub fn compose_notification_action(self: &Rc<Self>, id: u64, action: &str) {
+        let target = self.compose_restarts.borrow().get(&id).cloned();
+        let Some((pane, stack, service)) = target.filter(|_| action == "restart") else {
+            return;
+        };
+        // The pane may run another stack by now (or none): never restart that one.
+        let current = self
+            .inner
+            .borrow()
+            .panes
+            .get(&pane)
+            .and_then(|p| p.compose.stack.as_ref().map(|s| s.id));
+        if current != Some(stack) {
+            self.compose_restarts.borrow_mut().remove(&id);
+            self.toast(&format!(
+                "Not restarted: the stack where {service} crashed is no longer running in that pane"
+            ));
+            return;
+        }
+        compose_ui::run_background(self, pane, crate::compose::Action::RestartService(service));
+    }
+
+    /// Report a crashed Compose service, with a button that restarts it.
+    pub fn notify_compose_crash(self: &Rc<Self>, pane: PaneId, stack: u64, file: &str, crash: &crate::compose::Crash) {
+        let label = format!("Restart {}", crash.service);
+        let id = self.notify_with(
+            Some(pane),
+            &crash.title(),
+            file,
+            "compose",
+            Kind::CommandFailed,
+            None,
+            Some(("restart", &label)),
+        );
+        let mut r = self.compose_restarts.borrow_mut();
+        if r.len() > 64 {
+            r.clear();
+        }
+        r.insert(id, (pane, stack, crash.service.clone()));
+    }
+
     pub fn notify_kind(self: &Rc<Self>, pane: Option<PaneId>, title: &str, body: &str, source: &str, kind: Kind) -> u64 {
-        self.notify_with(pane, title, body, source, kind, None)
+        self.notify_with(pane, title, body, source, kind, None, None)
     }
 
     /// `notify_kind`, plus `extra` text (e.g. how long an agent worked) for
     /// the island flash only.
-    fn notify_with(self: &Rc<Self>, pane: Option<PaneId>, title: &str, body: &str, source: &str, kind: Kind, extra: Option<String>) -> u64 {
+    /// `action` adds a button to the desktop notification: (key, label).
+    #[allow(clippy::too_many_arguments)]
+    fn notify_with(
+        self: &Rc<Self>,
+        pane: Option<PaneId>,
+        title: &str,
+        body: &str,
+        source: &str,
+        kind: Kind,
+        extra: Option<String>,
+        action: Option<(&str, &str)>,
+    ) -> u64 {
         let wid = pane.and_then(|p| self.inner.borrow().state.workspace_of(p));
         let seen = self.pane_seen(pane);
         let (id, title, body, desktop, sound) = {
@@ -1092,6 +1156,7 @@ impl App {
                 title: &title,
                 body: &body,
                 sound,
+                action,
             });
         }
         self.island.flash(kind, &flash);
@@ -1164,6 +1229,7 @@ impl App {
                 &format!("agent:{agent}"),
                 kind,
                 worked.filter(|d| d.as_secs() >= 1).map(blocks::fmt_duration),
+                None,
             );
         } else {
             self.refresh();
@@ -1185,6 +1251,7 @@ impl App {
             set_class(&p.frame, "attention", i.notes.unread_for_pane(*id) > 0);
             p.chips
                 .update(p.python_env.as_deref(), p.cwd.as_deref(), p.git.as_ref(), i.config.appearance.chips);
+            compose_ui::sync(p, &i.config);
         }
         // Desktop notifications go away once their entry has been seen.
         self.desktop.sync(|id| i.notes.is_unread(id));
@@ -1310,6 +1377,8 @@ impl App {
         }
         self.apply_terminal_style();
         self.rebuild_keymap();
+        // Pane widgets that follow settings (e.g. the Compose launcher) update at once.
+        self.refresh();
     }
 
     /// Switch theme by id, persist it and apply it to the whole window.
@@ -1646,6 +1715,11 @@ impl App {
                 }
             }
             "command-palette" => dialogs::command_palette(self),
+            "compose-files" => {
+                if let Some(p) = focused {
+                    compose_ui::open_picker(self, p);
+                }
+            }
             "toggle-sidebar" => {
                 // Toggle what is on screen (it may be auto-hidden in a narrow window).
                 let shown = self.split.start_child().is_some_and(|s| s.get_visible());
@@ -1683,25 +1757,47 @@ impl App {
 
     /// Ask the worker for fresh metadata. `active_only` limits it to the visible workspace.
     pub fn request_meta(&self, active_only: bool) {
-        let i = self.inner.borrow();
-        let active = i.state.active;
-        for (wid, pid) in i.state.all_panes() {
-            if active_only && Some(wid) != active {
-                continue;
-            }
-            if let Some(p) = i.panes.get(&pid) {
-                if let Some(child) = p.pid.get() {
-                    // Ports: every pass for the visible workspace; background ones on the slower full pass.
-                    let _ = self.meta_tx.send(meta_worker::Job {
-                        pane: pid,
-                        shell_pid: child,
-                        pty_fd: p.pty_fd(),
-                        ports: Some(wid) == active || !active_only,
-                        env_file: crate::shellint::env_file(pid),
-                    });
-                }
+        let jobs: Vec<(PaneId, bool)> = {
+            let i = self.inner.borrow();
+            let active = i.state.active;
+            i.state
+                .all_panes()
+                .into_iter()
+                .filter(|(wid, _)| !active_only || Some(*wid) == active)
+                // Ports: every pass for the visible workspace; background ones on the slower full pass.
+                .map(|(wid, pid)| (pid, Some(wid) == active || !active_only))
+                .collect()
+        };
+        for (pid, ports) in jobs {
+            if let Some(job) = self.meta_job(pid, ports) {
+                let _ = self.meta_tx.send(job);
             }
         }
+    }
+
+    /// The meta worker job for pane `pid` (None when its shell has not started).
+    /// Takes the pane's pending Compose rescan request.
+    pub fn meta_job(&self, pid: PaneId, ports: bool) -> Option<meta_worker::Job> {
+        let mut i = self.inner.borrow_mut();
+        let compose = i.config.compose.clone();
+        let p = i.panes.get_mut(&pid)?;
+        let child = p.pid.get()?;
+        let rescan = std::mem::take(&mut p.compose.rescan);
+        Some(meta_worker::Job {
+            pane: pid,
+            shell_pid: child,
+            pty_fd: p.pty_fd(),
+            ports,
+            env_file: crate::shellint::env_file(pid),
+            compose_cmd: compose.enabled.then(|| compose.command.clone()),
+            rescan,
+            ps_of: p
+                .compose
+                .stack
+                .as_ref()
+                .filter(|s| compose.enabled && !s.capturing)
+                .map(|s| (s.cmd.clone(), s.file.clone(), s.context.clone())),
+        })
     }
 
     // ---- sessions -----------------------------------------------------------

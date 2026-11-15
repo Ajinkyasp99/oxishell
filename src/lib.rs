@@ -2,6 +2,7 @@
 pub const APP_ID: &str = "dev.oxishell.Oxishell";
 
 pub mod agents;
+pub mod compose;
 pub mod config;
 pub mod editor;
 pub mod history;

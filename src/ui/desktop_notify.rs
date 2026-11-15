@@ -39,9 +39,22 @@ pub struct Request<'a> {
     pub title: &'a str,
     pub body: &'a str,
     pub sound: bool,
+    /// Extra button: (action key, label), e.g. ("restart", "Restart api").
+    pub action: Option<(&'a str, &'a str)>,
 }
 
 type Activate = Box<dyn Fn(u64, Option<String>)>;
+type OnAction = Box<dyn Fn(u64, String)>;
+
+/// Action list of a notification: the click target, then the optional extra button.
+pub(crate) fn action_list(extra: Option<(&str, &str)>) -> Vec<String> {
+    let mut v = vec!["default".to_string(), "Open".to_string()];
+    if let Some((key, label)) = extra {
+        v.push(key.to_string());
+        v.push(label.to_string());
+    }
+    v
+}
 
 pub struct Desktop {
     gapp: gio::Application,
@@ -61,6 +74,7 @@ pub struct Desktop {
     /// Activation tokens (server id → token) announced just before a click.
     tokens: RefCell<HashMap<u32, String>>,
     on_activate: RefCell<Option<Activate>>,
+    on_action: RefCell<Option<OnAction>>,
     subscription: RefCell<Option<gio::SignalSubscriptionId>>,
 }
 
@@ -80,6 +94,7 @@ impl Desktop {
             by_pane: RefCell::default(),
             tokens: RefCell::default(),
             on_activate: RefCell::new(None),
+            on_action: RefCell::new(None),
             subscription: RefCell::new(None),
         });
         d.subscribe();
@@ -90,6 +105,11 @@ impl Desktop {
     /// Called with (notification id, activation token) when one is clicked.
     pub fn set_on_activate(&self, f: impl Fn(u64, Option<String>) + 'static) {
         *self.on_activate.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Called with (notification id, action key) when an extra button is pressed.
+    pub fn set_on_action(&self, f: impl Fn(u64, String) + 'static) {
+        *self.on_action.borrow_mut() = Some(Box::new(f));
     }
 
     fn query_capabilities(self: &Rc<Self>) {
@@ -153,12 +173,16 @@ impl Desktop {
                 }
             }
             "ActionInvoked" => {
-                let Some((sid, _action)) = params.get::<(u32, String)>() else {
+                let Some((sid, action)) = params.get::<(u32, String)>() else {
                     return;
                 };
                 let Some(id) = self.our_id(sid) else { return };
                 let token = self.tokens.borrow_mut().remove(&sid);
-                if let Some(f) = self.on_activate.borrow().as_ref() {
+                if action != "default" && action != "Open" {
+                    if let Some(f) = self.on_action.borrow().as_ref() {
+                        f(id, action);
+                    }
+                } else if let Some(f) = self.on_activate.borrow().as_ref() {
                     f(id, token);
                 }
             }
@@ -210,7 +234,7 @@ impl Desktop {
             r.body.to_string()
         };
         let title = if r.title.is_empty() { APP_NAME } else { r.title };
-        let actions: Vec<String> = vec!["default".into(), "Open".into()];
+        let actions = action_list(r.action);
         let params = glib::Variant::tuple_from_iter([
             APP_NAME.to_variant(),
             replaces.to_variant(),
@@ -377,6 +401,8 @@ impl FallbackCopy {
             title: &self.title,
             body: &self.body,
             sound: self.sound,
+            // The GTK fallback shows no extra buttons.
+            action: None,
         }
     }
 }
@@ -399,5 +425,19 @@ fn play_sound(event: &str) {
                 d.beep();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extra_action_is_appended_after_open() {
+        assert_eq!(action_list(None), ["default", "Open"]);
+        assert_eq!(
+            action_list(Some(("restart", "Restart api"))),
+            ["default", "Open", "restart", "Restart api"]
+        );
     }
 }

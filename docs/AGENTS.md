@@ -33,6 +33,8 @@ Event names use each agent's native hook system. Notes:
 - Install is idempotent and keeps your existing hooks; only entries tagged `oxishell-hook` are added or
   removed. The first install backs up the original file as `*.oxishell.bak`. Invalid JSON/TOML is never
   overwritten.
+- The OpenCode plugin is a whole file owned by oxishell. Install refuses to replace an existing
+  `oxishell.js` that oxishell did not create, and uninstall removes only oxishell's own file.
 - Codex installation preserves user-defined `notify` programs and inline hooks. It replaces the old
   oxishell-managed `notify` entry with lifecycle hooks to avoid duplicate completion alerts.
 - The hook command exits 0 silently when not running inside oxishell, or if the app is not reachable, so

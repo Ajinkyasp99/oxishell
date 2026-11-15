@@ -18,6 +18,7 @@ pub struct Config {
     pub notifications: Notifications,
     pub editor: Editor,
     pub updates: Updates,
+    pub compose: Compose,
     /// Action name -> GTK accelerator string (e.g. "<Ctrl><Shift>e").
     pub shortcuts: BTreeMap<String, String>,
     /// Custom project commands shown in the command palette.
@@ -136,6 +137,25 @@ pub struct Editor {
     pub command: String,
 }
 
+/// Docker Compose launcher: a pane button that lists the repo's compose files.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Compose {
+    /// Show the button, the stack bar and the shortcut. Off skips the scan too.
+    pub enabled: bool,
+    /// Press Enter after typing the command (off: the user presses it).
+    pub run_immediately: bool,
+    /// Desktop notification when a service exits non-zero or turns unhealthy.
+    pub notify_on_crash: bool,
+    /// What choosing a file runs: "up", "up -d", "down" or "logs -f".
+    pub default_action: String,
+    /// Compose program and arguments, e.g. "docker compose". Empty = auto-detect.
+    pub command: String,
+}
+
+/// Allowed values of `compose.default_action`.
+pub const COMPOSE_ACTIONS: &[&str] = &["up", "up -d", "down", "logs -f"];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CustomCommand {
@@ -193,6 +213,17 @@ impl Default for Session {
         }
     }
 }
+impl Default for Compose {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            run_immediately: true,
+            notify_on_crash: true,
+            default_action: "up".into(),
+            command: String::new(),
+        }
+    }
+}
 impl Default for Notifications {
     fn default() -> Self {
         Self {
@@ -234,6 +265,7 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("zoom-reset", "<Ctrl>0", "Reset font size"),
     ("command-history", "<Ctrl><Shift>h", "Search command history"),
     ("settings", "<Ctrl>comma", "Settings"),
+    ("compose-files", "<Ctrl><Shift>l", "Docker Compose files"),
 ];
 
 impl Config {
@@ -273,6 +305,12 @@ impl Config {
         }
         if !(0..=1_000_000).contains(&self.terminal.scrollback_lines) {
             return Err("terminal.scrollback_lines must be between 0 and 1000000".into());
+        }
+        if !COMPOSE_ACTIONS.contains(&self.compose.default_action.as_str()) {
+            return Err(format!(
+                "compose.default_action must be up, up -d, down or logs -f (got {:?})",
+                self.compose.default_action
+            ));
         }
         for k in self.shortcuts.keys() {
             if !DEFAULT_SHORTCUTS.iter().any(|(a, _, _)| a == k) {
@@ -400,6 +438,32 @@ mod tests {
         assert!(!Config::parse("[appearance]\nmode = \"dark\"\n").unwrap().updates.check);
         assert!(Config::parse("[updates]\ncheck = true\n").unwrap().updates.check);
         assert!(Config::parse("[updates]\ncheck_daily = true\n").is_err());
+    }
+
+    #[test]
+    fn compose_launcher_is_on_by_default_and_can_be_turned_off() {
+        let d = Config::default().compose;
+        assert!(d.enabled && d.run_immediately && d.notify_on_crash);
+        assert_eq!(d.default_action, "up");
+        assert_eq!(d.command, "");
+        assert!(Config::parse("[appearance]\nmode = \"dark\"\n").unwrap().compose.enabled);
+        assert!(!Config::parse("[compose]\nenabled = false\n").unwrap().compose.enabled);
+        assert!(Config::parse("[compose]\nenable = false\n").is_err());
+    }
+
+    #[test]
+    fn compose_default_action_is_checked() {
+        for ok in ["up", "up -d", "down", "logs -f"] {
+            assert!(Config::parse(&format!("[compose]\ndefault_action = \"{ok}\"\n")).is_ok(), "{ok}");
+        }
+        assert!(Config::parse("[compose]\ndefault_action = \"explode\"\n").is_err());
+    }
+
+    #[test]
+    fn compose_shortcut_is_bound_without_conflicts() {
+        let c = Config::default();
+        assert!(c.effective_shortcuts().contains(&("compose-files".into(), "<Ctrl><Shift>l".into())));
+        assert!(c.shortcut_conflicts().is_empty());
     }
 
     #[test]

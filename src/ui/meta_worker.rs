@@ -5,11 +5,12 @@
 //! or its cached result is older than 5 s. Everything runs off the GTK thread.
 
 use super::AppRc;
+use crate::compose::{self, ComposeFile, ComposeScan, ServiceStatus};
 use crate::meta::{self, GitInfo};
 use crate::model::PaneId;
 use gtk4::glib;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub struct Job {
@@ -19,6 +20,13 @@ pub struct Job {
     pub ports: bool,
     /// File the shell writes its active Python/conda environment to.
     pub env_file: PathBuf,
+    /// `Some(compose.command setting)` when the Compose launcher is on.
+    pub compose_cmd: Option<String>,
+    /// Scan the repo again instead of using the cache.
+    pub rescan: bool,
+    /// Stack whose `ps` to report (a stack runs from this pane): its compose
+    /// program, file, and the environment and folder it was started with.
+    pub ps_of: Option<(Vec<String>, PathBuf, Option<compose::LaunchContext>)>,
 }
 
 pub struct Update {
@@ -28,9 +36,102 @@ pub struct Update {
     ports: Option<Vec<u16>>,
     fg_agent: Option<&'static str>,
     python_env: Option<String>,
+    busy: bool,
+    compose: Option<ComposeScan>,
+    ps: Option<Result<Vec<ServiceStatus>, String>>,
 }
 
 const GIT_TTL: Duration = Duration::from_secs(5);
+
+/// Worker-side caches for the Compose launcher. Entries expire after `ttl`, so
+/// a compose file added later (or docker installed later) shows up by itself.
+struct ComposeCache {
+    ttl: Duration,
+    /// Pane folder -> repo root.
+    roots: HashMap<PathBuf, (Instant, PathBuf)>,
+    /// Repo root -> compose files.
+    files: HashMap<PathBuf, (Instant, Vec<ComposeFile>)>,
+    /// `compose.command` setting -> detected program.
+    commands: HashMap<String, (Instant, Option<Vec<String>>)>,
+    /// Last scan sent for each pane.
+    sent: HashMap<PaneId, ComposeScan>,
+}
+
+impl Default for ComposeCache {
+    fn default() -> Self {
+        Self {
+            ttl: COMPOSE_TTL,
+            roots: HashMap::new(),
+            files: HashMap::new(),
+            commands: HashMap::new(),
+            sent: HashMap::new(),
+        }
+    }
+}
+
+/// How long a Compose scan result is reused before scanning again.
+const COMPOSE_TTL: Duration = Duration::from_secs(30);
+
+/// The cached value for `key`, or a fresh one from `make` when missing, older
+/// than `ttl`, or `force`d.
+fn cached<K: std::hash::Hash + Eq + Clone, V: Clone>(
+    map: &mut HashMap<K, (Instant, V)>,
+    key: &K,
+    ttl: Duration,
+    force: bool,
+    make: impl FnOnce() -> V,
+) -> V {
+    match map.get(key) {
+        Some((at, v)) if !force && at.elapsed() < ttl => v.clone(),
+        _ => {
+            let v = make();
+            map.insert(key.clone(), (Instant::now(), v.clone()));
+            v
+        }
+    }
+}
+
+impl ComposeCache {
+    /// The pane's scan when it differs from the last one sent, or on rescan.
+    fn scan(&mut self, pane: PaneId, cwd: &Path, setting: &str, rescan: bool) -> Option<ComposeScan> {
+        if self.roots.len() > 256 {
+            self.roots.clear();
+        }
+        let ttl = self.ttl;
+        let root = cached(&mut self.roots, &cwd.to_path_buf(), ttl, rescan, || compose::repo_root(cwd));
+        let files = cached(&mut self.files, &root, ttl, rescan, || compose::scan(&root));
+        let command = cached(&mut self.commands, &setting.to_string(), ttl, rescan, || {
+            compose::detect_command(setting, compose::command_works)
+        });
+        let scan = ComposeScan { root, files, command };
+        if !rescan && self.sent.get(&pane) == Some(&scan) {
+            return None;
+        }
+        self.sent.insert(pane, scan.clone());
+        Some(scan)
+    }
+}
+
+/// `docker compose ps` of `file` with `cmd`, run in the stack's context.
+fn compose_ps(cmd: &[String], file: &Path, ctx: Option<&compose::LaunchContext>) -> Result<Vec<ServiceStatus>, String> {
+    let argv = compose::ps_argv(cmd, file);
+    let mut c = match ctx {
+        Some(ctx) => ctx.command(&argv),
+        None => {
+            let mut c = std::process::Command::new(&argv[0]);
+            c.args(&argv[1..]);
+            c
+        }
+    };
+    match c.stdin(std::process::Stdio::null()).output() {
+        Ok(o) if o.status.success() => compose::parse_ps(&String::from_utf8_lossy(&o.stdout)),
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            Err(err.lines().last().unwrap_or("compose ps failed").to_string())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
 
 pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>) {
     let (tx, rx) = std::sync::mpsc::channel::<Job>();
@@ -39,6 +140,7 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
         .name("oxishell-meta".into())
         .spawn(move || {
             let mut git_cache: HashMap<PathBuf, (Instant, Option<GitInfo>)> = HashMap::new();
+            let mut compose_cache = ComposeCache::default();
             while let Ok(first) = rx.recv() {
                 // Coalesce queued jobs per pane.
                 let mut jobs: HashMap<PaneId, Job> = HashMap::new();
@@ -66,6 +168,18 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
                     if git_cache.len() > 256 {
                         git_cache.retain(|_, (t, _)| t.elapsed() < GIT_TTL);
                     }
+                    let busy = fg.is_some_and(|p| p != job.shell_pid);
+                    let (compose_scan, ps) = match (&job.compose_cmd, &cwd) {
+                        (Some(setting), Some(c)) => {
+                            let scan = compose_cache.scan(job.pane, c, setting, job.rescan);
+                            let ps = job.ps_of.as_ref().map(|(cmd, f, ctx)| compose_ps(cmd, f, ctx.as_ref()));
+                            (scan, ps)
+                        }
+                        _ => {
+                            compose_cache.sent.remove(&job.pane);
+                            (None, None)
+                        }
+                    };
                     let ports = match (&table, job.ports) {
                         (Some(t), true) => Some(meta::listening_ports(&meta::process_tree_in(t, job.shell_pid))),
                         _ => None,
@@ -78,6 +192,9 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
                             ports,
                             fg_agent,
                             python_env: crate::shellint::read_env(&job.env_file),
+                            busy,
+                            compose: compose_scan,
+                            ps,
                         })
                         .is_err()
                     {
@@ -121,10 +238,48 @@ pub fn attach(app: &AppRc, rx: async_channel::Receiver<Update>) {
                     p.python_env = u.python_env;
                     changed = true;
                 }
-                changed
+                // Launcher state is not part of the saved session.
+                let mut shown = false;
+                if p.busy != u.busy {
+                    p.busy = u.busy;
+                    if !u.busy {
+                        // Whatever held the pane (e.g. `logs -f`) has ended.
+                        p.compose.logs = None;
+                        // An attached `up` ended (Ctrl+C, or it stopped by itself).
+                        if let Some(s) = p.compose.stack.as_mut().filter(|s| s.attached) {
+                            s.stopping = true;
+                        }
+                    }
+                    shown = true;
+                }
+                if let Some(scan) = u.compose {
+                    p.compose.scan = Some(scan);
+                    shown = true;
+                }
+                let mut crashed = vec![];
+                let file = p.compose.stack.as_ref().map(|s| p.compose.display(&s.file)).unwrap_or_default();
+                if let (Some(ps), Some(stack)) = (u.ps, p.compose.stack.as_mut()) {
+                    if let Ok(now) = &ps {
+                        crashed = compose::crashes(&stack.services, now, stack.stopping)
+                            .into_iter()
+                            .map(|c| (stack.id, file.clone(), c))
+                            .collect();
+                    }
+                    if !stack.apply_ps(ps, p.busy) {
+                        p.compose.stack = None;
+                    }
+                    shown = true;
+                }
+                let notify = i.config.compose.notify_on_crash;
+                (changed, shown, if notify { crashed } else { vec![] })
             };
-            if changed {
+            for (stack, file, crash) in &changed.2 {
+                a.notify_compose_crash(u.pane, *stack, file, crash);
+            }
+            if changed.0 || changed.1 {
                 a.refresh();
+            }
+            if changed.0 {
                 a.schedule_save();
             }
         }
@@ -137,4 +292,41 @@ pub fn attach(app: &AppRc, rx: async_channel::Receiver<Update>) {
         a.request_meta(!tick.is_multiple_of(5));
         glib::ControlFlow::Continue
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("oxishell-meta-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn compose_files_added_later_are_found_without_a_rescan() {
+        let dir = tmp("added-later");
+        let mut c = ComposeCache {
+            ttl: Duration::ZERO,
+            ..Default::default()
+        };
+        let first = c.scan(1, &dir, "/bin/true compose", false).expect("first scan is sent");
+        assert!(first.files.is_empty());
+        std::fs::write(dir.join("docker-compose.yml"), "services:\n  api: {}\n").unwrap();
+        let second = c.scan(1, &dir, "/bin/true compose", false).expect("the new file is reported");
+        assert_eq!(second.files.len(), 1);
+    }
+
+    #[test]
+    fn the_scan_cache_is_reused_within_its_lifetime() {
+        let dir = tmp("cached");
+        let mut c = ComposeCache::default();
+        assert_eq!(c.ttl, Duration::from_secs(30));
+        c.scan(1, &dir, "/bin/true compose", false).expect("first scan is sent");
+        std::fs::write(dir.join("docker-compose.yml"), "services:\n  api: {}\n").unwrap();
+        assert!(c.scan(1, &dir, "/bin/true compose", false).is_none(), "cached, unchanged");
+        assert!(c.scan(1, &dir, "/bin/true compose", true).is_some(), "rescan bypasses the cache");
+    }
 }

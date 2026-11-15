@@ -576,3 +576,142 @@ headerbar.oxi-header .edge-group > menubutton > button:checked {
 .oxishell-root headerbar.oxi-header {
   box-shadow: inset 0 -1px alpha(@accent_color, 0.25);
 }
+
+/* Docker Compose launcher button: same quiet look as the close button. */
+.pane-compose {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  margin: 4px 2px 0 0;
+  opacity: 0.35;
+  transition: opacity 120ms ease-out, background-color 120ms ease-out;
+}
+.pane:hover .pane-compose {
+  opacity: 0.7;
+}
+.pane .pane-compose:hover {
+  opacity: 1;
+  background-color: alpha(@accent_color, 0.18);
+  color: @accent_color;
+}
+.pane .pane-compose:disabled {
+  opacity: 0.2;
+}
+.pane-compose image {
+  -gtk-icon-size: 12px;
+}
+
+/* Compose picker, stack bar and logs line: drawn like terminal output. */
+popover.compose-picker > contents {
+  padding: 0;
+  border-radius: 0;
+}
+.compose-picker,
+.compose-picker entry,
+.compose-picker label {
+  font-family: monospace;
+  font-size: 0.92em;
+}
+.compose-picker .dim {
+  opacity: 0.6;
+}
+.compose-picker .compose-accent {
+  color: @accent_color;
+}
+.compose-head,
+.compose-filter,
+.compose-keys,
+.compose-foot {
+  padding: 4px 8px;
+}
+.compose-head,
+.compose-filter {
+  border-bottom: 1px solid alpha(currentColor, 0.15);
+}
+.compose-keys {
+  border-top: 1px solid alpha(currentColor, 0.15);
+}
+.compose-filter entry {
+  background: none;
+  border: none;
+  box-shadow: none;
+  min-height: 0;
+  padding: 0;
+}
+.compose-files {
+  background: none;
+}
+.compose-files row {
+  padding: 3px 6px;
+  border-radius: 0;
+  border-left: 2px solid transparent;
+}
+.compose-files row:selected {
+  background-color: alpha(currentColor, 0.1);
+  border-left-color: @accent_color;
+  color: inherit;
+}
+.compose-key-btn {
+  min-height: 0;
+  min-width: 0;
+  padding: 0 4px;
+  border-radius: 0;
+}
+.compose-key-btn b,
+.compose-key-btn label {
+  font-family: monospace;
+}
+.compose-key-btn:hover {
+  background-color: @window_fg_color;
+  color: @window_bg_color;
+}
+.compose-stack,
+.compose-logs {
+  padding: 2px 8px;
+  border-top: 1px solid alpha(currentColor, 0.15);
+  background-color: alpha(currentColor, 0.04);
+}
+.compose-stack label,
+.compose-logs label,
+.compose-bar-btn,
+.compose-chip {
+  font-family: monospace;
+  font-size: 0.92em;
+}
+.compose-bar-btn,
+.compose-chip {
+  min-height: 0;
+  min-width: 0;
+  padding: 0 3px;
+  border-radius: 0;
+}
+.compose-bar-btn:hover,
+.compose-chip:hover {
+  background-color: @window_fg_color;
+  color: @window_bg_color;
+}
+.compose-bar-btn.compose-stop {
+  color: @error_color;
+}
+.compose-bar-btn.compose-stop:hover {
+  background-color: @error_color;
+  color: @window_bg_color;
+}
+.compose-chip.exited {
+  color: @error_color;
+}
+/* Folder headers in the picker; the files below them are indented. */
+.compose-files row.compose-group-row {
+  padding: 6px 6px 1px 6px;
+  border-left-color: transparent;
+}
+.compose-files row.compose-group-row:first-child {
+  padding-top: 2px;
+}
+.compose-group {
+  color: @accent_color;
+  font-weight: bold;
+}
+.compose-files row.compose-file {
+  padding-left: 18px;
+}

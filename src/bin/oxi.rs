@@ -192,6 +192,16 @@ enum HooksCmd {
     List,
 }
 
+/// `dir` as an absolute path, relative to where `oxi` runs (the app has its
+/// own working directory, so a relative path would name another folder there).
+fn abs_dir(dir: PathBuf) -> String {
+    std::fs::canonicalize(&dir)
+        .or_else(|_| std::env::current_dir().map(|c| c.join(&dir)))
+        .unwrap_or(dir)
+        .display()
+        .to_string()
+}
+
 fn env_pane() -> Option<u64> {
     std::env::var("OXISHELL_PANE_ID").ok().and_then(|v| v.parse().ok())
 }
@@ -223,10 +233,7 @@ fn main() -> ExitCode {
         })),
         Cmd::Workspace(c) => match c {
             WsCmd::List => call("workspace.list", json!({})),
-            WsCmd::New { name, cwd } => {
-                let cwd = cwd.map(|c| std::fs::canonicalize(&c).unwrap_or(c).display().to_string());
-                call("workspace.create", json!({"name": name, "cwd": cwd}))
-            }
+            WsCmd::New { name, cwd } => call("workspace.create", json!({"name": name, "cwd": cwd.map(abs_dir)})),
             WsCmd::Select { id } => call("workspace.select", json!({"workspace": id})),
             WsCmd::Next => call("workspace.next", json!({})),
             WsCmd::Prev => call("workspace.prev", json!({})),
@@ -239,7 +246,7 @@ fn main() -> ExitCode {
             PaneCmd::List { workspace } => call("pane.list", json!({"workspace": workspace})),
             PaneCmd::Split { pane, direction, cwd } => call(
                 "pane.split",
-                json!({"pane": pane.or_else(env_pane), "direction": match direction { Dir::Right => "right", Dir::Down => "down" }, "cwd": cwd.map(|c| c.display().to_string())}),
+                json!({"pane": pane.or_else(env_pane), "direction": match direction { Dir::Right => "right", Dir::Down => "down" }, "cwd": cwd.map(abs_dir)}),
             ),
             PaneCmd::Focus { id } => call("pane.focus", json!({"pane": id})),
             PaneCmd::Close { id, force } => call("pane.close", json!({"pane": id, "force": force})),

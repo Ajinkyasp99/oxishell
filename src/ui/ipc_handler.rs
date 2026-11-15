@@ -41,6 +41,21 @@ pub fn start(app: &AppRc) {
     });
 }
 
+/// The optional `cwd` parameter: an existing folder, named by an absolute path
+/// (a relative one would resolve against the app's working directory, not the caller's).
+fn param_dir(p: &Value) -> Result<Option<PathBuf>, String> {
+    let Some(c) = param_str(p, "cwd")?.map(PathBuf::from) else {
+        return Ok(None);
+    };
+    if !c.is_absolute() {
+        return Err(format!("cwd must be an absolute path, not {}", c.display()));
+    }
+    if !c.is_dir() {
+        return Err(format!("not a directory: {}", c.display()));
+    }
+    Ok(Some(c))
+}
+
 fn pane_json(a: &AppRc, pane: u64) -> Value {
     let i = a.inner.borrow();
     let wid = i.state.workspace_of(pane);
@@ -114,12 +129,7 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
             Ok(Value::Array(list))
         }
         "workspace.create" => {
-            let cwd = param_str(p, "cwd")?.map(PathBuf::from);
-            if let Some(c) = &cwd {
-                if !c.is_dir() {
-                    return Err(format!("not a directory: {}", c.display()));
-                }
-            }
+            let cwd = param_dir(p)?;
             let (w, pane) = a.new_workspace(param_str(p, "name")?, cwd)?;
             Ok(json!({"workspace": w, "pane": pane}))
         }
@@ -189,7 +199,7 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
                 "down" => Orient::Vertical,
                 d => return Err(format!("direction must be right or down, not {d:?}")),
             };
-            let cwd = param_str(p, "cwd")?.map(PathBuf::from);
+            let cwd = param_dir(p)?;
             let new = a.split(Some(pane), orient, cwd)?;
             Ok(json!({"pane": new}))
         }
@@ -215,12 +225,7 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
             if text.len() > ipc::MAX_SEND_BYTES {
                 return Err(format!("text exceeds {} bytes", ipc::MAX_SEND_BYTES));
             }
-            a.inner
-                .borrow()
-                .panes
-                .get(&pane)
-                .ok_or("pane vanished")?
-                .send_input(text.as_bytes());
+            a.inner.borrow().panes.get(&pane).ok_or("pane vanished")?.type_input(text);
             Ok(json!({"pane": pane, "bytes": text.len()}))
         }
         "pane.read" => {

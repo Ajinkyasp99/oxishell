@@ -854,3 +854,46 @@ fn workspace_colour_and_icon_are_set_from_the_cli_and_restored() {
     assert_eq!(list[0]["icon"], "server", "only the given option changes");
     e.stop(app);
 }
+
+#[test]
+fn pane_split_cwd_is_relative_to_the_caller_and_must_exist() {
+    if !have_display() {
+        return;
+    }
+    let e = Env::new("split-cwd");
+    let app = e.start();
+    let p1 = first_pane(&e);
+    let project = e.root.join("project");
+    std::fs::create_dir_all(project.join("deploy")).unwrap();
+
+    // `oxi` run from `project`: a relative --cwd names `project/deploy`, not a
+    // folder next to the app's own working directory.
+    let o = Command::new(env!("CARGO_BIN_EXE_oxi"))
+        .args(["pane", "split", "--cwd", "deploy"])
+        .env("OXISHELL_SOCKET", &e.socket)
+        .env("OXISHELL_PANE_ID", p1.to_string())
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{out}");
+    let new = e
+        .panes()
+        .iter()
+        .map(|p| p["id"].as_u64().unwrap())
+        .find(|&id| id != p1)
+        .expect("new pane");
+    e.ok("pane.send", json!({"pane": new, "text": "echo AT=$(pwd)\r"}));
+    let deploy = std::fs::canonicalize(project.join("deploy")).unwrap();
+    e.wait_text(new, &format!("AT={}", deploy.display()));
+
+    // A folder that does not exist is refused, and the layout is unchanged.
+    let before = e.panes().len();
+    let (ok, out) = e.cli(&["pane", "split", "--cwd", "/no/such/dir"], Some(p1));
+    assert!(!ok, "{out}");
+    assert!(out.contains("not a directory"), "{out}");
+    let err = e.call("pane.split", json!({"pane": p1, "cwd": "relative/dir"})).unwrap_err();
+    assert!(err.contains("not a directory") || err.contains("absolute"), "{err}");
+    assert_eq!(e.panes().len(), before);
+    e.stop(app);
+}

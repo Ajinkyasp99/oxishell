@@ -1,6 +1,6 @@
 # Compose Launcher
 
-As of 2026-11-14, oxishell 0.1.3. Status: proposed, not built yet.
+As of 2026-11-14. Status: built (see `src/compose.rs` and `src/ui/compose_ui.rs`).
 
 Clickable mockup: https://claude.ai/artifact/RZUTJ6wBYP43r5kZgNkhna
 
@@ -75,6 +75,9 @@ containers or interrupts what is running in the pane.
   tooltip "Busy: wait for the command to finish". This includes commands the launcher started itself:
   `up` and `logs -f` keep running, so the button stays off until they end. `up -d` and `down` return to the
   prompt, so the button stays on after them.
+- **Never mixed with unfinished input.** The launcher types its command only at an empty prompt. If the
+  prompt holds text you have not run yet, nothing is typed and a toast asks you to clear it (Ctrl+U) or run
+  it first; the command would otherwise be appended to your text, and Enter would run both.
 - Busy means the foreground process group of the PTY (`meta::foreground_pgrp`) is not the shell. The meta
   worker refreshes this every 3 s for the visible workspace. Check it again on click, because
   `tcgetpgrp` is cheap enough to call on the GTK thread.
@@ -84,8 +87,11 @@ containers or interrupts what is running in the pane.
 A popover under the button. It is drawn like terminal output: the terminal's font, inverse colours for the
 selected row, `│` separators and one key per action. Only the pane button itself is a normal GTK icon button.
 
-Each row shows the file name, its folder relative to the repo root, and its services (for example
-`4 services · api, web, postgres, redis`). The root file comes first, then the rest sorted by path.
+Files are grouped like a tree: the repo root's files first under a `repo root` header, then one header
+per folder (`compose_files/`, `on_premises_v2/`...) with that folder's files indented under it, folders
+sorted by path and files by name. Each file row shows its name and its services (for example
+`4 services · api, web, postgres, redis`). Headers cannot be selected; the arrow keys skip them, and a
+filter hides folders with no matching file.
 
 Keys:
 
@@ -108,8 +114,9 @@ action with this default accelerator so it can be changed in the `[shortcuts]` t
 
 ## Running a command
 
-- Command: `<compose command> -f '<path>' <action>`, run from the repo root. Quote the path for the shell when
-  it has anything other than `A-Za-z0-9_./-`.
+- Command: `<compose command> -f '<path>' <action>`. The path is relative to the pane's folder when the file is
+  inside it, otherwise absolute, so it works after `cd services/api`. Quote it for the shell when it has
+  anything other than `A-Za-z0-9_./-`.
 - Compose command: the `command` setting, or the first that works of `docker compose`, `docker-compose`,
   `podman compose`. Detect once and cache it.
 - Send it with `Pane::send_input` (`src/ui/pane.rs`), followed by `\n` when `run_immediately` is on. This is
@@ -128,10 +135,20 @@ terminal's font and reads like a tmux status line.
 - **[restart]:** `docker compose -f <file> restart`.
 - **[stop]:** `docker compose -f <file> stop`. Stop keeps the containers; `down` stays a row action in the
   list. An attached `up` exits by itself when its containers stop, so the pane returns to the prompt.
+  Exception: during a first start, while `up` is still pulling or building and no container has run yet,
+  there is nothing for `stop` to stop, so [stop] sends Ctrl+C to the pane instead.
 - **[rebuild]:** see below.
 
 Restart and stop run as separate background processes, not typed into the pane, because an attached `up`
 holds the pane. Report a failure in the bar (exit code and the last line of stderr).
+
+They run in the stack's **launch context**, as does the status poll: the compose program that started the
+stack, and the environment and folder of the process the shell ran for it (read from `/proc/<pid>/environ`
+and `/proc/<pid>/cwd` once it has started). Variables exported in the pane, such as
+`COMPOSE_PROJECT_NAME`, `DOCKER_HOST`, `DOCKER_CONTEXT` or values used in the file, therefore pick the
+same project and daemon for `ps`, [stop] and [restart] as for the `up`. Status polling waits until the
+context is known. If the process ended before it could be read, the shell's own environment and folder are
+used instead.
 
 ### Logs line
 
@@ -148,7 +165,8 @@ name differs from **[stop]** on purpose, so nobody stops the stack when they onl
 
 Rebuild runs in the foreground, without `-d`, so the build output and logs stay in the pane:
 
-1. If an attached `up` holds the pane, send Ctrl+C and wait for the shell prompt to come back.
+1. If the launcher's attached `up` or `logs -f` holds the pane, send Ctrl+C and wait for the shell prompt to
+   come back (up to 30 s).
 2. Type `docker compose -f <file> up --build` and press Enter.
 3. The stack is now attached to the pane and the uptime starts again.
 
@@ -157,7 +175,8 @@ the rebuild in a new split instead.
 
 ### Status
 
-Poll `docker compose -f <file> ps --format json` every 3 s, only while the bar is shown, on the meta worker
+Poll `docker compose -f <file> ps --all --format json` every 3 s (`--all` keeps exited containers visible,
+so crashes can be seen), only while the bar is shown, on the meta worker
 thread. Parse with `serde_json` (already a dependency). Hide the bar when nothing is running, including when
 the stack was stopped outside oxishell.
 
@@ -169,19 +188,23 @@ non-zero exit code, or when its health turns `unhealthy`. A clean exit with code
 - Always mark the chip red (`✗`) in the bar and show `1 exited` in the status line.
 - Send a desktop notification, through `src/ui/desktop_notify.rs`, only when the oxishell window is not
   focused or the pane is in another workspace, and only once per crash.
-- Title: `api exited with code 1`. Body: `<workspace> · <file>`. Actions: **Restart api** and **Dismiss**.
+- Title: `api exited with code 1`. Body: `<workspace>: <file>`, as other oxishell notifications. Actions: **Restart api** and **Dismiss**.
 - Off when `notify_on_crash = false`.
+- **Restart** acts only on the stack that crashed. If the pane has started another stack since (or none
+  runs any more), the button does nothing and a toast says so.
 
 ## Scanning
 
 - Start folder: the pane's current folder (`meta::cwd_of`), then walk up to the git root
   (`git rev-parse --show-toplevel`). Without a git repo, use the current folder.
 - Walk up to 4 levels deep. Skip `.git`, `node_modules`, `target`, `vendor`, `.venv` and hidden folders.
-- Match `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml` and
-  `docker-compose.*.yml` / `docker-compose.*.yaml` (overrides such as `docker-compose.override.yml`).
+- Match every `.yml` / `.yaml` file with `compose` in its name, in any case: `compose.yml`,
+  `docker-compose.yml`, `docker-compose.override.yml`, and hyphen or underscore variants such as
+  `docker-compose-on-pre.yml` or `docker-compose_prod.yaml`. Real projects name them freely.
 - Read the top-level `services:` keys with `yaml-rust2` (already used in `src/theme.rs`). A file that does not
   parse still appears, without a service list.
-- Cap the list at 50 files.
+- Cap the list at 50 files, and stop after reading 5,000 folders so a pane in `$HOME` or `/` stays quick.
+  Symlinked folders are not followed.
 - Run on the meta worker thread. The worker already notices when a pane's folder changes; scan again only
   when the git root changes, and cache the result per root. The **r rescan** key scans on demand.
 

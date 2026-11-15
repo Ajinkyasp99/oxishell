@@ -147,18 +147,28 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, s: &Suggest) {
         let w = app.weak();
         let tracker = s.tracker.clone();
         term.connect_commit(move |_, text, _| {
+            let Some(a) = w.upgrade() else { return };
+            // Typing for a program or a hidden prompt (passwords) is neither
+            // followed nor recorded.
+            let shell = a
+                .inner
+                .try_borrow()
+                .ok()
+                .and_then(|i| i.panes.get(&pane).map(|p| p.shell_reads_commands()));
+            if shell != Some(true) {
+                tracker.borrow_mut().skip(text);
+                return;
+            }
             let ev = tracker.borrow_mut().feed(text);
-            if let Some(a) = w.upgrade() {
-                // An empty Enter only redraws the prompt: no block for it.
-                if let Event::Submitted(c) = &ev {
-                    if c.as_deref() != Some("") {
-                        a.command_submitted(pane, c.as_deref());
-                    }
+            // An empty Enter only redraws the prompt: no block for it.
+            if let Event::Submitted(c) = &ev {
+                if c.as_deref() != Some("") {
+                    a.command_submitted(pane, c.as_deref());
                 }
-                if let Event::Submitted(Some(cmd)) = ev {
-                    if let Ok(mut i) = a.inner.try_borrow_mut() {
-                        i.history.push(&cmd);
-                    }
+            }
+            if let Event::Submitted(Some(cmd)) = ev {
+                if let Ok(mut i) = a.inner.try_borrow_mut() {
+                    i.history.push(&cmd);
                 }
             }
         });
