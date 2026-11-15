@@ -794,7 +794,10 @@ fn pane_action_icons_are_symbolic() {
         for name in ["oxishell-compose-symbolic", "oxishell-pane-move-symbolic", "window-close-symbolic"] {
             assert!(theme.has_icon(name), "pane action icon exists: {name}");
             let icon = theme.lookup_icon(name, &[], 12, 1, gtk4::TextDirection::Ltr, gtk4::IconLookupFlags::empty());
-            assert!(icon.is_symbolic(), "{name} must follow the widget's foreground color");
+            assert!(
+                icon.is_symbolic(),
+                "{name} must follow the widget's foreground color; SVG icons require an SVG pixbuf loader (librsvg2-common on Ubuntu)"
+            );
         }
     });
 }
@@ -1537,40 +1540,52 @@ fn hidden_input_and_program_input_never_reach_the_command_history() {
         let pane = h.app.focused_pane().unwrap();
         let term = h.app.inner.borrow().panes[&pane].term.clone();
         let screen = || term.text_format(vte4::Format::Text).unwrap().to_string();
+        // A substring also matches the command as the shell echoes it, before
+        // the read/program has finished. Only a complete output line counts.
+        let output_line = |text: &str| screen().lines().any(|line| line == text);
+        let shell_ready = || {
+            let i = h.app.inner.borrow();
+            let p = &i.panes[&pane];
+            p.pid
+                .get()
+                .is_some_and(|pid| oxishell::meta::foreground_pgrp(p.pty_fd()) == Some(pid))
+                && p.shell_reads_commands()
+        };
         let typed = |text: &str| {
             xdo(&["type", "--delay", "15", text]);
             xdo(&["key", "Return"]);
         };
-        pump(2500);
+        wait_for(5000, shell_ready);
         h.point(&term);
         xdo(&["click", "1"]);
         pump(200);
 
         // A shell builtin reading with echo off: no child process owns the terminal.
         typed("read -s SECRET; echo READ-DONE");
-        pump(800);
-        typed("builtin-secret-123");
-        wait_for(5000, || screen().contains("READ-DONE"));
-        // A program asking for a password (the foreground is the program).
-        typed("python3 -c 'import getpass; getpass.getpass(); print(\"PY-DONE\")'");
-        wait_for(5000, || screen().contains("Password:"));
-        typed("child-secret-456");
-        wait_for(5000, || screen().contains("PY-DONE"));
-        // Visible input to a program is not a shell command either.
-        typed("python3 -c 'input(\"Name: \"); print(\"IN-DONE\")'");
-        wait_for(5000, || screen().contains("Name:"));
-        typed("program-answer-789");
-        wait_for(5000, || screen().contains("IN-DONE"));
-        // Back at the prompt (the line editor has the terminal again), ordinary
-        // commands are still recorded.
-        let pid = h.app.inner.borrow().panes[&pane].pid.get().unwrap();
         wait_for(5000, || {
             let i = h.app.inner.borrow();
             let p = &i.panes[&pane];
-            oxishell::meta::foreground_pgrp(p.pty_fd()) == Some(pid) && p.shell_reads_commands()
+            !p.has_running_child() && oxishell::meta::canonical_mode(p.pty_fd()) == Some(true)
         });
+        typed("builtin-secret-123");
+        wait_for(5000, || output_line("READ-DONE"));
+        wait_for(5000, shell_ready);
+        // A program asking for a password (the foreground is the program).
+        typed("python3 -c 'import getpass; getpass.getpass(); print(\"PY-DONE\")'");
+        wait_for(5000, || screen().lines().any(|line| line.trim_end() == "Password:"));
+        typed("child-secret-456");
+        wait_for(5000, || output_line("PY-DONE"));
+        wait_for(5000, shell_ready);
+        // Visible input to a program is not a shell command either.
+        typed("python3 -c 'input(\"Name: \"); print(\"IN-DONE\")'");
+        wait_for(5000, || screen().lines().any(|line| line.trim_end() == "Name:"));
+        typed("program-answer-789");
+        wait_for(5000, || output_line("IN-DONE"));
+        // Back at the prompt (the line editor has the terminal again), ordinary
+        // commands are still recorded.
+        wait_for(5000, shell_ready);
         typed("echo visible-command");
-        wait_for(5000, || screen().contains("\nvisible-command"));
+        wait_for(5000, || output_line("visible-command"));
         pump(300);
 
         let i = h.app.inner.borrow();

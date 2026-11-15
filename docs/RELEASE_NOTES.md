@@ -1,5 +1,15 @@
 # Release notes
 
+## 0.2.1 — 2026-11-15
+
+- Fixed: the Compose stack bar listed services from other compose files in the same folder (they share
+  one Compose project, so `docker compose -f <file> ps` reports all of them). It now shows only the
+  services the chosen file declares, as `docker compose config --services` resolves them.
+- **Stack bar colours:** a running service's chip is green, yellow while its healthcheck is starting,
+  red when it crashed, is unhealthy or keeps restarting, and dim once a one-shot job finished or you
+  stopped it. The status dot shows the whole stack's state; **rebuild** uses the accent colour and
+  **restart** yellow, next to the red **stop**. The colours follow the theme's palette.
+
 ## 0.2.0 — 2026-11-15
 
 - **Docker Compose launcher:** a button in each pane (or Ctrl+Shift+L) lists the repo's compose files.

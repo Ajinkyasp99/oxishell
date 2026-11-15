@@ -52,7 +52,8 @@ C
 
 chmod 644 "$R/usr/share/doc/$PKG/copyright"
 
-# Shared-library dependencies computed from the binaries.
+# Shared-library dependencies computed from the binaries. The SVG pixbuf loader
+# is loaded at runtime for bundled symbolic icons, so shlibdeps cannot detect it.
 mkdir -p "$STAGE/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: any\n' "$PKG" "$PKG" > "$STAGE/debian/control"
 DEPS=$(cd "$STAGE" && dpkg-shlibdeps -O "root/usr/bin/oxishell" "root/usr/bin/oxi" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
@@ -66,7 +67,7 @@ Version: $VERSION
 Architecture: $ARCH
 Maintainer: Ajinkya Patil <Ajinkyasp99@users.noreply.github.com>
 Installed-Size: $SIZE
-Depends: $DEPS
+Depends: $DEPS, librsvg2-common
 Recommends: git
 Section: x11
 Priority: optional
