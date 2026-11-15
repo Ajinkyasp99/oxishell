@@ -42,6 +42,9 @@ pub struct Pane {
     pub chips: super::chips::Chips,
     pub suggest: super::suggest::Suggest,
     pub blocks: Rc<super::blocks::Blocks>,
+    /// A program other than the shell holds the terminal (from the meta worker).
+    pub busy: bool,
+    pub compose: super::compose_ui::PaneCompose,
 }
 
 pub(super) const PCRE2_CASELESS: u32 = 0x0000_0008;
@@ -79,6 +82,33 @@ impl Pane {
         match crate::meta::foreground_pgrp(self.pty_fd()) {
             Some(pg) => pg != pid,
             None => false,
+        }
+    }
+
+    /// The shell's own line editor has the keyboard, so what is typed is a
+    /// shell command: no program in the foreground, and the terminal out of
+    /// canonical mode (a `read`, `read -s` or password prompt reads lines).
+    pub fn shell_reads_commands(&self) -> bool {
+        !self.has_running_child() && crate::meta::canonical_mode(self.pty_fd()) == Some(false)
+    }
+
+    /// The shell waits at an empty prompt, so typed input starts a new
+    /// command (input queued while the shell starts reaches a fresh prompt).
+    pub fn prompt_is_empty(&self) -> bool {
+        let t = self.suggest.tracker.borrow();
+        t.valid && t.line.is_empty() && (self.pending_input.borrow().is_some() || self.shell_reads_commands())
+    }
+
+    /// `send_input` for text typed on the user's behalf: the line tracker
+    /// follows it like typed keys (it is not added to the history).
+    pub fn type_input(&self, text: &str) {
+        let shell = self.pending_input.borrow().is_some() || self.shell_reads_commands();
+        self.send_input(text.as_bytes());
+        let mut t = self.suggest.tracker.borrow_mut();
+        if shell {
+            t.feed(text);
+        } else {
+            t.skip(text);
         }
     }
 
@@ -316,6 +346,11 @@ impl App {
         actions.set_valign(gtk4::Align::Start);
         actions.append(&handle);
         actions.append(&close_btn);
+        // Compose launcher: button before the drag handle, bars under the terminal.
+        let compose = super::compose_ui::PaneCompose::new(self, id, &actions);
+        super::compose_ui::watch_input(self, id, &term);
+        body.append(&compose.logs_clip);
+        body.append(&compose.stack_clip);
         // Fades in over the pane under the pointer while another pane is
         // dragged (CSS class "active"); invisible and click-through otherwise.
         let drop_hint = gtk4::Box::new(Orientation::Vertical, 0);
@@ -504,10 +539,9 @@ impl App {
                         let pending = pending.clone();
                         let t = t.clone();
                         glib::timeout_add_local(Duration::from_millis(40), move || {
-                            let canonical = t.pty().is_some_and(|p| unsafe {
-                                let mut tio: libc::termios = std::mem::zeroed();
-                                libc::tcgetattr(p.fd().as_raw_fd(), &mut tio) != 0 || tio.c_lflag & libc::ICANON != 0
-                            });
+                            let canonical = t
+                                .pty()
+                                .is_none_or(|p| crate::meta::canonical_mode(p.fd().as_raw_fd()) != Some(false));
                             let quiet = last_out.get().is_some_and(|i| i.elapsed() >= Duration::from_millis(200));
                             if (quiet && !canonical) || started.elapsed() > Duration::from_secs(5) {
                                 if let Some(id) = hid.take() {
@@ -557,6 +591,8 @@ impl App {
                 chips,
                 suggest,
                 blocks,
+                busy: false,
+                compose,
             },
         );
     }

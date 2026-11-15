@@ -315,6 +315,14 @@ impl LineTracker {
         self.line.clear();
         self.valid = true;
     }
+
+    /// Input that is not for the shell's line editor (a program, a hidden
+    /// prompt): nothing of it is kept. Once it ends a line (Enter, Ctrl+C), the
+    /// shell's next line is followed again.
+    pub fn skip(&mut self, input: &str) {
+        self.line.clear();
+        self.valid = input.ends_with(['\r', '\n', '\u{3}']);
+    }
 }
 
 #[cfg(test)]
@@ -402,6 +410,20 @@ mod tests {
             vec!["docker ps", "docker compose up", "ps aux | grep docker", "sudo docker ps"]
         );
         assert_eq!(h.search("compose docker", 10), vec!["docker compose up"]);
+    }
+
+    #[test]
+    fn skipped_input_is_dropped_and_the_next_line_is_followed() {
+        let mut t = LineTracker::default();
+        t.feed("ec");
+        t.skip("pass");
+        assert!(!t.valid && t.line.is_empty());
+        assert!(matches!(t.feed("\r"), Event::Submitted(None)));
+        t.skip("word\r");
+        assert!(t.valid && t.line.is_empty());
+        assert!(matches!(t.feed("ls\r"), Event::Submitted(Some(ref l)) if l == "ls"));
+        t.skip("\u{3}");
+        assert!(t.valid);
     }
 
     #[test]

@@ -23,7 +23,7 @@ jobs:
         run: |
           scripts/ci-apt-install.sh \
             build-essential pkg-config libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
-            xvfb xdotool dbus-x11 git python3 dpkg-dev appstream desktop-file-utils
+            xvfb xdotool git python3 dpkg-dev appstream desktop-file-utils
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt

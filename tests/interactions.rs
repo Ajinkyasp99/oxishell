@@ -784,6 +784,75 @@ fn workspace_colour_and_icon_show_in_the_sidebar_row() {
 }
 
 #[test]
+fn pane_action_icons_are_symbolic() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("symbolic-icons");
+        let theme = gtk4::IconTheme::for_display(&gtk4::prelude::WidgetExt::display(&h.app.window));
+        for name in ["oxishell-compose-symbolic", "oxishell-pane-move-symbolic", "window-close-symbolic"] {
+            assert!(theme.has_icon(name), "pane action icon exists: {name}");
+            let icon = theme.lookup_icon(name, &[], 12, 1, gtk4::TextDirection::Ltr, gtk4::IconLookupFlags::empty());
+            assert!(icon.is_symbolic(), "{name} must follow the widget's foreground color");
+        }
+    });
+}
+
+#[test]
+fn system_status_trend_strip_updates_and_fits_a_narrow_window() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("system-status");
+        let root = find_by_class(h.app.window.upcast_ref(), "system-status").unwrap();
+        let cpu = find_by_class(&root, "system-cpu-value").unwrap().downcast::<gtk4::Label>().unwrap();
+        let ram = find_by_class(&root, "system-memory-value")
+            .unwrap()
+            .downcast::<gtk4::Label>()
+            .unwrap();
+        let chart = find_by_class(&root, "system-cpu-history").unwrap();
+        let capacity = find_by_class(&root, "system-memory-capacity")
+            .unwrap()
+            .downcast::<gtk4::Label>()
+            .unwrap();
+        let bar = find_by_class(&root, "system-memory-bar")
+            .unwrap()
+            .downcast::<gtk4::ProgressBar>()
+            .unwrap();
+        wait_for(6_000, || cpu.text().ends_with('%'));
+        let percent = |label: &gtk4::Label| label.text().trim_end_matches('%').parse::<f64>().unwrap();
+        assert!((0.0..=100.0).contains(&percent(&cpu)));
+        assert!((0.0..=100.0).contains(&percent(&ram)));
+        assert!((percent(&ram) / 100.0 - bar.fraction()).abs() <= 0.0051);
+        assert!(capacity.text().ends_with(" GiB"));
+        assert!(chart.is_visible());
+        assert_eq!(chart.width(), 76);
+        assert!(bar.width() <= 54, "RAM meter stays compact: {}", bar.width());
+        let status = find_by_class(h.app.window.upcast_ref(), "statusbar").unwrap();
+        for (theme, dark) in [("warp_dark", true), ("snowy", false)] {
+            h.app.set_theme(theme);
+            pump(150);
+            assert_eq!(h.app.inner.borrow().theme.is_dark(), dark);
+            screenshot(&status, &format!("system-status-{theme}"));
+            screenshot(&h.app.window, &format!("system-status-window-{theme}"));
+        }
+        h.app.window.set_default_size(480, 400);
+        pump(300);
+        // GTK's client-side decorations can inset the content below 480px.
+        assert!(h.app.window.width() <= 480, "the strip must not raise the minimum window width");
+        let bounds = root.compute_bounds(&h.app.window).unwrap();
+        assert!(
+            bounds.x() >= 0.0 && bounds.x() + bounds.width() <= h.app.window.width() as f32,
+            "the resource strip fits at minimum window width"
+        );
+        screenshot(&status, "system-status-narrow");
+        screenshot(&h.app.window, "system-status-window-narrow");
+    });
+}
+
+#[test]
 fn bundled_and_theme_css_parse_without_errors() {
     if !have_input() {
         return;
@@ -1458,6 +1527,62 @@ fn command_block_headers_stay_put_when_a_running_program_clears_the_scrollback()
     });
 }
 
+#[test]
+fn hidden_input_and_program_input_never_reach_the_command_history() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("history-secrets");
+        let pane = h.app.focused_pane().unwrap();
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        let screen = || term.text_format(vte4::Format::Text).unwrap().to_string();
+        let typed = |text: &str| {
+            xdo(&["type", "--delay", "15", text]);
+            xdo(&["key", "Return"]);
+        };
+        pump(2500);
+        h.point(&term);
+        xdo(&["click", "1"]);
+        pump(200);
+
+        // A shell builtin reading with echo off: no child process owns the terminal.
+        typed("read -s SECRET; echo READ-DONE");
+        pump(800);
+        typed("builtin-secret-123");
+        wait_for(5000, || screen().contains("READ-DONE"));
+        // A program asking for a password (the foreground is the program).
+        typed("python3 -c 'import getpass; getpass.getpass(); print(\"PY-DONE\")'");
+        wait_for(5000, || screen().contains("Password:"));
+        typed("child-secret-456");
+        wait_for(5000, || screen().contains("PY-DONE"));
+        // Visible input to a program is not a shell command either.
+        typed("python3 -c 'input(\"Name: \"); print(\"IN-DONE\")'");
+        wait_for(5000, || screen().contains("Name:"));
+        typed("program-answer-789");
+        wait_for(5000, || screen().contains("IN-DONE"));
+        // Back at the prompt (the line editor has the terminal again), ordinary
+        // commands are still recorded.
+        let pid = h.app.inner.borrow().panes[&pane].pid.get().unwrap();
+        wait_for(5000, || {
+            let i = h.app.inner.borrow();
+            let p = &i.panes[&pane];
+            oxishell::meta::foreground_pgrp(p.pty_fd()) == Some(pid) && p.shell_reads_commands()
+        });
+        typed("echo visible-command");
+        wait_for(5000, || screen().contains("\nvisible-command"));
+        pump(300);
+
+        let i = h.app.inner.borrow();
+        for secret in ["builtin-secret-123", "child-secret-456", "program-answer-789"] {
+            assert!(i.history.search(secret, 5).is_empty(), "{secret} leaked into history");
+        }
+        let recent = i.history.search("", 10);
+        assert!(recent.contains(&"echo visible-command"), "{recent:?}");
+        assert!(recent.contains(&"read -s SECRET; echo READ-DONE"), "{recent:?}");
+    });
+}
+
 /// Rows also drop when output passes the scrollback limit while a command is
 /// still running (long builds, agents): the same drift must not happen.
 #[test]
@@ -1501,5 +1626,1417 @@ fn command_block_headers_stay_put_when_output_passes_the_scrollback_limit() {
         assert!(headers.is_empty(), "rows past the scrollback limit are gone: {headers:?}");
         xdo(&["key", "ctrl+c"]);
         pump(800);
+    });
+}
+
+/// Pump until `f` is true; panic after `ms` milliseconds.
+fn wait_for(ms: u64, f: impl Fn() -> bool) {
+    let until = Instant::now() + Duration::from_millis(ms);
+    while !f() {
+        assert!(Instant::now() < until, "condition not met within {ms} ms");
+        pump(50);
+    }
+}
+
+/// A `docker` stand-in: records its arguments, answers `compose version`, prints
+/// `ps.json` for `ps`, and stays in the foreground for `up`, `up --build` and
+/// `logs -f` until Ctrl+C. Returns (script, record file, ps.json).
+fn fake_docker(h: &Harness) -> (PathBuf, PathBuf, PathBuf) {
+    let bin = h.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let record = h.root.join("docker-args");
+    let ps = h.root.join("ps.json");
+    std::fs::write(&ps, "").unwrap();
+    let docker = bin.join("docker");
+    std::fs::write(
+        &docker,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{rec}'\necho \"$* | P=${{COMPOSE_PROJECT_NAME-unset}} | D=$(pwd)\" >> '{rec}.env'\ncase \"$*\" in\n  'compose version') exit 0;;\n  *' ps --all --format json') cat '{ps}'; exit 0;;\n  *' up -d') sleep 0.3;;\n  *' up'|*' up --build'|*' logs -f') trap 'exit 130' INT; while :; do sleep 0.1; done;;\nesac\nexit 0\n",
+            rec = record.display(),
+            ps = ps.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&docker, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    h.app.inner.borrow_mut().config.compose.command = format!("{} compose", docker.display());
+    (docker, record, ps)
+}
+
+#[test]
+fn panes_learn_the_repos_compose_files_and_busy_state() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-scan");
+        fake_docker(&h);
+        std::fs::write(h.root.join("home/docker-compose.yml"), "services:\n  api: {}\n  web: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.scan.is_some());
+        {
+            let i = h.app.inner.borrow();
+            let scan = i.panes[&pane].compose.scan.as_ref().unwrap();
+            assert_eq!(scan.files.len(), 1);
+            assert_eq!(scan.files[0].services, Some(vec!["api".into(), "web".into()]));
+            assert!(scan.command.is_some());
+        }
+        assert!(!h.app.inner.borrow().panes[&pane].busy);
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        term.feed_child(b"sleep 30\n");
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].busy);
+    });
+}
+
+#[test]
+fn choosing_a_compose_file_runs_it_in_the_pane_and_disables_the_button() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-run");
+        let (_, record, _) = fake_docker(&h);
+        std::fs::write(h.root.join("home/docker-compose.yml"), "services:\n  api: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+        let button = h.app.inner.borrow().panes[&pane].compose.button.clone();
+        assert!(button.is_sensitive());
+        assert_eq!(button.tooltip_text().as_deref(), Some("Compose files in this repo (Ctrl+Shift+L)"));
+
+        let file = h.root.join("home/docker-compose.yml");
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Up);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" up"));
+        assert!(ran().contains("compose -f docker-compose.yml up"), "{}", ran());
+        wait_for(8_000, || !button.is_sensitive());
+        assert_eq!(button.tooltip_text().as_deref(), Some("Busy: wait for the command to finish"));
+    });
+}
+
+#[test]
+fn the_launcher_never_runs_together_with_unfinished_prompt_input() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-prompt");
+        let (_, record, _) = fake_docker(&h);
+        std::fs::write(h.root.join("home/docker-compose.yml"), "services:\n  api: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        let screen = || term.text_format(vte4::Format::Text).unwrap().to_string();
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        let file = h.root.join("home/docker-compose.yml");
+        pump(2500);
+        h.point(&term);
+        xdo(&["click", "1"]);
+        pump(200);
+
+        // Unfinished input: running the launcher now would execute it too.
+        let marker = h.root.join("prefix-ran");
+        xdo(&["type", "--delay", "15", &format!("touch {}; ", marker.display())]);
+        pump(300);
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Up);
+        pump(1500);
+        assert!(!marker.exists(), "the unfinished prefix was executed");
+        assert!(!ran().contains(" up"), "{}", ran());
+        assert!(
+            !screen().contains("compose -f"),
+            "nothing appended to the user's input:\n{}",
+            screen()
+        );
+        assert!(screen().contains("prefix-ran; "), "the user's input stays as it was");
+
+        // Once the prompt is empty, it runs.
+        xdo(&["key", "ctrl+u"]);
+        pump(300);
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Up);
+        wait_for(8_000, || ran().contains(" up"));
+        assert!(!marker.exists());
+    });
+}
+
+#[test]
+fn a_typed_but_unsent_launch_is_not_typed_twice() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-twice");
+        let (_, record, _) = fake_docker(&h);
+        h.app.inner.borrow_mut().config.compose.run_immediately = false;
+        std::fs::write(h.root.join("home/docker-compose.yml"), "services:\n  api: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        let file = h.root.join("home/docker-compose.yml");
+        pump(2500);
+        let up = oxishell::compose::Action::Up;
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, up.clone());
+        pump(500);
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, up);
+        pump(500);
+        let text = term.text_format(vte4::Format::Text).unwrap().to_string();
+        assert_eq!(text.matches("compose -f").count(), 1, "{text}");
+        h.point(&term);
+        xdo(&["click", "1"]);
+        pump(200);
+        xdo(&["key", "Return"]);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" up"));
+        assert!(ran().contains("compose -f docker-compose.yml up\n"), "{}", ran());
+    });
+}
+
+#[test]
+fn no_compose_files_means_no_button() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-none");
+        fake_docker(&h);
+        let (_, pane) = h.app.new_workspace(Some("empty"), Some(h.root.join("home"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.scan.is_some());
+        pump(300);
+        assert!(!h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+        h.app.run_action("compose-files");
+        pump(200);
+        assert!(find_by_class(h.app.window.upcast_ref(), "compose-picker").is_none());
+    });
+}
+
+#[test]
+fn compose_picker_opens_from_the_shortcut_action_and_works_from_the_keyboard() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-picker");
+        let (_, record, _) = fake_docker(&h);
+        std::fs::write(h.root.join("home/docker-compose.yml"), "services:\n  api: {}\n  web: {}\n").unwrap();
+        std::fs::create_dir_all(h.root.join("home/services/pay")).unwrap();
+        std::fs::write(h.root.join("home/services/pay/compose.yaml"), "services:\n  pay: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+        let button = h.app.inner.borrow().panes[&pane].compose.button.clone();
+
+        h.app.run_action("compose-files");
+        pump(400);
+        let pop = find_by_class(button.upcast_ref(), "compose-picker").expect("the picker opened");
+        assert!(pop.is_visible());
+        let list: gtk4::ListBox = find_descendant(&pop).unwrap();
+        // Folder headers: the repo root's files first, then each folder's files under it.
+        let groups: Vec<String> = widgets(&pop)
+            .into_iter()
+            .filter(|w| w.has_css_class("compose-group"))
+            .filter_map(|w| w.downcast::<gtk4::Label>().ok())
+            .map(|l| l.label().to_string())
+            .collect();
+        assert_eq!(groups, ["repo root", "services/pay/"]);
+        let selected = || list.selected_row().map(|r| r.widget_name().to_string());
+        assert_eq!(selected().as_deref(), Some("docker-compose.yml"), "the first file is selected");
+        screenshot(&pop, "compose-picker");
+        screenshot(&h.app.window, "compose-pane");
+
+        // Filtering hides folders with no matching file.
+        let entry: gtk4::SearchEntry = find_descendant(&pop).unwrap();
+        let shown_groups = || {
+            widgets(&list)
+                .into_iter()
+                .filter_map(|w| w.downcast::<gtk4::ListBoxRow>().ok())
+                .filter(|r| r.is_child_visible() && r.widget_name().starts_with("group:"))
+                .map(|r| r.widget_name().to_string())
+                .collect::<Vec<_>>()
+        };
+        entry.set_text("pay");
+        pump(400);
+        assert_eq!(shown_groups(), ["group:services/pay/"]);
+        assert_eq!(selected().as_deref(), Some("services/pay/compose.yaml"));
+        entry.set_text("");
+        pump(400);
+        assert_eq!(shown_groups().len(), 2);
+        assert_eq!(selected().as_deref(), Some("docker-compose.yml"));
+        list.selected_row().unwrap().grab_focus();
+        pump(100);
+
+        xdo(&["key", "--window", &h.window, "j"]);
+        pump(200);
+        assert_eq!(
+            selected().as_deref(),
+            Some("services/pay/compose.yaml"),
+            "j moves to the next file, skipping the folder header"
+        );
+        xdo(&["key", "--window", &h.window, "d"]);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" up -d"));
+        assert!(ran().contains("compose -f services/pay/compose.yaml up -d"), "{}", ran());
+        assert!(!pop.is_visible(), "the picker closes after an action");
+    });
+}
+
+#[test]
+fn compose_picker_keeps_keyboard_selection_fully_visible() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-picker-scroll");
+        fake_docker(&h);
+        let files: Vec<String> = (0..24).map(|n| format!("group-{}/compose-{n:02}.yaml", n / 8)).collect();
+        for rel in &files {
+            let file = h.root.join("home").join(rel);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, "services:\n  api: {}\n").unwrap();
+        }
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+        let button = h.app.inner.borrow().panes[&pane].compose.button.clone();
+        h.app.run_action("compose-files");
+        pump(400);
+        let pop = find_by_class(button.upcast_ref(), "compose-picker").unwrap();
+        let scroll: gtk4::ScrolledWindow = find_descendant(&pop).unwrap();
+        let list: gtk4::ListBox = find_descendant(scroll.upcast_ref()).unwrap();
+        let entry: gtk4::SearchEntry = find_descendant(&pop).unwrap();
+        assert!(
+            scroll.vadjustment().upper() > scroll.vadjustment().page_size(),
+            "the file list must overflow"
+        );
+        let visible = |index: usize| {
+            let row = list.selected_row().unwrap();
+            assert_eq!(row.widget_name().as_str(), files[index]);
+            let bounds = row.compute_bounds(&scroll.child().unwrap()).unwrap();
+            let bottom = bounds.y() + bounds.height();
+            let height = scroll.vadjustment().page_size() as f32;
+            assert!(
+                bounds.y() >= -0.5 && bottom <= height + 0.5,
+                "selected file {} must be fully visible: {}..{bottom}, viewport 0..{height}",
+                files[index],
+                bounds.y()
+            );
+        };
+        visible(0);
+        // Arrows skip headers, scroll in both directions and wrap at either end.
+        // They also work while typing a filter, without taking its keyboard focus.
+        for in_filter in [false, true] {
+            if in_filter {
+                xdo(&["key", "slash"]);
+                pump(100);
+            }
+            for (key, indices) in [
+                ("Down", (1..files.len()).collect::<Vec<_>>()),
+                ("Up", (0..files.len() - 1).rev().collect()),
+                ("Up", vec![files.len() - 1]),
+                ("Down", vec![0]),
+            ] {
+                for index in indices {
+                    xdo(&["key", key]);
+                    pump(80);
+                    visible(index);
+                    assert_eq!(entry.state_flags().contains(gtk4::StateFlags::FOCUS_WITHIN), in_filter);
+                }
+            }
+        }
+        // Filtering to a file near the end, then clearing, must reveal the new selection.
+        entry.set_text("compose-23");
+        pump(400);
+        visible(23);
+        entry.set_text("");
+        pump(400);
+        visible(0);
+        list.selected_row().unwrap().grab_focus();
+        for (key, index) in [("k", 23), ("j", 0), ("KP_Up", 23), ("KP_Down", 0)] {
+            xdo(&["key", key]);
+            pump(80);
+            visible(index);
+        }
+        xdo(&["key", "Escape"]);
+        pump(100);
+    });
+}
+
+const PS_API_RUNNING: &str = r#"{"Service":"api","State":"running","Health":"","ExitCode":0,"Publishers":[{"URL":"0.0.0.0","TargetPort":8000,"PublishedPort":8000,"Protocol":"tcp"}]}"#;
+
+/// A workspace in `home` with one compose file whose launcher button is showing.
+fn compose_workspace(h: &Harness, name: &str) -> (oxishell::model::PaneId, PathBuf) {
+    let file = h.root.join("home/docker-compose.yml");
+    std::fs::write(&file, "services:\n  api: {}\n").unwrap();
+    let (_, pane) = h.app.new_workspace(Some(name), Some(h.root.join("home"))).unwrap();
+    wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+    (pane, file)
+}
+
+#[test]
+fn an_old_crash_notifications_restart_never_acts_on_a_newer_stack() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-old-crash");
+        let (_, record, ps) = fake_docker(&h);
+        std::fs::create_dir_all(h.root.join("home/other")).unwrap();
+        let file_b = h.root.join("home/other/compose.yaml");
+        std::fs::write(&file_b, "services:\n  api: {}\n").unwrap();
+        let (pane, file_a) = compose_workspace(&h, "shop");
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        let ready = || h.app.inner.borrow().panes[&pane].prompt_is_empty();
+        let stack_file = || h.app.inner.borrow().panes[&pane].compose.stack.as_ref().map(|s| s.file.clone());
+        let seen_running = || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.seen_running)
+        };
+        let crash_notes = || -> Vec<u64> {
+            let i = h.app.inner.borrow();
+            i.notes
+                .all()
+                .iter()
+                .filter(|n| n.title == "api exited with code 1")
+                .map(|n| n.id)
+                .collect()
+        };
+        let exited = r#"{"Service":"api","State":"exited","Health":"","ExitCode":1,"Publishers":[]}"#;
+        let detached = oxishell::compose::Action::UpDetached;
+
+        // Stack A crashes and its notification offers "Restart api".
+        wait_for(8_000, ready);
+        oxishell::ui::compose_ui::run(&h.app, pane, &file_a, detached.clone());
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        wait_for(8_000, seen_running);
+        std::fs::write(&ps, exited).unwrap();
+        wait_for(8_000, || crash_notes().len() == 1);
+        let old = crash_notes()[0];
+
+        // Stack B now runs from the same pane.
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        wait_for(8_000, ready);
+        oxishell::ui::compose_ui::run(&h.app, pane, &file_b, detached);
+        wait_for(8_000, || stack_file().as_deref() == Some(file_b.as_path()));
+        wait_for(8_000, seen_running);
+
+        // A's old button must not restart B's service.
+        h.app.compose_notification_action(old, "restart");
+        pump(2_000);
+        assert!(!ran().contains(" restart"), "{}", ran());
+
+        // B's own crash notification still restarts B.
+        std::fs::write(&ps, exited).unwrap();
+        wait_for(8_000, || crash_notes().len() == 2);
+        let new = *crash_notes().iter().find(|&&n| n != old).unwrap();
+        h.app.compose_notification_action(new, "restart");
+        wait_for(8_000, || ran().contains(" restart"));
+        let b_restart = format!("-f {} restart api", file_b.display());
+        assert!(ran().contains(&b_restart), "{}", ran());
+    });
+}
+
+#[test]
+fn status_and_bar_actions_use_the_environment_and_folder_the_stack_was_started_with() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-context");
+        let (_, record, ps) = fake_docker(&h);
+        let env_log = PathBuf::from(format!("{}.env", record.display()));
+        let (pane, file) = compose_workspace(&h, "shop");
+        let sub = h.root.join("home/sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        let ready = || h.app.inner.borrow().panes[&pane].prompt_is_empty();
+        let log = || std::fs::read_to_string(&env_log).unwrap_or_default();
+        pump(2500);
+        h.point(&term);
+        xdo(&["click", "1"]);
+        pump(200);
+        // Only the pane's shell has this variable and this folder.
+        xdo(&["type", "--delay", "15", "export COMPOSE_PROJECT_NAME=review-stack; cd sub"]);
+        xdo(&["key", "Return"]);
+        pump(800);
+        wait_for(8_000, ready);
+
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        wait_for(10_000, || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.seen_running)
+        });
+        oxishell::ui::compose_ui::run_background(&h.app, pane, oxishell::compose::Action::Stop);
+        wait_for(8_000, || log().contains(" stop |"));
+
+        let context = format!("P=review-stack | D={}", sub.display());
+        let log_text = log();
+        let up = log_text.lines().find(|l| l.contains(" up -d |")).expect("up -d ran");
+        assert!(up.ends_with(&context), "{log_text}");
+        let ps_lines: Vec<&str> = log_text.lines().filter(|l| l.contains(" ps --all ")).collect();
+        assert!(!ps_lines.is_empty());
+        for l in &ps_lines {
+            assert!(l.ends_with(&context), "status polled outside the stack's context: {l}\n{log_text}");
+        }
+        let stop = log_text.lines().find(|l| l.contains(" stop |")).unwrap();
+        assert!(stop.ends_with(&context), "{log_text}");
+
+        // A compose program found by a later scan does not replace the one that started the stack.
+        let idle = || h.app.inner.borrow().panes[&pane].compose.stack.as_ref().is_some_and(|s| !s.working);
+        wait_for(8_000, idle);
+        h.app.inner.borrow_mut().config.compose.command = "/nonexistent/docker compose".into();
+        oxishell::ui::compose_ui::rescan(&h.app, pane);
+        pump(1_000);
+        oxishell::ui::compose_ui::run_background(&h.app, pane, oxishell::compose::Action::Restart);
+        wait_for(8_000, || log().contains(" restart |"));
+        let restart = log().lines().find(|l| l.contains(" restart |")).unwrap().to_string();
+        assert!(restart.ends_with(&context), "{restart}");
+    });
+}
+
+#[test]
+fn stack_bar_follows_ps_and_stop_runs_in_the_background() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-bar");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        assert!(!bar.is_visible());
+
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Up);
+        pump(4_000);
+        assert!(bar.is_visible(), "no containers yet but the pane is busy: the bar stays");
+
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        wait_for(8_000, || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.seen_running)
+        });
+        screenshot(&h.app.window, "compose-stack-bar");
+
+        oxishell::ui::compose_ui::run_background(&h.app, pane, oxishell::compose::Action::Stop);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" stop"));
+        assert!(h.app.inner.borrow().panes[&pane].busy, "stop does not type into the pane");
+
+        std::fs::write(&ps, "").unwrap();
+        wait_for(8_000, || !bar.is_visible());
+    });
+}
+
+#[test]
+fn stop_logs_sends_ctrl_c_and_hides_the_logs_line() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-logs");
+        let (_, record, _) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        let logs_bar = h.app.inner.borrow().panes[&pane].compose.logs_bar.clone();
+
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Logs);
+        wait_for(8_000, || logs_bar.is_visible());
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" logs -f"));
+        pump(500);
+
+        oxishell::ui::compose_ui::stop_logs(&h.app, pane);
+        wait_for(8_000, || !h.app.inner.borrow().panes[&pane].busy);
+        wait_for(8_000, || !logs_bar.is_visible());
+        assert!(!ran().contains(" stop") && !ran().contains(" down"), "{}", ran());
+    });
+}
+
+#[test]
+fn a_crashing_service_is_reported_once() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-crash");
+        let (_, _, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Up);
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        wait_for(8_000, || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.seen_running)
+        });
+        let crashed = || {
+            h.app
+                .inner
+                .borrow()
+                .notes
+                .all()
+                .iter()
+                .filter(|n| n.title == "api exited with code 1")
+                .count()
+        };
+        let exited = r#"{"Service":"api","State":"exited","Health":"","ExitCode":1,"Publishers":[]}"#;
+        std::fs::write(&ps, exited).unwrap();
+        wait_for(8_000, || crashed() == 1);
+        pump(7_000);
+        assert_eq!(crashed(), 1, "one notification per crash");
+
+        h.app.inner.borrow_mut().config.compose.notify_on_crash = false;
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        pump(4_000);
+        std::fs::write(&ps, exited).unwrap();
+        pump(7_000);
+        assert_eq!(crashed(), 1, "notify_on_crash = false sends nothing");
+    });
+}
+
+#[test]
+fn rebuild_stops_the_attached_up_then_runs_up_build_in_the_pane() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-rebuild");
+        let (_, record, _) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Up);
+        wait_for(8_000, || ran().ends_with(" up\n"));
+        pump(500);
+
+        oxishell::ui::compose_ui::rebuild(&h.app, pane);
+        wait_for(15_000, || ran().contains(" up --build"));
+        let log = ran();
+        assert!(
+            log.find(" up\n").unwrap() < log.find(" up --build").unwrap(),
+            "up --build runs after the attached up: {log}"
+        );
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].busy);
+        let i = h.app.inner.borrow();
+        let stack = i.panes[&pane].compose.stack.as_ref().expect("the stack bar stays");
+        assert!(stack.attached);
+    });
+}
+
+#[test]
+fn rebuild_with_another_program_in_the_pane_opens_a_split() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-rebuild-split");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        wait_for(8_000, || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.seen_running && !s.attached)
+        });
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        term.feed_child(b"sleep 30\n");
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].busy);
+        let before = h.app.inner.borrow().panes.len();
+
+        oxishell::ui::compose_ui::rebuild(&h.app, pane);
+        wait_for(8_000, || h.app.inner.borrow().panes.len() == before + 1);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(15_000, || ran().contains(" up --build"));
+        assert!(h.app.inner.borrow().panes[&pane].busy, "sleep still runs in the first pane");
+    });
+}
+
+#[test]
+fn turning_the_launcher_off_hides_everything_and_stops_nothing() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-off");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        let (button, bar) = {
+            let i = h.app.inner.borrow();
+            (i.panes[&pane].compose.button.clone(), i.panes[&pane].compose.stack_bar.clone())
+        };
+        wait_for(8_000, || bar.is_visible() && button.is_sensitive());
+
+        h.app.inner.borrow_mut().config.compose.enabled = false;
+        h.app.apply_config();
+        pump(300);
+        assert!(!button.is_visible() && !bar.is_visible());
+        h.app.run_action("compose-files");
+        pump(200);
+        assert!(find_by_class(button.upcast_ref(), "compose-picker").is_none());
+        pump(3_500);
+        let ran = std::fs::read_to_string(&record).unwrap_or_default();
+        assert!(!ran.contains(" stop") && !ran.contains(" down"), "{ran}");
+
+        h.app.inner.borrow_mut().config.compose.enabled = true;
+        h.app.apply_config();
+        pump(300);
+        assert!(button.is_visible() && bar.is_visible());
+    });
+}
+
+#[test]
+fn compose_bars_do_not_widen_the_pane() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-resize");
+        let (_, _, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        let frame = h.app.inner.borrow().panes[&pane].frame.clone();
+        let min_w = || frame.measure(gtk4::Orientation::Horizontal, -1).0;
+        let min_h = || frame.measure(gtk4::Orientation::Vertical, -1).0;
+        let (w0, h0) = (min_w(), min_h());
+
+        // Many services with ports make the chip row and status line long.
+        let many: String = (0..12)
+            .map(|i| format!(r#"{{"Service":"service-number-{i}","State":"running","Health":"","ExitCode":0,"Publishers":[{{"URL":"0.0.0.0","TargetPort":80,"PublishedPort":{},"Protocol":"tcp"}}]}}"#, 8000 + i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&ps, many).unwrap();
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        let (bar, logs_bar) = {
+            let i = h.app.inner.borrow();
+            (i.panes[&pane].compose.stack_bar.clone(), i.panes[&pane].compose.logs_bar.clone())
+        };
+        wait_for(8_000, || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.services.len() == 12)
+        });
+        wait_for(8_000, || {
+            !h.app.inner.borrow().panes[&pane].term.pty().is_none() && !h.app.inner.borrow().panes[&pane].has_running_child()
+        });
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Logs);
+        wait_for(8_000, || logs_bar.is_visible());
+        pump(300);
+        assert!(bar.is_visible());
+        let (w1, h1) = (min_w(), min_h());
+        eprintln!("pane minimum: before {w0}x{h0}, with bars {w1}x{h1}");
+        assert!(w1 <= w0, "the bars must not raise the pane's minimum width ({w0} -> {w1})");
+        // Height depends on how the chips wrap at the pane's real width; the
+        // wrap test checks the bar takes only what its rows need.
+        let _ = (h0, h1);
+    });
+}
+
+#[test]
+fn compose_stack_bar_wraps_its_chips_and_keeps_its_buttons_in_view_in_a_narrow_pane() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-wrap");
+        let (_, _, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        // Two panes side by side: the launcher pane is about half the window.
+        h.app.split(Some(pane), oxishell::model::Orient::Horizontal, None).unwrap();
+        let many: String = (0..12)
+            .map(|i| format!(r#"{{"Service":"service-number-{i}","State":"running","Health":"","ExitCode":0,"Publishers":[{{"URL":"0.0.0.0","TargetPort":80,"PublishedPort":{},"Protocol":"tcp"}}]}}"#, 8000 + i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&ps, many).unwrap();
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        wait_for(8_000, || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.services.len() == 12)
+        });
+        pump(500);
+        let (clip, frame, bar) = {
+            let i = h.app.inner.borrow();
+            let c = &i.panes[&pane].compose;
+            (c.stack_clip.clone(), i.panes[&pane].frame.clone(), c.stack_bar.clone())
+        };
+        pump(800);
+        screenshot(&h.app.window, "compose-stack-bar-narrow");
+        let check = |label: &str| {
+            let width = clip.width() as f32;
+            let inside = |w: &gtk4::Widget| {
+                let b = w.compute_bounds(&clip).unwrap();
+                b.x() >= 0.0 && b.x() + b.width() <= width + 1.0
+            };
+            let all = widgets(&clip);
+            let chips: Vec<_> = all.iter().filter(|w| w.has_css_class("compose-chip")).collect();
+            assert_eq!(chips.len(), 12, "{label}");
+            for c in &chips {
+                assert!(inside(c), "{label}: chip {:?} is cut off", c.compute_bounds(&clip));
+            }
+            let stop = all.iter().find(|w| w.has_css_class("compose-stop")).expect("stop button");
+            assert!(inside(stop), "{label}: [stop] is out of view: {:?}", stop.compute_bounds(&clip));
+            let rows: std::collections::BTreeSet<i32> = chips.iter().map(|c| c.compute_bounds(&clip).unwrap().y() as i32).collect();
+            assert!(rows.len() > 1, "{label}: chips wrap onto more lines");
+            let needed = bar.measure(gtk4::Orientation::Vertical, clip.width()).1;
+            assert!(
+                clip.height() <= needed + 4,
+                "{label}: the bar takes only the height its wrapped rows need ({} > {needed})",
+                clip.height()
+            );
+            width
+        };
+        let half = check("half width");
+        assert!(half < frame.root().unwrap().width() as f32 * 0.75, "pane is narrow: {half}");
+
+        // Narrower still: split the launcher pane again (about a quarter of the window).
+        h.app.split(Some(pane), oxishell::model::Orient::Horizontal, None).unwrap();
+        pump(800);
+        screenshot(&h.app.window, "compose-stack-bar-quarter");
+        let quarter = check("quarter width");
+        assert!(quarter < half * 0.75, "pane got narrower: {half} -> {quarter}");
+    });
+}
+
+#[test]
+fn typing_a_filter_in_the_compose_picker_narrows_the_list() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-filter-typed");
+        let (_, record, _) = fake_docker(&h);
+        std::fs::write(h.root.join("home/docker-compose.yml"), "services:\n  api: {}\n").unwrap();
+        std::fs::create_dir_all(h.root.join("home/services/pay")).unwrap();
+        std::fs::write(h.root.join("home/services/pay/compose.yaml"), "services:\n  pay: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+        let button = h.app.inner.borrow().panes[&pane].compose.button.clone();
+        h.app.run_action("compose-files");
+        pump(400);
+        let pop = find_by_class(button.upcast_ref(), "compose-picker").expect("the picker opened");
+        let list: gtk4::ListBox = find_descendant(&pop).unwrap();
+        let entry: gtk4::SearchEntry = find_descendant(&pop).unwrap();
+        let visible_files = || {
+            widgets(&list)
+                .into_iter()
+                .filter_map(|w| w.downcast::<gtk4::ListBoxRow>().ok())
+                .filter(|r| r.is_child_visible() && !r.widget_name().starts_with("group:"))
+                .map(|r| r.widget_name().to_string())
+                .collect::<Vec<_>>()
+        };
+
+        // Real keys, as a user types them: / then the text.
+        xdo(&["key", "--window", &h.window, "slash"]);
+        pump(200);
+        xdo(&["type", "--window", &h.window, "--delay", "40", "pay"]);
+        pump(600);
+        assert_eq!(entry.text().as_str(), "pay", "the letters go into the filter");
+        assert_eq!(visible_files(), ["services/pay/compose.yaml"]);
+        assert!(pop.is_visible(), "typing letters does not run actions");
+        assert!(!std::fs::read_to_string(&record).unwrap_or_default().contains(" logs"));
+
+        xdo(&["key", "--window", &h.window, "Return"]);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" up"));
+        assert!(ran().contains("compose -f services/pay/compose.yaml up"), "{}", ran());
+        pump(300);
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        assert!(term.has_focus(), "typing goes back to the terminal after the picker closes");
+    });
+}
+
+#[test]
+fn the_typed_compose_path_follows_the_shells_real_folder() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-stale-cwd");
+        let (_, record, _) = fake_docker(&h);
+        std::fs::write(h.root.join("home/docker-compose.yml"), "services:\n  api: {}\n").unwrap();
+        std::fs::create_dir_all(h.root.join("home/services/pay")).unwrap();
+        let file = h.root.join("home/services/pay/compose.yaml");
+        std::fs::write(&file, "services:\n  pay: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+
+        // The shell is in `home`, but the pane's recorded folder is stale (the
+        // meta worker refreshes it only every few seconds).
+        h.app.inner.borrow_mut().panes.get_mut(&pane).unwrap().cwd = Some(h.root.join("home/services/pay"));
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" up -d"));
+        assert!(ran().contains("compose -f services/pay/compose.yaml up -d"), "{}", ran());
+    });
+}
+
+/// Where the middle of `w` is in the main X window (the coordinates xdotool's
+/// `--window` uses): includes the window's client-side shadow, and works for a
+/// widget inside a popover (a separate surface placed relative to the window).
+fn window_point(h: &Harness, w: &gtk4::Widget) -> (i32, i32) {
+    let mid = gtk4::graphene::Point::new(w.width() as f32 / 2.0, w.height() as f32 / 2.0);
+    let native = w.native().expect("widget is shown");
+    let native_widget: gtk4::Widget = native.clone().upcast();
+    let p = w.compute_point(&native_widget, &mid).expect("widget is in its native");
+    let (tx, ty) = native.surface_transform();
+    let (mut x, mut y) = (p.x() as f64 + tx, p.y() as f64 + ty);
+    if native_widget != *h.app.window.upcast_ref::<gtk4::Widget>() {
+        let popup = native
+            .surface()
+            .unwrap()
+            .dynamic_cast::<gtk4::gdk::Popup>()
+            .expect("a popup surface");
+        x += popup.position_x() as f64;
+        y += popup.position_y() as f64;
+    }
+    (x.round() as i32, y.round() as i32)
+}
+
+/// Click the middle of `w` with the real pointer.
+fn click_widget(h: &Harness, w: &impl IsA<gtk4::Widget>) {
+    let (x, y) = window_point(h, w.as_ref());
+    xdo(&["mousemove", "--window", &h.window, &x.to_string(), &y.to_string()]);
+    pump(80);
+    xdo(&["click", "1"]);
+    pump(150);
+}
+
+/// The first widget under `root` with CSS class `class` whose label contains `text`.
+fn button_with(root: &impl IsA<gtk4::Widget>, class: &str, text: &str) -> Option<gtk4::Button> {
+    widgets(root)
+        .into_iter()
+        .filter(|w| w.has_css_class(class))
+        .filter_map(|w| w.downcast::<gtk4::Button>().ok())
+        .find(|b| b.label().is_some_and(|l| l.contains(text)))
+}
+
+#[test]
+fn a_single_service_crash_keeps_its_red_chip_and_clicking_it_restarts_the_service() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-crash-chip");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
+
+        std::fs::write(
+            &ps,
+            r#"{"Service":"api","State":"exited","Health":"","ExitCode":1,"Publishers":[]}"#,
+        )
+        .unwrap();
+        wait_for(8_000, || {
+            button_with(&bar, "compose-chip", "api").is_some_and(|c| c.has_css_class("exited"))
+        });
+        pump(7_000);
+        assert!(bar.is_visible(), "the bar stays after the only service crashed");
+        let chip = button_with(&bar, "compose-chip", "api").expect("the red api chip");
+        assert!(chip.label().unwrap().starts_with('✗'));
+
+        click_widget(&h, &chip);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" restart api"));
+    });
+}
+
+#[test]
+fn clicking_stop_sends_no_crash_alert_for_killed_containers_and_removes_the_bar() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-stop-137");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
+        pump(5_500); // past the start-up grace period
+
+        let stop = button_with(&bar, "compose-bar-btn", "[stop]").expect("[stop]");
+        click_widget(&h, &stop);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" stop"));
+        // The service ignored SIGTERM and was killed: exit 137.
+        std::fs::write(
+            &ps,
+            r#"{"Service":"api","State":"exited","Health":"","ExitCode":137,"Publishers":[]}"#,
+        )
+        .unwrap();
+        wait_for(8_000, || !bar.is_visible());
+        let alerts = h
+            .app
+            .inner
+            .borrow()
+            .notes
+            .all()
+            .iter()
+            .filter(|n| n.title.contains("exited"))
+            .count();
+        assert_eq!(alerts, 0, "a stop the user asked for is not a crash");
+    });
+}
+
+#[test]
+fn with_run_immediately_off_pressing_enter_starts_the_stack_bar() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-no-auto-run");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        h.app.inner.borrow_mut().config.compose.run_immediately = false;
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        let (term, bar) = {
+            let i = h.app.inner.borrow();
+            (i.panes[&pane].term.clone(), i.panes[&pane].compose.stack_bar.clone())
+        };
+        term.grab_focus();
+        pump(200);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+
+        // Typed, then cancelled with Ctrl+C: nothing starts.
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        pump(300);
+        assert!(!ran().contains(" up"), "only typed, not run");
+        xdo(&["key", "--window", &h.window, "ctrl+c"]);
+        pump(200);
+        xdo(&["key", "--window", &h.window, "Return"]);
+        pump(1_500);
+        assert!(h.app.inner.borrow().panes[&pane].compose.stack.is_none(), "cancelled: no bar");
+
+        // Typed, then Enter pressed by the user: it runs and the bar appears.
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        pump(300);
+        xdo(&["key", "--window", &h.window, "Return"]);
+        wait_for(8_000, || ran().contains(" up -d"));
+        wait_for(8_000, || bar.is_visible());
+        wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
+    });
+}
+
+// ---- Compose launcher, driven only by real mouse clicks and key presses ----
+//
+// These tests use the launcher the way a person does: they never call the
+// launcher's functions directly. A bug that only shows with real input (focus,
+// key routing, layout) must fail here.
+
+/// A workspace in `home` with the given compose files (relative path, YAML),
+/// once its launcher button shows. Returns the pane and the button.
+fn ui_launcher_setup(h: &Harness, files: &[(&str, &str)]) -> (oxishell::model::PaneId, gtk4::Button) {
+    for (rel, yaml) in files {
+        let p = h.root.join("home").join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, yaml).unwrap();
+    }
+    let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+    wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+    let (button, term) = {
+        let i = h.app.inner.borrow();
+        (i.panes[&pane].compose.button.clone(), i.panes[&pane].term.clone())
+    };
+    term.grab_focus();
+    pump(200);
+    (pane, button)
+}
+
+fn press(h: &Harness, key: &str) {
+    xdo(&["key", "--window", &h.window, key]);
+    pump(200);
+}
+
+fn type_keys(h: &Harness, text: &str) {
+    xdo(&["type", "--window", &h.window, "--delay", "30", text]);
+    pump(300);
+}
+
+/// The open picker under `button`, if it is showing.
+fn open_picker(button: &gtk4::Button) -> Option<gtk4::Widget> {
+    find_by_class(button.upcast_ref(), "compose-picker").filter(|p| p.is_visible())
+}
+
+/// Names (relative paths) of the file rows the picker shows.
+fn picker_files(pop: &gtk4::Widget) -> Vec<String> {
+    widgets(pop)
+        .into_iter()
+        .filter_map(|w| w.downcast::<gtk4::ListBoxRow>().ok())
+        .filter(|r| r.is_child_visible() && !r.widget_name().starts_with("group:"))
+        .map(|r| r.widget_name().to_string())
+        .collect()
+}
+
+fn picker_selected(pop: &gtk4::Widget) -> Option<String> {
+    let list: gtk4::ListBox = find_descendant(pop).unwrap();
+    list.selected_row().map(|r| r.widget_name().to_string())
+}
+
+const UI_FILES: &[(&str, &str)] = &[
+    ("docker-compose.yml", "services:\n  api: {}\n  web: {}\n"),
+    ("docker-compose-dev.yml", "services:\n  api: {}\n"),
+    ("services/pay/compose.yaml", "services:\n  pay: {}\n"),
+];
+
+#[test]
+fn ui_launcher_clicking_the_button_opens_the_picker_and_esc_gives_typing_back_to_the_shell() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-click-esc");
+        fake_docker(&h);
+        let (pane, button) = ui_launcher_setup(&h, UI_FILES);
+        click_widget(&h, &button);
+        pump(300);
+        let pop = open_picker(&button).expect("a click opens the picker");
+        assert_eq!(
+            picker_selected(&pop).as_deref(),
+            Some("docker-compose-dev.yml"),
+            "first file selected"
+        );
+        screenshot(&pop, "ui-launcher-picker");
+
+        press(&h, "Escape");
+        assert!(open_picker(&button).is_none(), "Esc closes the picker");
+        type_keys(&h, "echo typed-after-esc");
+        press(&h, "Return");
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        wait_for(5_000, || {
+            term.text_format(vte4::Format::Text).unwrap().matches("typed-after-esc").count() >= 2
+        });
+        // Open and close it again and again (mouse and keyboard), then type.
+        for _ in 0..3 {
+            // A real hand always moves a little between clicks; synthetic
+            // input with zero motion does not reach the window again.
+            xdo(&["mousemove_relative", "--", "40", "40"]);
+            pump(100);
+            click_widget(&h, &button);
+            assert!(open_picker(&button).is_some(), "reopens");
+            press(&h, "Escape");
+            press(&h, "ctrl+shift+l");
+            assert!(open_picker(&button).is_some(), "reopens from the shortcut");
+            press(&h, "Escape");
+        }
+        type_keys(&h, "echo still-typing");
+        press(&h, "Return");
+        wait_for(5_000, || {
+            term.text_format(vte4::Format::Text).unwrap().matches("still-typing").count() >= 2
+        });
+    });
+}
+
+#[test]
+fn ui_launcher_shortcut_opens_the_picker_and_the_arrow_keys_skip_folder_headers() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-keys");
+        fake_docker(&h);
+        let (_, button) = ui_launcher_setup(&h, UI_FILES);
+        press(&h, "ctrl+shift+l");
+        pump(200);
+        let pop = open_picker(&button).expect("Ctrl+Shift+L opens the picker");
+        let sel = || picker_selected(&pop);
+        assert_eq!(sel().as_deref(), Some("docker-compose-dev.yml"));
+        press(&h, "Down");
+        assert_eq!(sel().as_deref(), Some("docker-compose.yml"));
+        press(&h, "j");
+        assert_eq!(
+            sel().as_deref(),
+            Some("services/pay/compose.yaml"),
+            "skips the services/pay/ header"
+        );
+        press(&h, "j");
+        assert_eq!(sel().as_deref(), Some("docker-compose-dev.yml"), "wraps to the top");
+        press(&h, "k");
+        assert_eq!(sel().as_deref(), Some("services/pay/compose.yaml"), "wraps to the bottom");
+        press(&h, "Up");
+        assert_eq!(sel().as_deref(), Some("docker-compose.yml"));
+    });
+}
+
+#[test]
+fn ui_launcher_filter_no_match_does_nothing_and_backspace_brings_the_list_back() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-filter");
+        let (_, record, _) = fake_docker(&h);
+        let (_, button) = ui_launcher_setup(&h, UI_FILES);
+        press(&h, "ctrl+shift+l");
+        let pop = open_picker(&button).expect("picker");
+        press(&h, "slash");
+        type_keys(&h, "zzz");
+        pump(400);
+        assert!(picker_files(&pop).is_empty(), "nothing matches");
+        press(&h, "Return");
+        assert!(open_picker(&button).is_some(), "Enter with no match keeps the picker open");
+        assert!(
+            !std::fs::read_to_string(&record).unwrap_or_default().contains(" up"),
+            "and runs nothing"
+        );
+        for _ in 0..3 {
+            press(&h, "BackSpace");
+        }
+        pump(400);
+        assert_eq!(picker_files(&pop).len(), 3, "the full list is back");
+        type_keys(&h, "dev");
+        pump(400);
+        assert_eq!(picker_files(&pop), ["docker-compose-dev.yml"]);
+        press(&h, "Down");
+        assert_eq!(picker_selected(&pop).as_deref(), Some("docker-compose-dev.yml"));
+    });
+}
+
+#[test]
+fn ui_launcher_row_buttons_clicked_with_the_mouse_run_their_action() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-row-buttons");
+        let (_, record, _) = fake_docker(&h);
+        let (_, button) = ui_launcher_setup(&h, UI_FILES);
+        click_widget(&h, &button);
+        let pop = open_picker(&button).expect("picker");
+        let row = widgets(&pop)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk4::ListBoxRow>().ok())
+            .find(|r| r.widget_name() == "services/pay/compose.yaml")
+            .unwrap();
+        let down = widgets(&row)
+            .into_iter()
+            .filter(|w| w.has_css_class("compose-key-btn"))
+            .find(|w| w.tooltip_text().is_some_and(|t| t.contains("Stop and remove")))
+            .expect("x down button");
+        click_widget(&h, &down);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" down"));
+        assert!(ran().contains("compose -f services/pay/compose.yaml down"), "{}", ran());
+        assert!(open_picker(&button).is_none(), "the picker closes");
+    });
+}
+
+#[test]
+fn ui_launcher_a_busy_pane_disables_the_button_and_the_shortcut() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-busy");
+        fake_docker(&h);
+        let (pane, button) = ui_launcher_setup(&h, UI_FILES);
+        type_keys(&h, "sleep 30");
+        press(&h, "Return");
+        wait_for(8_000, || !button.is_sensitive());
+        assert_eq!(button.tooltip_text().as_deref(), Some("Busy: wait for the command to finish"));
+        click_widget(&h, &button);
+        assert!(open_picker(&button).is_none(), "a click on the disabled button does nothing");
+        press(&h, "ctrl+shift+l");
+        assert!(open_picker(&button).is_none(), "nor does the shortcut");
+        press(&h, "ctrl+c");
+        wait_for(8_000, || button.is_sensitive());
+        assert!(!h.app.inner.borrow().panes[&pane].busy);
+    });
+}
+
+#[test]
+fn ui_launcher_stack_bar_buttons_and_chips_work_with_the_mouse() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-bar-clicks");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, button) = ui_launcher_setup(&h, UI_FILES);
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        // Start detached from the keyboard: open, move to docker-compose.yml, `d`.
+        press(&h, "ctrl+shift+l");
+        assert!(open_picker(&button).is_some());
+        press(&h, "Down");
+        press(&h, "d");
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains("compose -f docker-compose.yml up -d"));
+        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
+        screenshot(&h.app.window, "ui-launcher-stack-bar");
+
+        let restart = button_with(&bar, "compose-bar-btn", "[restart]").unwrap();
+        click_widget(&h, &restart);
+        wait_for(8_000, || ran().lines().any(|l| l.ends_with(" restart")));
+        wait_for(8_000, || restart.is_sensitive());
+        let chip = button_with(&bar, "compose-chip", "api").unwrap();
+        click_widget(&h, &chip);
+        wait_for(8_000, || ran().contains(" restart api"));
+        let stop = button_with(&bar, "compose-bar-btn", "[stop]").unwrap();
+        wait_for(8_000, || stop.is_sensitive());
+        click_widget(&h, &stop);
+        wait_for(8_000, || ran().lines().any(|l| l.ends_with(" stop")));
+        std::fs::write(&ps, "").unwrap();
+        wait_for(10_000, || !bar.is_visible());
+    });
+}
+
+#[test]
+fn ui_launcher_logs_line_stop_logs_clicked_with_the_mouse() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-logs");
+        let (_, record, _) = fake_docker(&h);
+        let (pane, button) = ui_launcher_setup(&h, UI_FILES);
+        press(&h, "ctrl+shift+l");
+        assert!(open_picker(&button).is_some());
+        press(&h, "l");
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" logs -f"));
+        let logs_bar = h.app.inner.borrow().panes[&pane].compose.logs_bar.clone();
+        wait_for(8_000, || logs_bar.is_visible());
+        let stop_logs = button_with(&logs_bar, "compose-bar-btn", "[stop logs]").unwrap();
+        click_widget(&h, &stop_logs);
+        wait_for(8_000, || !h.app.inner.borrow().panes[&pane].busy);
+        wait_for(8_000, || !logs_bar.is_visible());
+        assert!(!ran().contains(" stop\n") && !ran().contains(" down"), "{}", ran());
+        wait_for(8_000, || button.is_sensitive());
+    });
+}
+
+#[test]
+fn ui_launcher_dragging_the_divider_narrows_a_pane_that_shows_the_stack_bar() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-drag");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, button) = ui_launcher_setup(&h, UI_FILES);
+        let many: String = (0..10)
+            .map(|i| format!(r#"{{"Service":"service-number-{i}","State":"running","Health":"","ExitCode":0,"Publishers":[{{"URL":"0.0.0.0","TargetPort":80,"PublishedPort":{},"Protocol":"tcp"}}]}}"#, 8000 + i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&ps, many).unwrap();
+        press(&h, "ctrl+shift+l");
+        assert!(open_picker(&button).is_some());
+        press(&h, "d");
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" up -d"));
+        let (bar, frame) = {
+            let i = h.app.inner.borrow();
+            (i.panes[&pane].compose.stack_bar.clone(), i.panes[&pane].frame.clone())
+        };
+        wait_for(8_000, || {
+            bar.is_visible() && button_with(&bar, "compose-chip", "service-number-9").is_some()
+        });
+        // Split with the real shortcut, then drag the divider far to the left.
+        press(&h, "ctrl+shift+e");
+        pump(800);
+        let paned = frame
+            .ancestor(gtk4::Paned::static_type())
+            .unwrap()
+            .downcast::<gtk4::Paned>()
+            .unwrap();
+        let before = frame.width();
+        let handle = paned_handle(&paned);
+        let (x, y) = window_point(&h, &handle);
+        xdo(&["mousemove", "--window", &h.window, &x.to_string(), &y.to_string()]);
+        pump(100);
+        xdo(&["mousedown", "1"]);
+        for step in 1..=10 {
+            let nx = x - step * (before / 2 / 10).max(10);
+            xdo(&["mousemove", "--window", &h.window, &nx.to_string(), &y.to_string()]);
+            pump(40);
+        }
+        xdo(&["mouseup", "1"]);
+        pump(600);
+        screenshot(&h.app.window, "ui-launcher-drag");
+        let after = frame.width();
+        assert!(after < before * 2 / 3, "the divider moved: {before} -> {after}");
+        let clip = h.app.inner.borrow().panes[&pane].compose.stack_clip.clone();
+        let width = clip.width() as f32;
+        let stop = button_with(&bar, "compose-bar-btn", "[stop]").unwrap();
+        let b = stop.compute_bounds(&clip).unwrap();
+        assert!(b.x() + b.width() <= width + 1.0, "[stop] stays in view after the drag");
+        for c in widgets(&clip).into_iter().filter(|w| w.has_css_class("compose-chip")) {
+            let b = c.compute_bounds(&clip).unwrap();
+            assert!(b.x() + b.width() <= width + 1.0, "a chip is cut off after the drag");
+        }
+    });
+}
+
+#[test]
+fn ui_launcher_stop_clicked_during_the_first_pull_interrupts_the_up() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-stop-while-pulling");
+        let (_, record, _) = fake_docker(&h);
+        let (pane, button) = ui_launcher_setup(&h, UI_FILES);
+        // `up` in the pane, still pulling: no containers exist yet (ps is empty).
+        press(&h, "ctrl+shift+l");
+        assert!(open_picker(&button).is_some());
+        press(&h, "Down");
+        press(&h, "Return");
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains("compose -f docker-compose.yml up"));
+        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        wait_for(8_000, || bar.is_visible());
+        pump(1_000);
+        assert!(h.app.inner.borrow().panes[&pane].busy, "up is still running");
+
+        let stop = button_with(&bar, "compose-bar-btn", "[stop]").expect("[stop]");
+        click_widget(&h, &stop);
+        // The up ends (as with Ctrl+C) and the bar goes away; the button is usable again.
+        wait_for(8_000, || !h.app.inner.borrow().panes[&pane].busy);
+        wait_for(10_000, || !bar.is_visible());
+        wait_for(8_000, || button.is_sensitive());
+    });
+}
+
+#[test]
+fn ui_launcher_stop_on_running_containers_uses_docker_compose_stop_not_ctrl_c() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("ui-launcher-stop-running");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, button) = ui_launcher_setup(&h, UI_FILES);
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        // Attached `up` in the pane, containers already running (not a first pull).
+        press(&h, "ctrl+shift+l");
+        assert!(open_picker(&button).is_some());
+        press(&h, "Down");
+        press(&h, "Return");
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains("compose -f docker-compose.yml up"));
+        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
+
+        let stop = button_with(&bar, "compose-bar-btn", "[stop]").expect("[stop]");
+        click_widget(&h, &stop);
+        wait_for(8_000, || ran().lines().any(|l| l.ends_with(" stop")));
+        pump(1_000);
+        // The proper stop runs in the background; the pane got no Ctrl+C, so the
+        // attached `up` keeps running until compose stops it.
+        assert!(h.app.inner.borrow().panes[&pane].busy, "no Ctrl+C was sent to the pane");
     });
 }

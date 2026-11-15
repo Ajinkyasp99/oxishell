@@ -324,7 +324,18 @@ pub fn install(agent: &str, home: &Path, cli: &str) -> Result<PathBuf, String> {
     };
     let text = match agent {
         "codex" => install_codex(existing.as_deref().unwrap_or(""), cli)?,
-        "opencode" => opencode_plugin(cli),
+        // The whole file is ours: replace it only when it is (marker), never a
+        // user's own plugin of the same name. No backup is needed either way.
+        "opencode" => match &existing {
+            Some(t) if !t.contains(MARKER) => {
+                return Err(format!(
+                    "{} exists and was not created by oxishell; rename or remove it first",
+                    path.display()
+                ))
+            }
+            Some(_) => return write_settings(&path, &opencode_plugin(cli)),
+            None => opencode_plugin(cli),
+        },
         _ => {
             let mut v: Value = match &existing {
                 Some(t) if !t.trim().is_empty() => serde_json::from_str(t).map_err(|e| format!("{}: {e}", path.display()))?,
@@ -341,8 +352,12 @@ pub fn install(agent: &str, home: &Path, cli: &str) -> Result<PathBuf, String> {
             std::fs::write(&bak, old).map_err(|e| e.to_string())?;
         }
     }
-    crate::paths::write_atomic(&path, text.as_bytes(), 0o600).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(path)
+    write_settings(&path, &text)
+}
+
+fn write_settings(path: &Path, text: &str) -> Result<PathBuf, String> {
+    crate::paths::write_atomic(path, text.as_bytes(), 0o600).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path.to_path_buf())
 }
 
 pub fn uninstall(agent: &str, home: &Path) -> Result<PathBuf, String> {
@@ -577,6 +592,35 @@ timeout = 20
         std::fs::write(home.join(".gemini/settings.json"), "{broken").unwrap();
         assert!(install("gemini", &home, "oxi").is_err());
         assert!(install("nope", &home, "oxi").is_err());
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn opencode_install_never_replaces_a_users_own_plugin() {
+        let home = std::env::temp_dir().join(format!("oxishell-opencode-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let dir = home.join(".config/opencode/plugins");
+        std::fs::create_dir_all(&dir).unwrap();
+        let plugin = dir.join("oxishell.js");
+        let mine = "export const Mine = async () => ({});\n";
+        std::fs::write(&plugin, mine).unwrap();
+
+        let err = install("opencode", &home, "oxi").unwrap_err();
+        assert!(err.contains("not created by oxishell"), "{err}");
+        assert_eq!(std::fs::read_to_string(&plugin).unwrap(), mine, "user plugin untouched");
+        assert!(!hooks_installed(&home, "opencode"));
+        uninstall("opencode", &home).unwrap();
+        assert_eq!(std::fs::read_to_string(&plugin).unwrap(), mine, "uninstall leaves it alone");
+
+        // Our own file is replaced on reinstall (e.g. a new `oxi` path) and removed on uninstall.
+        std::fs::remove_file(&plugin).unwrap();
+        install("opencode", &home, "/old/oxi").unwrap();
+        install("opencode", &home, "/new/oxi").unwrap();
+        let text = std::fs::read_to_string(&plugin).unwrap();
+        assert!(text.contains("/new/oxi") && !text.contains("/old/oxi"));
+        uninstall("opencode", &home).unwrap();
+        assert!(!plugin.exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "no backup left behind");
         std::fs::remove_dir_all(&home).unwrap();
     }
 

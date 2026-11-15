@@ -1,5 +1,22 @@
 # Release notes
 
+## 0.2.0 — 2026-11-15
+
+- **Docker Compose launcher:** a button in each pane (or Ctrl+Shift+L) lists the repo's compose files.
+  Pick one to run `docker compose -f <file> up` in the pane (or `-d`, `down`, `logs -f` from the row).
+  While the stack runs, a bar under the terminal shows its services with **rebuild**, **restart** and
+  **stop**, and a desktop notification with **Restart** reports a crashed service. Works with
+  `docker compose`, `docker-compose` and `podman compose`; Settings → Workflow → Docker Compose launcher turns it off.
+- **Privacy:** what you type into a program or a hidden prompt (`sudo`, `read -s`, password prompts)
+  no longer ends up in the command history, its suggestions or command block notifications.
+- Fixed: `oxi pane split --cwd <relative path>` opened the pane in your home folder; the path is now
+  relative to where `oxi` runs, and a folder that does not exist is refused (also for `workspace new`).
+- Fixed: a malformed colour in a theme file (e.g. `#aé123`) could crash oxishell; it is now rejected.
+- Fixed: installing the OpenCode hooks could replace your own `plugins/oxishell.js`; oxishell now
+  refuses to overwrite a plugin it did not create, and uninstall removes only its own.
+- Docs: the development-build socket path in CONTRIBUTING.md works (a socket directly in `/tmp` is
+  refused by design).
+
 ## 0.1.4 — 2026-11-14
 
 - **File links:** `src/main.rs:42:7` (or Python's `File "app.py", line 12`) in any output opens your editor at

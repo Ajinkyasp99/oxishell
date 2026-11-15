@@ -76,8 +76,36 @@ pub struct Sampler {
     prev: Option<CpuTimes>,
 }
 
+/// One system reading. Missing data stays unknown rather than appearing idle.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Sample {
+    pub cpu: Option<f64>,
+    /// Memory in KiB: (used, total).
+    pub mem: Option<(u64, u64)>,
+}
+
+impl Sample {
+    pub fn memory_fraction(self) -> Option<f64> {
+        self.mem
+            .filter(|(_, total)| *total > 0)
+            .map(|(used, total)| (used as f64 / total as f64).clamp(0.0, 1.0))
+    }
+
+    pub fn memory_capacity(self) -> Option<String> {
+        self.mem.filter(|(_, total)| *total > 0).map(|(used, total)| {
+            let unit = 1024.0 * 1024.0;
+            format!("{:.1}/{:.1} GiB", used as f64 / unit, total as f64 / unit)
+        })
+    }
+}
+
 impl Sampler {
     pub fn sample(&mut self) -> String {
+        let sample = self.sample_values();
+        format(sample.cpu, sample.mem)
+    }
+
+    pub fn sample_values(&mut self) -> Sample {
         let cur = fs::read_to_string("/proc/stat").ok().and_then(|s| parse_cpu(&s));
         let cpu = match (self.prev, cur) {
             (Some(p), Some(c)) => cpu_percent(p, c),
@@ -87,7 +115,7 @@ impl Sampler {
             self.prev = cur;
         }
         let mem = fs::read_to_string("/proc/meminfo").ok().and_then(|s| parse_mem(&s));
-        format(cpu, mem)
+        Sample { cpu, mem }
     }
 }
 
@@ -127,5 +155,31 @@ mod tests {
         let s = format(Some(12.4), Some((4 * 1024 * 1024, 16 * 1024 * 1024)));
         assert_eq!(s, "CPU 12%  |  Mem 4.0G/16.0G (25%)");
         assert_eq!(format(None, None), "CPU —");
+    }
+
+    #[test]
+    fn memory_readout_preserves_unknown_and_formats_gib() {
+        let sample = Sample {
+            cpu: Some(15.0),
+            mem: Some((4 * 1024 * 1024, 16 * 1024 * 1024)),
+        };
+        assert_eq!(sample.memory_fraction(), Some(0.25));
+        assert_eq!(sample.memory_capacity().as_deref(), Some("4.0/16.0 GiB"));
+        assert_eq!(Sample::default().memory_fraction(), None);
+        assert_eq!(Sample::default().memory_capacity(), None);
+        let invalid = Sample {
+            mem: Some((100, 0)),
+            ..sample
+        };
+        assert_eq!(invalid.memory_fraction(), None);
+        assert_eq!(invalid.memory_capacity(), None);
+        assert_eq!(
+            Sample {
+                mem: Some((200, 100)),
+                ..sample
+            }
+            .memory_fraction(),
+            Some(1.0)
+        );
     }
 }

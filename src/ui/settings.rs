@@ -52,6 +52,7 @@ pub const SHORTCUT_SECTIONS: &[(&str, &[&str])] = &[
             "focus-right",
             "focus-up",
             "focus-down",
+            "compose-files",
         ],
     ),
     (
@@ -703,6 +704,35 @@ fn workflow_page(cfg: &Config, ap: &Ap) -> adw::PreferencesPage {
         cfg.session.replay_lines as f64,
         |c, v| c.session.replay_lines = v as usize,
     );
+
+    let dc = group(&p, "Docker Compose", "");
+    let launcher = switch(
+        &dc,
+        ap,
+        "Docker Compose launcher",
+        "Show a button in each pane that lists the repo's compose files and runs them.",
+        cfg.compose.enabled,
+        |c, v| c.compose.enabled = v,
+    );
+    let run_now = switch(
+        &dc,
+        ap,
+        "Run the command right away",
+        "Off: type the command and wait for Enter.",
+        cfg.compose.run_immediately,
+        |c, v| c.compose.run_immediately = v,
+    );
+    let crash = switch(
+        &dc,
+        ap,
+        "Notify when a service crashes",
+        "Desktop notification for a non-zero exit or an unhealthy service.",
+        cfg.compose.notify_on_crash,
+        |c, v| c.compose.notify_on_crash = v,
+    );
+    for row in [&run_now, &crash] {
+        launcher.bind_property("active", row, "sensitive").sync_create().build();
+    }
 
     let cg = group(
         &p,

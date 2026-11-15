@@ -52,6 +52,14 @@ replay_lines = 0         # replay N lines of each pane's old output after restar
 check = false            # ask GitHub once a day whether a newer version is out and show a notice (off by default;
                          # the only network request oxishell can make; nothing is downloaded)
 
+[compose]                # Docker Compose launcher (see docs/COMPOSE_LAUNCHER.md)
+enabled = true           # false hides the pane button, the stack bar and Ctrl+Shift+L, and skips the scan;
+                         # it never stops running containers
+run_immediately = true   # false = type the command and wait for Enter
+notify_on_crash = true   # desktop notification when a service exits non-zero or turns unhealthy
+default_action = "up"    # what choosing a file runs: "up", "up -d", "down" or "logs -f"
+command = ""             # empty = auto-detect docker compose, docker-compose or podman compose
+
 [ipc]
 enabled = true
 allow_send = false       # allow `oxi pane send` to type into panes
@@ -67,7 +75,7 @@ command = "cargo test"
 Shortcut actions: `new-workspace`, `close-workspace`, `rename-workspace`, `next-workspace`,
 `prev-workspace`, `split-right`, `split-down`, `close-pane`, `focus-left|right|up|down`, `copy`, `paste`,
 `newline`, `newline-alt`, `search`, `command-palette`, `toggle-sidebar`, `jump-unread`, `notifications`, `zoom-in`, `zoom-out`,
-`zoom-reset`, `command-history`, `settings`. Conflicting bindings are reported when the app starts.
+`zoom-reset`, `command-history`, `settings`, `compose-files`. Conflicting bindings are reported when the app starts.
 
 Environment variables: `OXISHELL_SOCKET` (socket path), `OXISHELL_GEOMETRY=WxH` (initial window size),
 `OXISHELL_NON_UNIQUE=1` (allow a second independent instance, used by tests).

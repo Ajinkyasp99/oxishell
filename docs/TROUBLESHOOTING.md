@@ -7,6 +7,8 @@ directory path is longer than ~100 bytes, the socket falls back to `/tmp/oxishel
 **"Control socket disabled: … in use by another instance"** — another oxishell owns the socket.
 Normally a second launch just focuses the first window. Close the other instance, or use
 `OXISHELL_SOCKET=/path/to/other.sock` for a deliberate second instance with `OXISHELL_NON_UNIQUE=1`.
+The socket's folder must be owned by you, e.g. `$XDG_RUNTIME_DIR/oxishell-dev/oxishell.sock`; a socket
+directly in `/tmp` is refused ("not a directory owned by the current user").
 
 **`oxi pane send` says "sending input is disabled"** — intentional default; set `[ipc] allow_send = true`.
 

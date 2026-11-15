@@ -52,6 +52,7 @@ input.
 | 🧱 **Command blocks** | Warp-style: every command gets a header with its folder, git branch, ✓/✗ exit status and run time. Failed commands get a red edge. Commands you type are highlighted so they stand out from output. |
 | 🔗 **Clickable links** | URLs in any output (agents, builds, logs) are clickable. A click opens a small popup with **Open Link** and **Copy Link**; <kbd>Ctrl</kbd>+click opens the link straight away. File positions such as `src/main.rs:42:7` open in your editor at that line. |
 | ▮ **Cursor** | Block, vertical line or horizontal line, blinking or steady. |
+| 🐳 **Docker Compose launcher** | A button next to a pane's ✥ handle lists the repo's compose files. Pick one (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>) and it runs `docker compose -f <file> up` in the pane. While the stack runs, a bar under the terminal shows each service and its port with rebuild / restart / stop, and a crashed service raises a notification. Optional, on by default; turn it off in Settings → Workflow. |
 | ⌘ **Command palette** | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>: every action, workspace, theme and your own project commands, with fuzzy search. |
 | 🤖 **Scriptable** | The `oxi` CLI controls the running app over a private local socket: create workspaces, split, read output, send notifications. |
 | 💾 **Sessions** | Workspaces, layouts, directories and agent sessions come back after a restart, each terminal clean at the top. Commands are never re-run. |
@@ -258,6 +259,7 @@ See [docs/THEMES.md](docs/THEMES.md).
 | Close pane | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
 | Move focus | <kbd>Alt</kbd>+<kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> |
 | Command palette | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
+| Docker Compose files | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> |
 | New line in a prompt (without sending) | <kbd>Shift</kbd>+<kbd>Enter</kbd> or <kbd>Ctrl</kbd>+<kbd>Enter</kbd> |
 | Copy / paste | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> |
 | Search scrollback | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> |

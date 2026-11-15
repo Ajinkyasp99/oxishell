@@ -22,7 +22,14 @@ cargo run --bin oxishell
 ```
 
 Running a development build next to an installed oxishell:
-`OXISHELL_NON_UNIQUE=1 OXISHELL_SOCKET=/tmp/oxishell-dev.sock cargo run --bin oxishell`.
+
+```bash
+export OXISHELL_SOCKET="$XDG_RUNTIME_DIR/oxishell-dev/oxishell.sock"   # same value for `oxi` calls
+OXISHELL_NON_UNIQUE=1 cargo run --bin oxishell
+```
+
+The socket's folder must belong to you (it is created with mode 0700), so a path directly in a
+shared folder such as `/tmp` is refused and the control socket stays off.
 
 ## Before you open a pull request
 

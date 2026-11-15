@@ -19,6 +19,10 @@ pub struct Rgb(pub u8, pub u8, pub u8);
 impl Rgb {
     pub fn parse(s: &str) -> Option<Rgb> {
         let h = s.trim().trim_start_matches('#');
+        // Byte slicing below needs ASCII; `from_str_radix` alone would also take a `+`.
+        if !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
         let v = |i: usize, n: usize| u8::from_str_radix(&h[i..i + n], 16).ok();
         match h.len() {
             6 | 8 => Some(Rgb(v(0, 2)?, v(2, 2)?, v(4, 2)?)),
@@ -733,5 +737,15 @@ mod tests {
         assert_eq!(Rgb::parse("#abc"), Some(Rgb(0xaa, 0xbb, 0xcc)));
         assert_eq!(Rgb(0, 0, 0).mix(Rgb(255, 255, 255), 0.5), Rgb(128, 128, 128));
         assert!(Rgb(255, 255, 255).luminance() > 0.99);
+    }
+
+    #[test]
+    fn non_hex_colours_are_rejected_without_panicking() {
+        // Same byte lengths as valid colours, but not ASCII hex digits.
+        for bad in ["#aé123", "#é1", "#ab€c", "#+12345", "#ggg", "#12 456", "#aé12345"] {
+            assert_eq!(Rgb::parse(bad), None, "{bad:?}");
+        }
+        let theme = "background: \"#aé123\"\nforeground: \"#ffffff\"\naccent: \"#ffffff\"\n";
+        assert!(parse_warp("bad", theme, None).is_err());
     }
 }

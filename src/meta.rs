@@ -18,6 +18,14 @@ pub fn foreground_pgrp(fd: std::os::fd::RawFd) -> Option<i32> {
     (pg > 0).then_some(pg)
 }
 
+/// Whether the terminal reads whole lines (canonical mode): true for `read`,
+/// password prompts and shells without a line editor; false while bash, zsh or
+/// fish edit the command line themselves. None if `fd` is not a terminal.
+pub fn canonical_mode(fd: std::os::fd::RawFd) -> Option<bool> {
+    let mut tio: libc::termios = unsafe { std::mem::zeroed() };
+    (unsafe { libc::tcgetattr(fd, &mut tio) } == 0).then_some(tio.c_lflag & libc::ICANON != 0)
+}
+
 pub fn comm(pid: i32) -> Option<String> {
     std::fs::read_to_string(format!("/proc/{pid}/comm"))
         .ok()
