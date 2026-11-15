@@ -495,6 +495,9 @@ impl Theme {
 .chip-env {{ color: {chip_env}; }}
 .chip-dir {{ color: {chip_dir}; }}
 .chip-git {{ color: {chip_git}; }}
+.compose-chip.compose-up:not(:hover), .compose-dot.compose-up {{ color: {chip_git}; }}
+.compose-chip.compose-pending:not(:hover), .compose-dot.compose-pending {{ color: {chip_env}; }}
+.compose-chip.compose-down:not(:hover), .compose-dot.compose-down {{ color: {chip_red}; }}
 .ghost {{ color: {ghost}; }}
 "#,
                 name = self.name,
@@ -516,6 +519,7 @@ impl Theme {
                 chip_env = chip[3].hex(),
                 chip_dir = chip[4].hex(),
                 chip_git = chip[2].hex(),
+                chip_red = chip[1].hex(),
                 ghost = fg.rgba(0.4),
             )
             + &workspace_color_css(&chip, fg)

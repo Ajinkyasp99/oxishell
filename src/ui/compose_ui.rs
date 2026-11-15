@@ -48,6 +48,8 @@ pub struct PaneCompose {
     /// next one opens: removing a popover right after it closes, while the
     /// pointer is still over it, crashes GTK (`gdk_surface_request_motion`).
     picker: RefCell<Option<gtk4::Popover>>,
+    /// Status glyph, coloured by the stack's [`compose::Tone`].
+    dot: gtk4::Label,
     status: gtk4::Label,
     chips: gtk4::FlowBox,
     /// Services the chips were last drawn for.
@@ -69,13 +71,20 @@ impl PaneCompose {
         stack_bar.add_css_class("compose-stack");
         stack_bar.set_visible(false);
         let top = gtk4::Box::new(Orientation::Horizontal, 8);
+        let dot = label("", &["compose-status", "compose-dot"]);
         let status = label("", &["compose-status"]);
         status.set_hexpand(true);
-        top.append(&status);
+        let line = gtk4::Box::new(Orientation::Horizontal, 0);
+        line.set_hexpand(true);
+        line.append(&dot);
+        line.append(&status);
+        top.append(&line);
         let rebuild_btn = bracket_button("rebuild", "Stop, then run up --build in this pane");
         let restart_btn = bracket_button("restart", "docker compose restart");
         let stop_btn = bracket_button("stop", "docker compose stop");
         stop_btn.add_css_class("compose-stop");
+        rebuild_btn.add_css_class("compose-rebuild");
+        restart_btn.add_css_class("compose-restart");
         for b in [&rebuild_btn, &restart_btn, &stop_btn] {
             top.append(b);
         }
@@ -142,6 +151,7 @@ impl PaneCompose {
             rescan: false,
             pending: None,
             picker: RefCell::new(None),
+            dot,
             status,
             chips,
             chips_key: RefCell::new(String::new()),
@@ -275,6 +285,9 @@ pub fn sync(p: &Pane, cfg: &Config) {
     let stack = c.stack.as_ref().filter(|_| on);
     set_visible(&c.stack_bar, stack.is_some());
     let Some(stack) = stack else { return };
+    let tone = compose::stack_tone(&stack.services, stack.stopping);
+    set_label(&c.dot, &format!("{} ", tone_glyph(tone)));
+    set_tone(&c.dot, tone);
     set_label(&c.status, &status_text(c, stack));
     for b in &c.bar_buttons {
         if b.is_sensitive() == stack.working {
@@ -284,9 +297,10 @@ pub fn sync(p: &Pane, cfg: &Config) {
     let key: String = stack
         .services
         .iter()
-        .map(|s| format!("{}:{:?}:{:?};", s.service, s.state, s.ports))
+        .map(|s| format!("{}:{:?}:{}:{}:{:?};", s.service, s.state, s.health, s.exit_code, s.ports))
         .collect::<String>()
-        + if stack.working { "w" } else { "" };
+        + if stack.working { "w" } else { "" }
+        + if stack.stopping { "s" } else { "" };
     if *c.chips_key.borrow() != key {
         draw_chips(c, stack);
         *c.chips_key.borrow_mut() = key;
@@ -315,17 +329,31 @@ fn glyph(s: &ServiceStatus) -> &'static str {
     }
 }
 
-/// `● docker-compose.yml  4/4 up │ 02:13 │ attached`
+/// The stack's status glyph: `●` up, `↻` starting, `✗` crashed, `○` idle.
+fn tone_glyph(t: compose::Tone) -> &'static str {
+    match t {
+        compose::Tone::Up => "●",
+        compose::Tone::Pending => "↻",
+        compose::Tone::Down => "✗",
+        compose::Tone::Idle => "○",
+    }
+}
+
+/// Give `w` the CSS class of `tone` (green, yellow, red or dim) and no other.
+fn set_tone(w: &impl IsA<gtk4::Widget>, tone: compose::Tone) {
+    for t in compose::Tone::ALL {
+        let class = t.css_class();
+        if t == tone {
+            w.as_ref().add_css_class(class);
+        } else if w.as_ref().has_css_class(class) {
+            w.as_ref().remove_css_class(class);
+        }
+    }
+}
+
+/// `docker-compose.yml  4/4 up │ 02:13 │ attached` (the glyph before it is its own label).
 fn status_text(c: &PaneCompose, s: &Stack) -> String {
     let up = s.services.iter().filter(|x| x.state == State::Running).count();
-    let crashed = s.services.iter().any(|x| x.state == State::Exited && x.exit_code != 0);
-    let dot = if crashed {
-        "✗"
-    } else if s.services.is_empty() || up < s.services.len() {
-        "↻"
-    } else {
-        "●"
-    };
     let detail = if let Some(n) = s.note.as_ref().or(s.ps_error.as_ref()) {
         n.clone()
     } else if s.services.is_empty() {
@@ -346,7 +374,7 @@ fn status_text(c: &PaneCompose, s: &Stack) -> String {
             if s.attached { "attached" } else { "detached" }
         )
     };
-    format!("{dot} {}  {detail}", c.display(&s.file))
+    format!("{}  {detail}", c.display(&s.file))
 }
 
 fn draw_chips(c: &PaneCompose, s: &Stack) {
@@ -358,9 +386,7 @@ fn draw_chips(c: &PaneCompose, s: &Stack) {
         b.add_css_class("compose-chip");
         // Line chips up on the left, like terminal text.
         b.set_halign(gtk4::Align::Start);
-        if svc.state == State::Exited {
-            b.add_css_class("exited");
-        }
+        set_tone(&b, compose::tone(svc, s.stopping));
         b.set_focus_on_click(false);
         b.set_sensitive(!s.working);
         b.set_tooltip_text(Some(&match svc.state {

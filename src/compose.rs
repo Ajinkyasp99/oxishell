@@ -134,6 +134,16 @@ pub fn service_names(yaml: &str) -> Option<Vec<String>> {
     Some(names)
 }
 
+/// [`service_names`] of the file at `path`; `None` when it is unreadable,
+/// invalid, or larger than [`MAX_PARSE_BYTES`].
+pub fn read_service_names(path: &Path) -> Option<Vec<String>> {
+    let small = std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_PARSE_BYTES);
+    small
+        .then(|| std::fs::read_to_string(path).ok())
+        .flatten()
+        .and_then(|t| service_names(&t))
+}
+
 /// The git work tree containing `dir`, or `dir` itself outside a repo.
 pub fn repo_root(dir: &Path) -> PathBuf {
     let out = Command::new("git")
@@ -196,11 +206,7 @@ pub fn scan_limited(root: &Path, limits: &Limits) -> Vec<ComposeFile> {
                     std::env::current_dir().map(|c| c.join(&path)).unwrap_or(path)
                 };
                 // Large files are listed but not parsed.
-                let small = e.metadata().is_ok_and(|m| m.len() <= MAX_PARSE_BYTES);
-                let services = small
-                    .then(|| std::fs::read_to_string(&path).ok())
-                    .flatten()
-                    .and_then(|t| service_names(&t));
+                let services = read_service_names(&path);
                 found.push(ComposeFile { path, rel, services });
             }
         }
@@ -400,6 +406,36 @@ pub fn ps_argv(cmd: &[String], file: &Path) -> Vec<String> {
     v
 }
 
+/// `<cmd> -f <file> config --services`: the services `file` declares, with
+/// `include:`, `extends` and the active profiles resolved by Compose itself.
+pub fn services_argv(cmd: &[String], file: &Path) -> Vec<String> {
+    let mut v = cmd.to_vec();
+    v.push("-f".into());
+    v.push(file.to_string_lossy().into_owned());
+    v.extend(["config", "--services"].map(String::from));
+    v
+}
+
+/// Parse `config --services`: one service name per line. `None` when it
+/// names none: a file without services has no containers to narrow down, so
+/// an empty answer means "unknown" (the caller then reads the file itself).
+pub fn parse_services(text: &str) -> Option<Vec<String>> {
+    let names: Vec<String> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+    (!names.is_empty()).then_some(names)
+}
+
+/// The `ps` rows of the services `file` declares. `ps` lists every container
+/// of the Compose *project*, and compose files in one folder share a project
+/// (named after the folder), so `ps -f docker-compose.faketime.yml` also shows
+/// the services `docker-compose.yml` started. `None` (declared services
+/// unknown) keeps every row.
+pub fn only_declared(ps: Vec<ServiceStatus>, declared: Option<&[String]>) -> Vec<ServiceStatus> {
+    match declared {
+        Some(names) => ps.into_iter().filter(|s| names.contains(&s.service)).collect(),
+        None => ps,
+    }
+}
+
 /// Parse `ps --format json`: one JSON array (Compose < 2.21) or one object
 /// per line (2.21 and later). Sorted by service name.
 pub fn parse_ps(text: &str) -> Result<Vec<ServiceStatus>, String> {
@@ -466,6 +502,65 @@ impl Crash {
             CrashReason::Exited(code) => format!("{} exited with code {code}", self.service),
             CrashReason::Unhealthy => format!("{} is unhealthy", self.service),
         }
+    }
+}
+
+/// How a service (or the whole stack) is doing: the colour of its chip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// Running, and not failing its healthcheck: green.
+    Up,
+    /// Healthcheck still starting, or being restarted: yellow.
+    Pending,
+    /// Crashed, unhealthy, or in a crash loop: red.
+    Down,
+    /// Finished cleanly (a one-shot job), stopped by the user, or not started: dim.
+    Idle,
+}
+
+impl Tone {
+    pub fn css_class(self) -> &'static str {
+        match self {
+            Tone::Up => "compose-up",
+            Tone::Pending => "compose-pending",
+            Tone::Down => "compose-down",
+            Tone::Idle => "compose-idle",
+        }
+    }
+
+    pub const ALL: [Tone; 4] = [Tone::Up, Tone::Pending, Tone::Down, Tone::Idle];
+}
+
+/// The tone of one service. `stopping`: the user is stopping the stack, so
+/// the signal exits a stop leaves are not crashes (see [`is_crash`]).
+pub fn tone(s: &ServiceStatus, stopping: bool) -> Tone {
+    match s.state {
+        State::Running => match s.health.as_str() {
+            "unhealthy" => Tone::Down,
+            "starting" => Tone::Pending,
+            _ => Tone::Up,
+        },
+        // Docker only reports "restarting" while a restart policy waits to
+        // start a container that exited again.
+        State::Restarting if s.exit_code != 0 => Tone::Down,
+        State::Restarting => Tone::Pending,
+        State::Exited if is_crash(s, stopping) => Tone::Down,
+        State::Exited | State::Other => Tone::Idle,
+    }
+}
+
+/// The tone of the whole stack: its worst service. Services that finished
+/// cleanly (init jobs) do not hold it back from green.
+pub fn stack_tone(services: &[ServiceStatus], stopping: bool) -> Tone {
+    let tones: Vec<Tone> = services.iter().map(|s| tone(s, stopping)).collect();
+    if tones.contains(&Tone::Down) {
+        Tone::Down
+    } else if tones.is_empty() || tones.contains(&Tone::Pending) {
+        Tone::Pending
+    } else if tones.contains(&Tone::Up) {
+        Tone::Up
+    } else {
+        Tone::Idle
     }
 }
 
@@ -881,6 +976,76 @@ mod tests {
             ps_argv(&["docker".into(), "compose".into()], Path::new("/r/compose.yml")),
             ["docker", "compose", "-f", "/r/compose.yml", "ps", "--all", "--format", "json"]
         );
+    }
+
+    #[test]
+    fn ps_keeps_only_the_files_own_services() {
+        // Two files in one folder share a Compose project, so `ps -f faketime.yml`
+        // also lists the containers `docker-compose.yml` started.
+        let named = |s: &str| ServiceStatus {
+            service: s.into(),
+            ..svc(State::Exited, "", 0)
+        };
+        let ps = vec![named("backend"), named("postgres"), named("redis")];
+        let declared = vec!["backend".to_string()];
+        let services = |v: Vec<ServiceStatus>| v.into_iter().map(|s| s.service).collect::<Vec<_>>();
+        assert_eq!(services(only_declared(ps.clone(), Some(&declared))), ["backend"]);
+        assert_eq!(
+            services(only_declared(ps.clone(), None)),
+            ["backend", "postgres", "redis"],
+            "services unknown: show every container rather than none"
+        );
+        assert_eq!(services(only_declared(ps, Some(&[]))), Vec::<String>::new());
+    }
+
+    #[test]
+    fn declared_services_come_from_compose_config() {
+        assert_eq!(
+            services_argv(&["docker".into(), "compose".into()], Path::new("/r/compose.yml")),
+            ["docker", "compose", "-f", "/r/compose.yml", "config", "--services"]
+        );
+        assert_eq!(parse_services("backend\n  web \n\n"), Some(vec!["backend".into(), "web".into()]));
+        assert_eq!(parse_services(""), None, "no answer: fall back to reading the file");
+    }
+
+    #[test]
+    fn chip_tone_follows_state_health_and_exit_code() {
+        use Tone::*;
+        let t = |state, health, code| tone(&svc(state, health, code), false);
+        assert_eq!(t(State::Running, "", 0), Up, "running without a healthcheck");
+        assert_eq!(t(State::Running, "healthy", 0), Up);
+        assert_eq!(t(State::Running, "starting", 0), Pending);
+        assert_eq!(t(State::Running, "unhealthy", 0), Down);
+        assert_eq!(t(State::Restarting, "", 1), Down, "crash loop under a restart policy");
+        assert_eq!(t(State::Restarting, "", 0), Pending);
+        assert_eq!(t(State::Exited, "", 1), Down);
+        assert_eq!(t(State::Exited, "", 0), Idle, "a one-shot job that finished");
+        assert_eq!(t(State::Other, "", 0), Idle, "created or paused");
+        assert_eq!(t(State::Exited, "", 137), Down, "killed (OOM) while nobody was stopping");
+        assert_eq!(tone(&svc(State::Exited, "", 137), true), Idle, "killed by the user's stop");
+        for (tone, class) in [
+            (Up, "compose-up"),
+            (Pending, "compose-pending"),
+            (Down, "compose-down"),
+            (Idle, "compose-idle"),
+        ] {
+            assert_eq!(tone.css_class(), class);
+        }
+    }
+
+    #[test]
+    fn stack_tone_is_its_worst_service() {
+        use Tone::*;
+        let up = svc(State::Running, "", 0);
+        let done = svc(State::Exited, "", 0);
+        let starting = svc(State::Running, "starting", 0);
+        let crashed = svc(State::Exited, "", 1);
+        assert_eq!(stack_tone(&[], false), Pending, "nothing created yet");
+        assert_eq!(stack_tone(std::slice::from_ref(&up), false), Up);
+        assert_eq!(stack_tone(&[up.clone(), done.clone()], false), Up, "finished init jobs are fine");
+        assert_eq!(stack_tone(&[up.clone(), starting], false), Pending);
+        assert_eq!(stack_tone(&[up, crashed], false), Down);
+        assert_eq!(stack_tone(&[done], false), Idle);
     }
 
     #[test]

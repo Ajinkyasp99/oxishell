@@ -1955,6 +1955,11 @@ fn compose_picker_keeps_keyboard_selection_fully_visible() {
     });
 }
 
+/// A compose file declaring `service-number-0` .. `service-number-{n-1}`.
+fn declare_services(n: usize) -> String {
+    (0..n).fold("services:\n".to_string(), |y, i| y + &format!("  service-number-{i}: {{}}\n"))
+}
+
 const PS_API_RUNNING: &str = r#"{"Service":"api","State":"running","Health":"","ExitCode":0,"Publishers":[{"URL":"0.0.0.0","TargetPort":8000,"PublishedPort":8000,"Protocol":"tcp"}]}"#;
 
 /// A workspace in `home` with one compose file whose launcher button is showing.
@@ -2310,6 +2315,8 @@ fn compose_bars_do_not_widen_the_pane() {
             .map(|i| format!(r#"{{"Service":"service-number-{i}","State":"running","Health":"","ExitCode":0,"Publishers":[{{"URL":"0.0.0.0","TargetPort":80,"PublishedPort":{},"Protocol":"tcp"}}]}}"#, 8000 + i))
             .collect::<Vec<_>>()
             .join("\n");
+        // The bar shows only the services the file declares.
+        std::fs::write(&file, declare_services(12)).unwrap();
         std::fs::write(&ps, many).unwrap();
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
         let (bar, logs_bar) = {
@@ -2354,6 +2361,8 @@ fn compose_stack_bar_wraps_its_chips_and_keeps_its_buttons_in_view_in_a_narrow_p
             .map(|i| format!(r#"{{"Service":"service-number-{i}","State":"running","Health":"","ExitCode":0,"Publishers":[{{"URL":"0.0.0.0","TargetPort":80,"PublishedPort":{},"Protocol":"tcp"}}]}}"#, 8000 + i))
             .collect::<Vec<_>>()
             .join("\n");
+        // The bar shows only the services the file declares.
+        std::fs::write(&file, declare_services(12)).unwrap();
         std::fs::write(&ps, many).unwrap();
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
         wait_for(8_000, || {
@@ -2533,6 +2542,10 @@ fn a_single_service_crash_keeps_its_red_chip_and_clicking_it_restarts_the_servic
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
         let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
         wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
+        assert!(
+            button_with(&bar, "compose-chip", "api").unwrap().has_css_class("compose-up"),
+            "a running service's chip is green"
+        );
 
         std::fs::write(
             &ps,
@@ -2540,7 +2553,7 @@ fn a_single_service_crash_keeps_its_red_chip_and_clicking_it_restarts_the_servic
         )
         .unwrap();
         wait_for(8_000, || {
-            button_with(&bar, "compose-chip", "api").is_some_and(|c| c.has_css_class("exited"))
+            button_with(&bar, "compose-chip", "api").is_some_and(|c| c.has_css_class("compose-down"))
         });
         pump(7_000);
         assert!(bar.is_visible(), "the bar stays after the only service crashed");
@@ -2550,6 +2563,31 @@ fn a_single_service_crash_keeps_its_red_chip_and_clicking_it_restarts_the_servic
         click_widget(&h, &chip);
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains(" restart api"));
+    });
+}
+
+#[test]
+fn the_stack_bar_shows_only_the_services_its_file_declares() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-own-services");
+        let (_, _, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        // `ps` lists the whole project: another compose file in the same
+        // folder started `postgres`, which this file does not declare.
+        let postgres = r#"{"Service":"postgres","State":"exited","Health":"","ExitCode":0,"Publishers":[]}"#;
+        std::fs::write(&ps, format!("{PS_API_RUNNING}\n{postgres}\n")).unwrap();
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
+        pump(500);
+        assert!(
+            button_with(&bar, "compose-chip", "postgres").is_none(),
+            "postgres is another file's service"
+        );
+        assert_eq!(h.app.inner.borrow().panes[&pane].compose.stack.as_ref().unwrap().services.len(), 1);
     });
 }
 
@@ -2879,6 +2917,14 @@ fn ui_launcher_stack_bar_buttons_and_chips_work_with_the_mouse() {
         screenshot(&h.app.window, "ui-launcher-stack-bar");
 
         let restart = button_with(&bar, "compose-bar-btn", "[restart]").unwrap();
+        // Each bar action has its own colour: rebuild accent, restart yellow, stop red.
+        assert!(restart.has_css_class("compose-restart"));
+        assert!(button_with(&bar, "compose-bar-btn", "[rebuild]")
+            .unwrap()
+            .has_css_class("compose-rebuild"));
+        assert!(button_with(&bar, "compose-bar-btn", "[stop]")
+            .unwrap()
+            .has_css_class("compose-stop"));
         click_widget(&h, &restart);
         wait_for(8_000, || ran().lines().any(|l| l.ends_with(" restart")));
         wait_for(8_000, || restart.is_sensitive());
@@ -2938,6 +2984,9 @@ fn ui_launcher_dragging_the_divider_narrows_a_pane_that_shows_the_stack_bar() {
         press(&h, "d");
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains(" up -d"));
+        // The bar shows only the services the started file declares.
+        let started = h.app.inner.borrow().panes[&pane].compose.stack.as_ref().unwrap().file.clone();
+        std::fs::write(started, declare_services(10)).unwrap();
         let (bar, frame) = {
             let i = h.app.inner.borrow();
             (i.panes[&pane].compose.stack_bar.clone(), i.panes[&pane].frame.clone())
