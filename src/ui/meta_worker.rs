@@ -53,6 +53,9 @@ struct ComposeCache {
     files: HashMap<PathBuf, (Instant, Vec<ComposeFile>)>,
     /// `compose.command` setting -> detected program.
     commands: HashMap<String, (Instant, Option<Vec<String>>)>,
+    /// Stack file and its modification time -> the services it declares
+    /// (`None` when unknown). Keyed by mtime so an edited file counts at once.
+    declared: HashMap<FileVersion, (Instant, Option<Vec<String>>)>,
     /// Last scan sent for each pane.
     sent: HashMap<PaneId, ComposeScan>,
 }
@@ -64,10 +67,14 @@ impl Default for ComposeCache {
             roots: HashMap::new(),
             files: HashMap::new(),
             commands: HashMap::new(),
+            declared: HashMap::new(),
             sent: HashMap::new(),
         }
     }
 }
+
+/// A file and its modification time.
+type FileVersion = (PathBuf, Option<std::time::SystemTime>);
 
 /// How long a Compose scan result is reused before scanning again.
 const COMPOSE_TTL: Duration = Duration::from_secs(30);
@@ -110,20 +117,47 @@ impl ComposeCache {
         self.sent.insert(pane, scan.clone());
         Some(scan)
     }
+
+    /// `ps` of a stack, narrowed to the services its file declares.
+    fn ps(&mut self, cmd: &[String], file: &Path, ctx: Option<&compose::LaunchContext>) -> Result<Vec<ServiceStatus>, String> {
+        if self.declared.len() > 256 {
+            self.declared.clear();
+        }
+        let ps = compose_ps(cmd, file, ctx)?;
+        let key = (file.to_path_buf(), std::fs::metadata(file).and_then(|m| m.modified()).ok());
+        let declared = cached(&mut self.declared, &key, self.ttl, false, || declared_services(cmd, file, ctx));
+        Ok(compose::only_declared(ps, declared.as_deref()))
+    }
 }
 
-/// `docker compose ps` of `file` with `cmd`, run in the stack's context.
-fn compose_ps(cmd: &[String], file: &Path, ctx: Option<&compose::LaunchContext>) -> Result<Vec<ServiceStatus>, String> {
-    let argv = compose::ps_argv(cmd, file);
+/// `argv` as a command run in the stack's context (or the worker's own).
+fn command_in(argv: &[String], ctx: Option<&compose::LaunchContext>) -> std::process::Command {
     let mut c = match ctx {
-        Some(ctx) => ctx.command(&argv),
+        Some(ctx) => ctx.command(argv),
         None => {
             let mut c = std::process::Command::new(&argv[0]);
             c.args(&argv[1..]);
             c
         }
     };
-    match c.stdin(std::process::Stdio::null()).output() {
+    c.stdin(std::process::Stdio::null());
+    c
+}
+
+/// The services `file` declares: Compose's own answer (it resolves `include:`,
+/// `extends` and profiles), else the file's top-level `services:` keys, else
+/// `None` when neither can be read.
+fn declared_services(cmd: &[String], file: &Path, ctx: Option<&compose::LaunchContext>) -> Option<Vec<String>> {
+    match command_in(&compose::services_argv(cmd, file), ctx).output() {
+        Ok(o) if o.status.success() => compose::parse_services(&String::from_utf8_lossy(&o.stdout)),
+        _ => None,
+    }
+    .or_else(|| compose::read_service_names(file))
+}
+
+/// `docker compose ps` of `file` with `cmd`, run in the stack's context.
+fn compose_ps(cmd: &[String], file: &Path, ctx: Option<&compose::LaunchContext>) -> Result<Vec<ServiceStatus>, String> {
+    match command_in(&compose::ps_argv(cmd, file), ctx).output() {
         Ok(o) if o.status.success() => compose::parse_ps(&String::from_utf8_lossy(&o.stdout)),
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
@@ -172,7 +206,7 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
                     let (compose_scan, ps) = match (&job.compose_cmd, &cwd) {
                         (Some(setting), Some(c)) => {
                             let scan = compose_cache.scan(job.pane, c, setting, job.rescan);
-                            let ps = job.ps_of.as_ref().map(|(cmd, f, ctx)| compose_ps(cmd, f, ctx.as_ref()));
+                            let ps = job.ps_of.as_ref().map(|(cmd, f, ctx)| compose_cache.ps(cmd, f, ctx.as_ref()));
                             (scan, ps)
                         }
                         _ => {
