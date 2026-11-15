@@ -800,6 +800,59 @@ fn pane_action_icons_are_symbolic() {
 }
 
 #[test]
+fn system_status_trend_strip_updates_and_fits_a_narrow_window() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("system-status");
+        let root = find_by_class(h.app.window.upcast_ref(), "system-status").unwrap();
+        let cpu = find_by_class(&root, "system-cpu-value").unwrap().downcast::<gtk4::Label>().unwrap();
+        let ram = find_by_class(&root, "system-memory-value")
+            .unwrap()
+            .downcast::<gtk4::Label>()
+            .unwrap();
+        let chart = find_by_class(&root, "system-cpu-history").unwrap();
+        let capacity = find_by_class(&root, "system-memory-capacity")
+            .unwrap()
+            .downcast::<gtk4::Label>()
+            .unwrap();
+        let bar = find_by_class(&root, "system-memory-bar")
+            .unwrap()
+            .downcast::<gtk4::ProgressBar>()
+            .unwrap();
+        wait_for(6_000, || cpu.text().ends_with('%'));
+        let percent = |label: &gtk4::Label| label.text().trim_end_matches('%').parse::<f64>().unwrap();
+        assert!((0.0..=100.0).contains(&percent(&cpu)));
+        assert!((0.0..=100.0).contains(&percent(&ram)));
+        assert!((percent(&ram) / 100.0 - bar.fraction()).abs() <= 0.0051);
+        assert!(capacity.text().ends_with(" GiB"));
+        assert!(chart.is_visible());
+        assert_eq!(chart.width(), 76);
+        assert!(bar.width() <= 54, "RAM meter stays compact: {}", bar.width());
+        let status = find_by_class(h.app.window.upcast_ref(), "statusbar").unwrap();
+        for (theme, dark) in [("warp_dark", true), ("snowy", false)] {
+            h.app.set_theme(theme);
+            pump(150);
+            assert_eq!(h.app.inner.borrow().theme.is_dark(), dark);
+            screenshot(&status, &format!("system-status-{theme}"));
+            screenshot(&h.app.window, &format!("system-status-window-{theme}"));
+        }
+        h.app.window.set_default_size(480, 400);
+        pump(300);
+        // GTK's client-side decorations can inset the content below 480px.
+        assert!(h.app.window.width() <= 480, "the strip must not raise the minimum window width");
+        let bounds = root.compute_bounds(&h.app.window).unwrap();
+        assert!(
+            bounds.x() >= 0.0 && bounds.x() + bounds.width() <= h.app.window.width() as f32,
+            "the resource strip fits at minimum window width"
+        );
+        screenshot(&status, "system-status-narrow");
+        screenshot(&h.app.window, "system-status-window-narrow");
+    });
+}
+
+#[test]
 fn bundled_and_theme_css_parse_without_errors() {
     if !have_input() {
         return;
