@@ -166,6 +166,14 @@ fn draw_history(cr: &cairo::Context, history: &VecDeque<Option<f64>>, color: gtk
 mod tests {
     use super::*;
 
+    fn has_display() -> bool {
+        let found = std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
+        if !found {
+            eprintln!("skipped GTK system status test: no display; run under xvfb-run");
+        }
+        found
+    }
+
     #[test]
     fn system_status_graph_preserves_zero_full_load_and_missing_samples() {
         let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 80, 24).unwrap();
@@ -185,6 +193,9 @@ mod tests {
 
     #[test]
     fn system_status_timer_does_not_retain_the_widget() {
+        if !has_display() {
+            return;
+        }
         gtk4::test_synced(|| {
             let root = new();
             let weak = root.downgrade();
@@ -195,6 +206,9 @@ mod tests {
 
     #[test]
     fn system_status_retains_one_minute_and_preserves_unavailable_readings() {
+        if !has_display() {
+            return;
+        }
         gtk4::test_synced(|| {
             let (_root, strip) = Strip::new();
             for cpu in 0..90 {
