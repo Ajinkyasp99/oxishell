@@ -66,7 +66,8 @@ cp "$BREW"/share/glib-2.0/schemas/org.gtk.gtk4.*.gschema.xml "$R/share/glib-2.0/
 glib-compile-schemas "$R/share/glib-2.0/schemas"
 # Icon themes: Adwaita for the symbolic icons, hicolor as the base theme.
 mkdir -p "$R/share/icons"
-cp -R "$BREW/share/icons/Adwaita" "$R/share/icons/"
+# -L: in Homebrew share/icons/Adwaita is a symlink into the Cellar; copy the files.
+cp -RL "$BREW/share/icons/Adwaita" "$R/share/icons/"
 mkdir -p "$R/share/icons/hicolor"
 cp "$BREW/share/icons/hicolor/index.theme" "$R/share/icons/hicolor/"
 mkdir -p "$R/share/icons/hicolor/scalable/apps"
@@ -110,6 +111,15 @@ leaks=$(find "$C/MacOS" "$C/Frameworks" "$R/lib" -type f \( -perm -u+x -o -name 
 if [[ -n $leaks ]]; then
     echo "bundle still links to Homebrew paths:" >&2
     echo "$leaks" >&2
+    exit 1
+fi
+
+# Links inside the bundle break signing ("No such file or directory") or point
+# outside it; everything must be a real file.
+links=$(find "$APP" -type l)
+if [[ -n $links ]]; then
+    echo "bundle contains symlinks:" >&2
+    echo "$links" >&2
     exit 1
 fi
 
