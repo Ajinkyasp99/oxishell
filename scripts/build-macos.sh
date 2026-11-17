@@ -95,8 +95,14 @@ GDK_PIXBUF_MODULEDIR=$BREW_LOADERS gdk-pixbuf-query-loaders \
 # Copies every non-system dylib the binaries and loaders use into Frameworks and
 # rewrites their load paths to @executable_path/../Frameworks.
 FIX=(-x "$C/MacOS/oxishell" -x "$C/MacOS/oxi")
-for l in "${LOADERS[@]}"; do FIX+=(-x "$l"); done
+# ${a[@]+...}: an empty array is an "unbound variable" for set -u in macOS's bash 3.2.
+for l in ${LOADERS[@]+"${LOADERS[@]}"}; do FIX+=(-x "$l"); done
 dylibbundler -of -cd -b "${FIX[@]}" -d "$C/Frameworks" -p @executable_path/../Frameworks/ -s "$BREW/lib"
+# dylibbundler rewrites what the loaders link to, but not their own install
+# name (LC_ID_DYLIB), which still points into Homebrew.
+for l in ${LOADERS[@]+"${LOADERS[@]}"}; do
+    install_name_tool -id "@executable_path/../Resources/$PIXBUF_REL/loaders/$(basename "$l")" "$l"
+done
 
 # Nothing may still point into Homebrew, or the app breaks on Macs without it.
 leaks=$(find "$C/MacOS" "$C/Frameworks" "$R/lib" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.so' \) \
