@@ -1,14 +1,19 @@
-//! Developer metadata from Linux procfs and the git CLI.
+//! Developer metadata from the OS (procfs on Linux, libproc/sysctl on macOS
+//! via [`crate::platform`]) and the git CLI.
 //!
 //! All functions are blocking and are called from a worker thread, never the
 //! GTK main loop.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::Path;
 use std::process::Command;
 
-pub fn cwd_of(pid: i32) -> Option<PathBuf> {
+#[cfg(target_os = "macos")]
+pub use crate::platform::macos::{cmdline, comm, cwd_of, listening_ports, ppid_table};
+
+#[cfg(not(target_os = "macos"))]
+pub fn cwd_of(pid: i32) -> Option<std::path::PathBuf> {
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
 }
 
@@ -26,12 +31,14 @@ pub fn canonical_mode(fd: std::os::fd::RawFd) -> Option<bool> {
     (unsafe { libc::tcgetattr(fd, &mut tio) } == 0).then_some(tio.c_lflag & libc::ICANON != 0)
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn comm(pid: i32) -> Option<String> {
     std::fs::read_to_string(format!("/proc/{pid}/comm"))
         .ok()
         .map(|s| s.trim().to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn cmdline(pid: i32) -> Vec<String> {
     std::fs::read(format!("/proc/{pid}/cmdline"))
         .map(|b| {
@@ -73,6 +80,7 @@ pub fn agent_for_process(comm: &str, argv: &[String]) -> Option<&'static str> {
 }
 
 /// Map pid -> parent pid for every process.
+#[cfg(not(target_os = "macos"))]
 pub fn ppid_table() -> HashMap<i32, i32> {
     let mut map = HashMap::new();
     if let Ok(rd) = std::fs::read_dir("/proc") {
@@ -115,6 +123,7 @@ pub fn process_tree_in(table: &HashMap<i32, i32>, root: i32) -> Vec<i32> {
     out
 }
 
+#[cfg(not(target_os = "macos"))]
 fn listening_inodes() -> HashMap<u64, u16> {
     let mut map = HashMap::new();
     for f in ["/proc/net/tcp", "/proc/net/tcp6"] {
@@ -142,12 +151,13 @@ pub fn parse_proc_net_tcp(text: &str) -> HashMap<u64, u16> {
 }
 
 /// TCP ports in LISTEN state owned by any of `pids` (only our own processes are readable).
+#[cfg(not(target_os = "macos"))]
 pub fn listening_ports(pids: &[i32]) -> Vec<u16> {
     let inodes = listening_inodes();
     if inodes.is_empty() {
         return vec![];
     }
-    let mut ports = HashSet::new();
+    let mut ports = std::collections::HashSet::new();
     for pid in pids {
         let Ok(rd) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
             continue;

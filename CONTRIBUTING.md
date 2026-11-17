@@ -72,8 +72,14 @@ Bundled themes come from [warpdotdev/themes](https://github.com/warpdotdev/theme
 
 ## Releasing (maintainers)
 
-1. Bump `version` in `Cargo.toml`, update `docs/RELEASE_NOTES.md` and the `<releases>` entry in
-   `data/dev.oxishell.Oxishell.metainfo.xml`.
-2. `git tag v0.x.y && git push origin v0.x.y`. The Release workflow builds the `.deb` and publishes it.
+1. `scripts/bump-version.sh 0.x.y "One-line summary"`. It bumps `Cargo.toml`, `Cargo.lock`,
+   `docs/RELEASE_NOTES.md` and the `<releases>` entry in `data/dev.oxishell.Oxishell.metainfo.xml`. Commit.
+2. `git tag v0.x.y && git push origin v0.x.y`. The Release workflow checks the tag against `Cargo.toml`, then
+   builds the Ubuntu `.deb` and the macOS `.dmg` (Apple silicon and Intel) at that version. It publishes one
+   release once all of them have built, and updates the Homebrew tap. A `v0.x.y-rc.1` tag makes a
+   pre-release instead.
+
+   One-time setup for Homebrew: create the repo `Ajinkyasp99/homebrew-oxishell`, then add a fine-grained token
+   with Contents: write on it as the `HOMEBREW_TAP_TOKEN` secret of this repo. Until then, that step is skipped.
 
 By contributing you agree that your contributions are licensed under GPL-3.0-or-later.

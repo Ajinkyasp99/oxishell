@@ -4,16 +4,16 @@
 
 # oxishell
 
-**The terminal for AI coding agents on Linux. Run Claude Code, Codex and Gemini CLI side by side, and get notified the moment one needs you.**
+**The terminal for AI coding agents on Linux and macOS. Run Claude Code, Codex and Gemini CLI side by side, and get notified the moment one needs you.**
 
-Workspaces in a sidebar · split panes · agent notifications · 41 Warp themes · Ubuntu, Debian, X11 and Wayland
+Workspaces in a sidebar · split panes · agent notifications · 41 Warp themes · Ubuntu, Debian (X11 and Wayland) and macOS
 
 [![CI](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml/badge.svg)](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Ajinkyasp99/oxishell?display_name=tag)](https://github.com/Ajinkyasp99/oxishell/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Ajinkyasp99/oxishell/total)](https://github.com/Ajinkyasp99/oxishell/releases)
 [![Stars](https://img.shields.io/github/stars/Ajinkyasp99/oxishell?style=flat)](https://github.com/Ajinkyasp99/oxishell/stargazers)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
-![Platform: Linux](https://img.shields.io/badge/platform-Linux%20(X11%20%2B%20Wayland)-informational)
+![Platform: Linux and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-informational)
 
 <img src="docs/assets/hero.png" alt="oxishell terminal on Ubuntu Linux: three workspaces in the sidebar with git branch and ports, split panes, a Claude Code 'needs input' notification badge, and Codex and Claude usage limits at the bottom of the sidebar" width="900">
 
@@ -162,6 +162,31 @@ scripts/build-deb.sh && sudo apt install --reinstall ./dist/oxishell_*.deb
 `--reinstall` matters here: a local build keeps the version number, and without it apt says
 *already the newest version* and skips the install.
 
+## Install on macOS
+
+macOS support is new: please [report](https://github.com/Ajinkyasp99/oxishell/issues) anything that
+behaves differently from Linux. Each release has the same version for every platform.
+
+**App (.dmg).** Download the image for your Mac from the
+[latest release](https://github.com/Ajinkyasp99/oxishell/releases/latest): `oxishell_macos_arm64.dmg`
+(Apple silicon, M1 and newer) or `oxishell_macos_x86_64.dmg` (Intel). Open it and drag **Oxishell** to
+Applications. GTK and every other library are inside the app; nothing else to install. The app is not
+notarized by Apple yet, so the first time, right-click it in Applications and choose **Open** (or run
+`xattr -dr com.apple.quarantine /Applications/Oxishell.app`). The `oxi` CLI is inside the app:
+
+```bash
+sudo ln -sf /Applications/Oxishell.app/Contents/MacOS/oxi /usr/local/bin/oxi
+```
+
+**Homebrew** builds it from source and installs `oxishell` and `oxi`:
+
+```bash
+brew install Ajinkyasp99/oxishell/oxishell
+```
+
+On macOS, shortcuts use <kbd>⌘</kbd> (see [Keyboard shortcuts](#keyboard-shortcuts)), panes start your
+login shell, and notifications appear in Notification Center.
+
 ## Quick start
 
 1. **Open a workspace per project:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>, then rename it with a double-click.
@@ -198,9 +223,8 @@ When an agent finishes or asks for permission, its workspace gets a badge. Press
 
 Suggestions only appear when you're at a shell prompt (never inside vim, Python and so on), and only while
 oxishell can follow your typing exactly (after <kbd>Tab</kbd>, arrow keys or paste they pause until the
-next line). The **environment chip** works automatically in bash; for zsh/fish add one line:
-`oxi shell-integration zsh >> ~/.zshrc` (or `fish >> ~/.config/fish/config.fish`). Both features can be
-turned off in Settings.
+next line). The **environment chip** works automatically in bash and zsh; for fish add one line:
+`oxi shell-integration fish >> ~/.config/fish/config.fish`. Both features can be turned off in Settings.
 
 Because the chips already show where you are, panes use a compact **`❯` prompt** (green, red after a
 failed command) instead of `user@host:~/path$`. This only applies inside oxishell; your `~/.bashrc`,
@@ -275,6 +299,14 @@ See [docs/THEMES.md](docs/THEMES.md).
 **New line in a prompt** works in Claude Code, Codex, Gemini CLI and OpenCode (sent as <kbd>Ctrl</kbd>+<kbd>J</kbd>),
 and at a bash, zsh or fish prompt, where Enter then runs all the lines. Other programs (vim, REPLs) get the
 key unchanged.
+
+**On macOS** the defaults use <kbd>⌘</kbd>, so <kbd>Ctrl</kbd> keys stay with the shell: <kbd>⌘</kbd>+<kbd>T</kbd>
+new workspace, <kbd>⌘</kbd>+<kbd>D</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>D</kbd> split right / down,
+<kbd>⌘</kbd>+<kbd>W</kbd> close pane, <kbd>⌘</kbd>+<kbd>C</kbd> / <kbd>V</kbd> copy / paste, <kbd>⌘</kbd>+<kbd>F</kbd>
+search, <kbd>⌘</kbd>+<kbd>1</kbd>…<kbd>9</kbd> and <kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>[</kbd> / <kbd>]</kbd> workspaces,
+<kbd>⌥</kbd><kbd>⌘</kbd>+arrows move focus, <kbd>⌘</kbd>+<kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd> font size,
+<kbd>⌘</kbd>+<kbd>,</kbd> settings, and <kbd>⌘</kbd>-click opens a link. The rest are <kbd>⇧</kbd><kbd>⌘</kbd> with the
+same letter as on Linux (<kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>P</kbd> palette, <kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>L</kbd> Compose files…).
 
 All shortcuts can be changed in Settings → Shortcuts. Right-click a workspace or a terminal for more actions.
 
@@ -370,6 +402,9 @@ permission, you get a desktop notification, a ring on the pane and a badge on th
 Qoder and OpenCode work the same way.
 
 **Does it work on Wayland?** Yes, on both Wayland and X11.
+
+**Does it run on macOS?** Yes, on Apple silicon and Intel Macs: a `.dmg` app or Homebrew, see
+[Install on macOS](#install-on-macos).
 
 **Can I use Warp themes on Linux?** Yes. 41 are built in, and any Warp `.yaml` theme you drop into
 `~/.config/oxishell/themes/` shows up right away.

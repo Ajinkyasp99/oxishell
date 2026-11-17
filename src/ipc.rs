@@ -1,9 +1,9 @@
 //! Local control API: newline-delimited JSON over a Unix domain socket.
 //!
 //! Security: the socket lives in a 0700 per-user directory, is itself 0600,
-//! and every connection's peer uid is checked with SO_PEERCRED. There is no
-//! network listener. Requests are size-limited and validated before they
-//! reach the GUI thread.
+//! and every connection's peer uid is checked (SO_PEERCRED on Linux,
+//! getpeereid on macOS). There is no network listener. Requests are
+//! size-limited and validated before they reach the GUI thread.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -121,6 +121,16 @@ pub fn require_str<'a>(p: &'a Value, key: &str) -> Result<&'a str, String> {
 
 // ---- server -----------------------------------------------------------------
 
+#[cfg(target_os = "macos")]
+fn peer_uid(s: &UnixStream) -> Option<u32> {
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+    // SAFETY: fd is a live connected Unix socket; uid/gid are valid out-pointers.
+    let rc = unsafe { libc::getpeereid(s.as_raw_fd(), &mut uid, &mut gid) };
+    (rc == 0).then_some(uid)
+}
+
+#[cfg(not(target_os = "macos"))]
 fn peer_uid(s: &UnixStream) -> Option<u32> {
     let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;

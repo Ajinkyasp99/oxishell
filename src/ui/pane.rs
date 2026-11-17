@@ -470,6 +470,11 @@ impl App {
         let shell = self.inner.borrow().config.shell();
         let cwd = cwd.filter(|d| d.is_dir()).unwrap_or_else(crate::paths::home);
         let cwd_s = cwd.display().to_string();
+        // macOS terminals start login shells, which run /etc/zprofile
+        // (path_helper) and ~/.zprofile, where Homebrew's PATH usually lives.
+        #[cfg(target_os = "macos")]
+        let argv: Vec<String> = vec![shell, "-l".to_string()];
+        #[cfg(not(target_os = "macos"))]
         let argv: Vec<String> = vec![shell];
         let mut env = vec![
             format!("OXISHELL_PANE_ID={id}"),
@@ -497,6 +502,14 @@ impl App {
         let shell_name = crate::shellint::shell_name(&argv[0]).to_string();
         if shell_name == "bash" {
             env.push(format!("PROMPT_COMMAND={}", crate::shellint::BASH_PROMPT_COMMAND));
+        }
+        if shell_name == "zsh" {
+            if let Ok(dir) = crate::shellint::zsh_zdotdir() {
+                if let Some(orig) = std::env::var_os("ZDOTDIR") {
+                    env.push(format!("OXISHELL_ORIG_ZDOTDIR={}", orig.to_string_lossy()));
+                }
+                env.push(format!("ZDOTDIR={}", dir.display()));
+            }
         }
         // Make the bundled `oxi` CLI reachable for hooks when running from a build dir.
         if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {

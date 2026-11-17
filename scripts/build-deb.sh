@@ -3,6 +3,10 @@
 # Requires: cargo, dpkg-dev (dpkg-deb, dpkg-shlibdeps). Run from the repo root.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+if [[ $(uname -s) != Linux ]]; then
+    echo "build-deb.sh builds the Debian package on Linux; on macOS use scripts/build-macos.sh" >&2
+    exit 1
+fi
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 ARCH=$(dpkg --print-architecture)
 PKG=oxishell

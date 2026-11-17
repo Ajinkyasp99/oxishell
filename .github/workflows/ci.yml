@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   test:
+    name: test (ubuntu)
     runs-on: ubuntu-24.04
     # A normal run takes about 4 minutes; the default limit is 6 hours.
     timeout-minutes: 30
@@ -54,3 +55,34 @@ jobs:
           path: |
             dist/*.deb
             bench.txt
+
+  macos:
+    # Apple silicon only here to keep CI quick; releases build Intel too.
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        timeout-minutes: 20
+        run: brew install gtk4 libadwaita vte3 librsvg adwaita-icon-theme pkgconf dylibbundler
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --lib --bins
+      - name: Build .app and .dmg
+        run: scripts/build-macos.sh
+      - name: Smoke test the bundled CLI
+        run: dist/Oxishell.app/Contents/MacOS/oxi --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oxishell-macos-arm64
+          path: dist/*.dmg

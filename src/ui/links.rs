@@ -235,23 +235,25 @@ struct Popover {
     hint: gtk4::Label,
 }
 
+// Ctrl+Click opens directly; Cmd+Click on macOS, where Ctrl+Click is a right click.
+#[cfg(not(target_os = "macos"))]
+const LINK_HINT: &str = "Tip: Ctrl+Click opens links directly";
+#[cfg(not(target_os = "macos"))]
+const FILE_HINT: &str = "Tip: Ctrl+Click opens the file directly";
+#[cfg(not(target_os = "macos"))]
+const HOVER_HINT: &str = "Click for link options · Ctrl+Click to open";
+#[cfg(target_os = "macos")]
+const LINK_HINT: &str = "Tip: ⌘-Click opens links directly";
+#[cfg(target_os = "macos")]
+const FILE_HINT: &str = "Tip: ⌘-Click opens the file directly";
+#[cfg(target_os = "macos")]
+const HOVER_HINT: &str = "Click for link options · ⌘-Click to open";
+
 impl Popover {
     fn show(&self, link: &Link) {
         let (text, open, copy, icon, hint) = match link {
-            Link::Url(u) => (
-                normalize(u),
-                "Open Link",
-                "Copy Link",
-                "web-browser-symbolic",
-                "Tip: Ctrl+Click opens links directly",
-            ),
-            Link::File { .. } => (
-                link.text(),
-                "Open in Editor",
-                "Copy Path",
-                "document-edit-symbolic",
-                "Tip: Ctrl+Click opens the file directly",
-            ),
+            Link::Url(u) => (normalize(u), "Open Link", "Copy Link", "web-browser-symbolic", LINK_HINT),
+            Link::File { .. } => (link.text(), "Open in Editor", "Copy Path", "document-edit-symbolic", FILE_HINT),
         };
         self.url.set_label(&text);
         self.url.set_tooltip_text(Some(&text));
@@ -279,7 +281,7 @@ fn build_popover(term: &vte4::Terminal) -> Popover {
     let (open_btn, open_content) = button("web-browser-symbolic", "Open Link", "link.open");
     open_btn.add_css_class("suggested-action");
     let (copy_btn, copy_content) = button("edit-copy-symbolic", "Copy Link", "link.copy");
-    let hint = gtk4::Label::new(Some("Tip: Ctrl+Click opens links directly"));
+    let hint = gtk4::Label::new(Some(LINK_HINT));
     hint.add_css_class("link-hint");
     hint.set_xalign(0.0);
 
@@ -435,7 +437,7 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, menu: &gio::Menu
             let on = ctx.link_at(&t, x, y).is_some();
             if on != over_link.get() {
                 over_link.set(on);
-                t.set_tooltip_text(on.then_some("Click for link options · Ctrl+Click to open"));
+                t.set_tooltip_text(on.then_some(HOVER_HINT));
             }
         });
         term.add_controller(motion);
@@ -477,7 +479,7 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, menu: &gio::Menu
                 let Some(link) = ctx.link_at(&t, x, y) else {
                     return glib::Propagation::Proceed;
                 };
-                if ev.modifier_state().contains(gdk::ModifierType::CONTROL_MASK) {
+                if ev.modifier_state().contains(super::primary_mask()) {
                     activate(&ctx, &t, &link);
                 } else {
                     popover.show(&link);

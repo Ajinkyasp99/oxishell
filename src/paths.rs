@@ -24,15 +24,21 @@ pub fn state_dir() -> PathBuf {
 }
 
 /// Directory for the control socket: `$XDG_RUNTIME_DIR/oxishell`, or
-/// `/tmp/oxishell-<uid>` when no runtime dir exists.
+/// `/tmp/oxishell-<uid>` when no runtime dir exists. On macOS, which has no
+/// runtime dir, the per-user private `$TMPDIR` (`/var/folders/…/T/`) is used
+/// first, because the system prunes old files in `/tmp`.
 pub fn runtime_dir() -> PathBuf {
-    match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(v) if !v.is_empty() => PathBuf::from(v).join("oxishell"),
-        _ => PathBuf::from(format!("/tmp/oxishell-{}", unsafe { libc::getuid() })),
+    if let Some(v) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+        return PathBuf::from(v).join("oxishell");
     }
+    #[cfg(target_os = "macos")]
+    if let Some(v) = std::env::var_os("TMPDIR").filter(|v| Path::new(v).is_absolute()) {
+        return PathBuf::from(v).join("oxishell");
+    }
+    PathBuf::from(format!("/tmp/oxishell-{}", unsafe { libc::getuid() }))
 }
 
-/// Unix socket paths are limited to 108 bytes (`sun_path`).
+/// Unix socket paths are limited to 108 bytes on Linux, 104 on macOS (`sun_path`).
 const SUN_PATH_MAX: usize = 100;
 
 pub fn socket_path() -> PathBuf {

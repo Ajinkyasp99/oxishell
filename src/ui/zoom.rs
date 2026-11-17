@@ -1,4 +1,5 @@
-//! Keyboard aliases and Ctrl-wheel input for the existing font zoom actions.
+//! Keyboard aliases and Ctrl-wheel (Cmd-wheel on macOS) input for the existing
+//! font zoom actions.
 
 use super::AppRc;
 use crate::config::Config;
@@ -8,7 +9,7 @@ use gtk4::{gdk, glib};
 use std::collections::HashMap;
 
 pub fn add_key_aliases(map: &mut HashMap<(u32, gdk::ModifierType), String>, config: &Config) {
-    let ctrl = gdk::ModifierType::CONTROL_MASK;
+    let ctrl = super::primary_mask();
     for (action, aliases) in [
         (
             "zoom-in",
@@ -35,7 +36,7 @@ pub fn add_key_aliases(map: &mut HashMap<(u32, gdk::ModifierType), String>, conf
 }
 
 fn scroll_action(state: gdk::ModifierType, dy: f64) -> Option<&'static str> {
-    if state != gdk::ModifierType::CONTROL_MASK || !dy.is_finite() || dy == 0.0 {
+    if state != super::primary_mask() || !dy.is_finite() || dy == 0.0 {
         return None;
     }
     Some(if dy < 0.0 { "zoom-in" } else { "zoom-out" })
@@ -67,7 +68,7 @@ mod tests {
 
     #[test]
     fn plus_and_keypad_aliases_preserve_custom_shortcuts() {
-        let ctrl = gdk::ModifierType::CONTROL_MASK;
+        let ctrl = super::super::primary_mask();
         let mut map = HashMap::new();
         add_key_aliases(&mut map, &Config::default());
         assert_eq!(map[&(gdk::Key::plus.into_glib(), ctrl)], "zoom-in");
@@ -87,8 +88,8 @@ mod tests {
     }
 
     #[test]
-    fn only_ctrl_vertical_scroll_zooms() {
-        let ctrl = gdk::ModifierType::CONTROL_MASK;
+    fn only_primary_vertical_scroll_zooms() {
+        let ctrl = super::super::primary_mask();
         assert_eq!(scroll_action(ctrl, -1.0), Some("zoom-in"));
         assert_eq!(scroll_action(ctrl, 1.0), Some("zoom-out"));
         assert_eq!(scroll_action(gdk::ModifierType::empty(), -1.0), None);

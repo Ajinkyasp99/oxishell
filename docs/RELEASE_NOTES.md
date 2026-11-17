@@ -1,5 +1,17 @@
 # Release notes
 
+## Unreleased
+
+- **macOS support** (new, please report issues): a self-contained `Oxishell.app` for Apple silicon and Intel
+  as a `.dmg`, and a Homebrew formula (`brew install Ajinkyasp99/oxishell/oxishell`). Shortcuts use ⌘
+  (⌘T, ⌘D, ⌘W, ⌘C/⌘V, ⌘1…9, ⇧⌘P …), ⌘-click opens links, notifications go to Notification Center with
+  macOS sounds, panes start login shells, and the sidebar's folder, git, ports, agent and CPU/memory
+  readouts work as on Linux.
+- **zsh integration is automatic** (environment chip, ❯ prompt, command blocks and "command finished"
+  notifications), as it already was for bash. A line added earlier with `oxi shell-integration zsh` does no harm.
+- Releases: one tag now builds the Ubuntu .deb and both macOS disk images at the same version and publishes
+  them together, with one `SHA256SUMS`.
+
 ## 0.2.1 — 2026-11-15
 
 - Fixed: the Compose stack bar listed services from other compose files in the same folder (they share

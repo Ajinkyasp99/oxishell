@@ -2,6 +2,8 @@
 //!
 //! Needs a display. Run with:  xvfb-run -a cargo test --test e2e -- --nocapture
 //! Without DISPLAY/WAYLAND_DISPLAY the tests are skipped (and say so).
+// Linux only: needs X11/Xvfb, xdotool and /proc.
+#![cfg(target_os = "linux")]
 
 use oxishell::ipc::call_at;
 use serde_json::{json, Value};

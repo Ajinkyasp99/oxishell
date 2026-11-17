@@ -88,7 +88,7 @@ impl Island {
 
         let button = gtk4::MenuButton::builder()
             .child(&content)
-            .tooltip_text("Notifications (Ctrl+Shift+I)")
+            .tooltip_text(crate::config::with_shortcut("Notifications", "notifications"))
             .valign(gtk4::Align::Center)
             .build();
         button.add_css_class("island");

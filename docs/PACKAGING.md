@@ -13,6 +13,35 @@
   the same machine with the same `SOURCE_DATE_EPOCH` produced byte-identical `.deb` files. Not yet
   verified across different machines/toolchains.
 
+## macOS app and disk image (implemented)
+
+`scripts/build-macos.sh` builds `dist/Oxishell.app` and `dist/oxishell_<version>_macos_<arch>.dmg` on a
+Mac with Homebrew:
+- The version comes from Cargo.toml into `Info.plist` (template `data/macos/Info.plist.in`), like the .deb.
+- `dylibbundler` copies every non-system library (GTK 4, libadwaita, VTE, GLib, Pango, …) into
+  `Contents/Frameworks` and rewrites load paths; the script fails if anything still points into Homebrew.
+- `Contents/Resources` holds the GTK runtime data: compiled GSettings schemas, the Adwaita and hicolor
+  icon themes, gdk-pixbuf loaders (librsvg for SVG icons) with a cache template whose paths are filled
+  in at startup (`platform::macos::setup_bundle_env`), and the fontconfig configuration.
+- Signed ad hoc (required on Apple silicon). Developer ID signing and notarization are sketched in the
+  script for when an Apple Developer account exists.
+- Homebrew's libraries target the macOS release they were built on, so `LSMinimumSystemVersion` is the
+  build machine's major version.
+
+## Homebrew formula (implemented)
+
+`packaging/homebrew/oxishell.rb.in` builds from the release's source tarball against Homebrew's GTK 4,
+libadwaita and VTE. The release workflow fills in version and checksum and pushes it to the tap
+`Ajinkyasp99/homebrew-oxishell` (needs the `HOMEBREW_TAP_TOKEN` secret).
+
+## Releases
+
+One tag builds everything at the Cargo.toml version (`.github/workflows/release.yml`): `scripts/bump-version.sh`,
+commit, then push the tag `vX.Y.Z`. The workflow checks the tag against Cargo.toml, builds the Ubuntu .deb and
+the macOS .dmg for Apple silicon (`macos-15`) and Intel (`macos-15-intel`), and publishes a single release only
+when all of them succeeded, with `SHA256SUMS` over every file. Then it updates the Homebrew formula.
+A `vX.Y.Z-rc.N` tag publishes a pre-release the same way, without touching Homebrew.
+
 ## Flatpak (evaluated, recommended next)
 
 Pros: runs on any distro; GNOME runtime already ships GTK 4 and libadwaita; VTE is a small module to

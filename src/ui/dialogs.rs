@@ -466,7 +466,8 @@ pub fn shortcuts_help(app: &AppRc) {
             (label, k)
         })
         .collect();
-    entries.push(("Select workspace 1–9".into(), "Alt+1…9".into()));
+    let digits = if cfg!(target_os = "macos") { "⌘1…9" } else { "Alt+1…9" };
+    entries.push(("Select workspace 1–9".into(), digits.into()));
     for (l, k) in entries {
         let row = adw::ActionRow::builder().title(l).build();
         let kl = gtk4::Label::new(Some(&k));
@@ -530,7 +531,10 @@ pub fn command_history(app: &AppRc) {
         .margin_end(10)
         .build();
     let hint = gtk4::Label::builder()
-        .label("Enter: put on prompt   ·   Ctrl+Enter: run   ·   Esc: close")
+        .label(format!(
+            "Enter: put on prompt   ·   {}: run   ·   Esc: close",
+            if cfg!(target_os = "macos") { "⌘↩" } else { "Ctrl+Enter" }
+        ))
         .margin_top(4)
         .build();
     hint.add_css_class("palette-accel");
@@ -606,13 +610,13 @@ pub fn command_history(app: &AppRc) {
         list.connect_row_activated(move |_, r| ins(r, false));
     }
     {
-        // Ctrl+Enter runs; Down moves into the list.
+        // Ctrl+Enter (Cmd+Enter on macOS) runs; Down moves into the list.
         let l = list.clone();
         let ins = insert;
         let keys = gtk4::EventControllerKey::new();
         keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
         keys.connect_key_pressed(move |_, k, _, state| {
-            let ctrl = state.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
+            let ctrl = state.contains(super::primary_mask());
             if ctrl && matches!(k, gtk4::gdk::Key::Return | gtk4::gdk::Key::KP_Enter) {
                 if let Some(r) = l.selected_row() {
                     ins(&r, true);

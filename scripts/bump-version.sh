@@ -58,4 +58,6 @@ open(notes, "w", encoding="utf-8").write(s)
 PY
 
 echo "oxishell $OLD -> $NEW ($DATE)"
-echo "Build the package: scripts/build-deb.sh && sudo apt install --reinstall ./dist/oxishell_${NEW}_*.deb"
+echo "Build locally: scripts/build-deb.sh (Linux) or scripts/build-macos.sh (macOS)"
+echo "Release: commit, then tag v${NEW} and push the tag. CI builds the Ubuntu .deb and the"
+echo "macOS .dmg (Apple silicon + Intel) at this version, publishes one release, and updates Homebrew."
