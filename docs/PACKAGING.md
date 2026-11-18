@@ -28,18 +28,23 @@ Mac with Homebrew:
 - Homebrew's libraries target the macOS release they were built on, so `LSMinimumSystemVersion` is the
   build machine's major version.
 
-## Homebrew formula (implemented)
+## Homebrew cask and formula (implemented)
 
-`packaging/homebrew/oxishell.rb.in` builds from the release's source tarball against Homebrew's GTK 4,
-libadwaita and VTE. The release workflow fills in version and checksum and pushes it to the tap
-`Ajinkyasp99/homebrew-oxishell` (needs the `HOMEBREW_TAP_TOKEN` secret).
+Both live in the tap `Ajinkyasp99/homebrew-oxishell`; the release workflow fills in versions and
+checksums and pushes them (needs the `HOMEBREW_TAP_TOKEN` secret).
+- Cask, `packaging/homebrew/oxishell-cask.rb.in` → `Casks/oxishell.rb`: installs the release's `.dmg`
+  (per architecture, checksums from `SHA256SUMS`) as `/Applications/Oxishell.app` and links `oxi`.
+  This is the macOS install that shows up in Applications and Launchpad.
+- Formula, `packaging/homebrew/oxishell.rb.in` → `Formula/oxishell.rb`: builds from the release's source
+  tarball against Homebrew's GTK 4, libadwaita and VTE. Formulas cannot install into `/Applications`, so
+  it provides only the `oxishell` and `oxi` binaries.
 
 ## Releases
 
 One tag builds everything at the Cargo.toml version (`.github/workflows/release.yml`): `scripts/bump-version.sh`,
 commit, then push the tag `vX.Y.Z`. The workflow checks the tag against Cargo.toml, builds the Ubuntu .deb and
 the macOS .dmg for Apple silicon (`macos-15`) and Intel (`macos-15-intel`), and publishes a single release only
-when all of them succeeded, with `SHA256SUMS` over every file. Then it updates the Homebrew formula.
+when all of them succeeded, with `SHA256SUMS` over every file. Then it updates the Homebrew cask and formula.
 A `vX.Y.Z-rc.N` tag publishes a pre-release the same way, without touching Homebrew.
 
 ## Flatpak (evaluated, recommended next)

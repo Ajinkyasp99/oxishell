@@ -178,11 +178,14 @@ notarized by Apple yet, so the first time, right-click it in Applications and ch
 sudo ln -sf /Applications/Oxishell.app/Contents/MacOS/oxi /usr/local/bin/oxi
 ```
 
-**Homebrew** builds it from source and installs `oxishell` and `oxi`:
+**Homebrew** installs the same app into Applications and links the `oxi` CLI:
 
 ```bash
-brew install Ajinkyasp99/oxishell/oxishell
+brew install --cask Ajinkyasp99/oxishell/oxishell
 ```
+
+`brew install --formula Ajinkyasp99/oxishell/oxishell` instead builds only the `oxishell` and `oxi`
+binaries from source; they do not show up in Applications or Launchpad.
 
 On macOS, shortcuts use <kbd>⌘</kbd> (see [Keyboard shortcuts](#keyboard-shortcuts)), panes start your
 login shell, and notifications appear in Notification Center.

@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+- **Homebrew cask:** `brew install --cask Ajinkyasp99/oxishell/oxishell` installs `Oxishell.app` into
+  Applications (so it appears in Launchpad and Spotlight) and links `oxi`. The formula only ever built the
+  command-line binaries, which macOS does not list as an app; it now says so and points to the cask.
+
 ## 0.3.0 — 2026-11-18
 
 - **macOS support** (new, please report issues): a self-contained `Oxishell.app` for Apple silicon and Intel
