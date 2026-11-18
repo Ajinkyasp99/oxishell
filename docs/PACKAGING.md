@@ -35,9 +35,11 @@ checksums and pushes them (needs the `HOMEBREW_TAP_TOKEN` secret).
 - Cask, `packaging/homebrew/oxishell-cask.rb.in` → `Casks/oxishell.rb`: installs the release's `.dmg`
   (per architecture, checksums from `SHA256SUMS`) as `/Applications/Oxishell.app` and links `oxi`.
   This is the macOS install that shows up in Applications and Launchpad.
-- Formula, `packaging/homebrew/oxishell.rb.in` → `Formula/oxishell.rb`: builds from the release's source
-  tarball against Homebrew's GTK 4, libadwaita and VTE. Formulas cannot install into `/Applications`, so
-  it provides only the `oxishell` and `oxi` binaries.
+- Formula, `packaging/homebrew/oxishell-cli.rb.in` → `Formula/oxishell-cli.rb`: builds from the release's
+  source tarball against Homebrew's GTK 4, libadwaita and VTE. Formulas cannot install into
+  `/Applications`, so it provides only the `oxishell` and `oxi` binaries. It must not be named `oxishell`:
+  brew prefers a formula over a cask of the same name, so `brew install Ajinkyasp99/oxishell/oxishell`
+  would build the CLI and no app would appear. The workflow removes 0.3.0's `Formula/oxishell.rb`.
 
 ## Releases
 

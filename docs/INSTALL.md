@@ -42,13 +42,16 @@ first time, right-click it and choose **Open**, or run
 `xattr -dr com.apple.quarantine /Applications/Oxishell.app`. For the CLI:
 `sudo ln -sf /Applications/Oxishell.app/Contents/MacOS/oxi /usr/local/bin/oxi`.
 
-**Homebrew app:** `brew install --cask Ajinkyasp99/oxishell/oxishell` installs the same app into
-Applications and links `oxi` into Homebrew's `bin`. The not-notarized note above applies.
+**Homebrew app:** `brew install Ajinkyasp99/oxishell/oxishell` (or with `--cask`) installs the same app
+into Applications, so it appears in Launchpad and Spotlight, and links `oxi` into Homebrew's `bin`. The
+not-notarized note above applies.
 
 **Homebrew formula** (command line only, builds from source):
-`brew install --formula Ajinkyasp99/oxishell/oxishell`. It installs the `oxishell` and `oxi` binaries,
-not an app, so nothing appears in Applications or Launchpad; start it with `oxishell` from a terminal.
-To switch to the app: `brew uninstall --formula oxishell`, then install the cask.
+`brew install Ajinkyasp99/oxishell/oxishell-cli`. It installs the `oxishell` and `oxi` binaries, not an
+app, so nothing appears in Applications or Launchpad; start it with `oxishell` from a terminal. To switch
+to the app: `brew uninstall --formula oxishell-cli`, then install the cask. (oxishell 0.3.0 named this
+formula `oxishell`, so `brew install Ajinkyasp99/oxishell/oxishell` gave no app; switch with
+`brew uninstall --formula oxishell && brew install --cask Ajinkyasp99/oxishell/oxishell`.)
 
 **From source:**
 
@@ -86,6 +89,42 @@ scripts/build-deb.sh && sudo apt install --reinstall ./dist/oxishell_*.deb
 
 A local build keeps its version number, so `--reinstall` is needed or apt skips it as already installed.
 
+**macOS, installed with Homebrew (app):**
+
+```bash
+oxi --version                          # the version you have now
+brew update
+brew upgrade --cask oxishell           # replaces /Applications/Oxishell.app
+oxi --version                          # the new version
+```
+
+Quit Oxishell (<kbd>⌘</kbd>+<kbd>Q</kbd>) first, or restart it afterwards. The app is not notarized, so if macOS
+refuses to open the new version, allow it in System Settings → Privacy & Security ("Open Anyway") or run
+`xattr -dr com.apple.quarantine /Applications/Oxishell.app`. Homebrew formula (CLI only):
+`brew upgrade oxishell-cli`.
+
+**macOS, installed from the .dmg:** quit Oxishell, download the new image for your Mac and replace the app
+(by hand: open the .dmg and drag **Oxishell** onto Applications → Replace), or from a terminal:
+
+```bash
+curl -fLo ~/Downloads/oxishell.dmg \
+  "https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_macos_$(uname -m).dmg"   # arm64 or x86_64
+hdiutil attach ~/Downloads/oxishell.dmg -nobrowse -mountpoint /Volumes/oxishell-update
+rm -rf /Applications/Oxishell.app
+cp -R /Volumes/oxishell-update/Oxishell.app /Applications/
+hdiutil detach /Volumes/oxishell-update
+xattr -dr com.apple.quarantine /Applications/Oxishell.app
+oxi --version
+```
+
+The `oxi` link in `/usr/local/bin` points into the app, so it uses the new version automatically.
+
+**macOS, built from source:** `git pull`, then `scripts/build-macos.sh` and install `dist/oxishell_*_macos_*.dmg`
+as above (or run `./target/release/oxishell` after `cargo build --release`).
+
+With Settings → Notifications → Check for updates on, oxishell shows "oxishell X is out" on both Linux and
+macOS when a new release appears; use the commands above for your install method.
+
 ## Uninstall
 
 1. Remove agent hooks first (they live in your agents' own config files):
@@ -103,7 +142,7 @@ A local build keeps its version number, so `--reinstall` is needed or apt skips 
    ```
 
 On macOS: remove the hooks as in step 1, then delete `/Applications/Oxishell.app` (or
-`brew uninstall --cask oxishell` / `brew uninstall --formula oxishell`) and, optionally, the two folders from step 3.
+`brew uninstall --cask oxishell` / `brew uninstall --formula oxishell-cli`) and, optionally, the two folders from step 3.
 
 The package installs only: `/usr/bin/oxishell`, `/usr/bin/oxi`, the desktop entry, icon, AppStream
 metadata and docs under `/usr/share/doc/oxishell`.

@@ -163,6 +163,42 @@ scripts/build-deb.sh && sudo apt install --reinstall ./dist/oxishell_*.deb
 `--reinstall` matters here: a local build keeps the version number, and without it apt says
 *already the newest version* and skips the install.
 
+**macOS, installed with Homebrew (app):**
+
+```bash
+oxi --version                          # the version you have now
+brew update
+brew upgrade --cask oxishell           # replaces /Applications/Oxishell.app
+oxi --version                          # the new version
+```
+
+Quit Oxishell (<kbd>⌘</kbd>+<kbd>Q</kbd>) first, or restart it afterwards. The app is not notarized, so if macOS
+refuses to open the new version, allow it in System Settings → Privacy & Security ("Open Anyway") or run
+`xattr -dr com.apple.quarantine /Applications/Oxishell.app`. Homebrew formula (CLI only):
+`brew upgrade oxishell-cli`.
+
+**macOS, installed from the .dmg:** quit Oxishell, download the new image for your Mac and replace the app
+(by hand: open the .dmg and drag **Oxishell** onto Applications → Replace), or from a terminal:
+
+```bash
+curl -fLo ~/Downloads/oxishell.dmg \
+  "https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_macos_$(uname -m).dmg"   # arm64 or x86_64
+hdiutil attach ~/Downloads/oxishell.dmg -nobrowse -mountpoint /Volumes/oxishell-update
+rm -rf /Applications/Oxishell.app
+cp -R /Volumes/oxishell-update/Oxishell.app /Applications/
+hdiutil detach /Volumes/oxishell-update
+xattr -dr com.apple.quarantine /Applications/Oxishell.app
+oxi --version
+```
+
+The `oxi` link in `/usr/local/bin` points into the app, so it uses the new version automatically.
+
+**macOS, built from source:** `git pull`, then `scripts/build-macos.sh` and install `dist/oxishell_*_macos_*.dmg`
+as above (or run `./target/release/oxishell` after `cargo build --release`).
+
+With Settings → Notifications → Check for updates on, oxishell shows "oxishell X is out" on both Linux and
+macOS when a new release appears; use the commands above for your install method.
+
 ## Install on macOS
 
 macOS support is new: please [report](https://github.com/Ajinkyasp99/oxishell/issues) anything that
@@ -179,14 +215,17 @@ notarized by Apple yet, so the first time, right-click it in Applications and ch
 sudo ln -sf /Applications/Oxishell.app/Contents/MacOS/oxi /usr/local/bin/oxi
 ```
 
-**Homebrew** installs the same app into Applications and links the `oxi` CLI:
+**Homebrew** installs the same app into Applications (so it is in Launchpad and Spotlight) and links the
+`oxi` CLI:
 
 ```bash
-brew install --cask Ajinkyasp99/oxishell/oxishell
+brew install Ajinkyasp99/oxishell/oxishell      # same as: brew install --cask Ajinkyasp99/oxishell/oxishell
 ```
 
-`brew install --formula Ajinkyasp99/oxishell/oxishell` instead builds only the `oxishell` and `oxi`
-binaries from source; they do not show up in Applications or Launchpad.
+`brew install Ajinkyasp99/oxishell/oxishell-cli` instead builds only the `oxishell` and `oxi` binaries
+from source; they do not show up in Applications or Launchpad. If you installed 0.3.0 with
+`brew install Ajinkyasp99/oxishell/oxishell` and have no app, switch:
+`brew uninstall --formula oxishell && brew install --cask Ajinkyasp99/oxishell/oxishell`.
 
 On macOS, shortcuts use <kbd>⌘</kbd> (see [Keyboard shortcuts](#keyboard-shortcuts)), panes start your
 login shell, and notifications appear in Notification Center.

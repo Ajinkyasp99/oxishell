@@ -25,13 +25,14 @@
       <nav aria-label="Main navigation">
         <a href="#features">Features</a>
         <a href="#download">Download</a>
-        <a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md">Docs</a>
+        <a href="#docs">Docs</a>
       </nav>
       <a class="button button-small" href="https://github.com/Ajinkyasp99/oxishell">GitHub <span aria-hidden="true">↗</span></a>
     </div>
   </header>
 
   <main id="main">
+    <p id="copy-status" class="visually-hidden" role="status"></p>
     <section class="hero" aria-labelledby="hero-title">
       <div class="shell hero-layout">
         <div class="hero-copy">
@@ -44,7 +45,7 @@
           </div>
         </div>
 
-        <div class="showcase" aria-label="Product screenshots">
+        <div class="showcase" role="group" aria-label="Product screenshots">
           <div class="showcase-stage">
             <fieldset class="gallery-options">
               <legend class="visually-hidden">Choose an Oxishell screenshot</legend>
@@ -99,7 +100,7 @@
           <article class="feature-card workspace-card">
             <div class="feature-copy">
               <h3>A workspace for every project</h3>
-              <p>Keep your agent, tests and dev server in split panes. The sidebar lets you switch projects while background work keeps running.</p>
+              <p>Keep your agent, tests and dev server in split panes. Switch projects while background work keeps running. After a restart, reopen your layout and resume supported agent sessions from the pane menu.</p>
             </div>
             <div class="pane-example" aria-hidden="true">
               <div class="pane-sidebar">
@@ -117,7 +118,7 @@
           <article class="feature-card alert-card">
             <div class="feature-copy">
               <h3>Know when an agent needs you</h3>
-              <p>Get a desktop notification when an agent asks for input or finishes. Select it to jump to the right pane.</p>
+              <p>Enable agent hooks to get desktop alerts for the events your agent reports. Select an alert to jump to the right pane.</p>
             </div>
             <div class="alert-example" aria-hidden="true">
               <div><span class="agent-icon">✳</span><span><strong>Claude Code</strong><small>Permission requested</small></span><span class="agent-state waiting">Needs input</span></div>
@@ -129,14 +130,72 @@
             <div class="feature-copy">
               <p class="eyebrow">Native terminal</p>
               <h3>Make the terminal yours.</h3>
-              <p>Browse built-in Warp themes or import your own. Search command history, find actions from the command palette, or automate your setup with the <code>oxi</code> CLI.</p>
-              <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell#features">See all features <span aria-hidden="true">↗</span></a>
+              <p>Apply a Warp theme across the whole window or import your own. Find themes, actions and custom commands in the command palette.</p>
+              <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/THEMES.md">Browse the theme guide <span aria-hidden="true">↗</span></a>
             </div>
             <div class="theme-image">
               <img src="./assets/theme-gallery.webp" width="720" height="680" loading="lazy" alt="Theme settings showing Warp Dark, Tokyo Night, Dracula, Catppuccin and Nord.">
             </div>
           </article>
         </div>
+
+        <div class="workflow-grid">
+          <article>
+            <h3>Track agent usage</h3>
+            <p>See reported 5-hour and weekly limits for active Codex and Claude Code sessions, including reset times.</p>
+            <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell#codex-and-claude-usage-limits">Usage and setup <span aria-hidden="true">↗</span></a>
+          </article>
+          <article>
+            <h3>Run Docker Compose</h3>
+            <p>Choose a Compose file from the pane. See service status and ports, rebuild or restart services, and get an alert if one crashes.</p>
+            <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/COMPOSE_LAUNCHER.md">Compose guide <span aria-hidden="true">↗</span></a>
+          </article>
+          <article>
+            <h3>Script your workspace</h3>
+            <p>Use the <code>oxi</code> CLI to create workspaces, split panes, read output or send notifications over a private local socket.</p>
+            <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/CLI.md">CLI reference <span aria-hidden="true">↗</span></a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="quick-start section" id="quick-start" aria-labelledby="quick-start-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="eyebrow">Quick start</p>
+          <h2 id="quick-start-title">Set up your first workspace.</h2>
+        </div>
+        <ol class="setup-steps">
+          <li>
+            <h3>Open a workspace</h3>
+            <p>Give each project a workspace. Create one with <kbd>Ctrl+Shift+N</kbd> on Linux or <kbd>⌘T</kbd> on macOS.</p>
+          </li>
+          <li>
+            <h3>Split your terminal</h3>
+            <p>Split right with <kbd>Ctrl+Shift+E</kbd> or <kbd>⌘D</kbd>. Run an agent in one pane and your tests or server in the other.</p>
+          </li>
+          <li>
+            <h3>Turn on agent hooks</h3>
+            <p>Open <strong>Settings → Notifications → Agent Hooks</strong>, or run this command to set up supported agents on your <code>PATH</code>.</p>
+            <div class="command">
+              <code id="hooks-command">oxi hooks install --all</code>
+              <button type="button" data-copy="hooks-command" aria-label="Copy agent hook setup command" hidden>Copy</button>
+            </div>
+          </li>
+        </ol>
+        <details class="reference-panel">
+          <summary>Which alerts does each agent support?</summary>
+          <dl class="agent-support">
+            <div><dt>Claude Code</dt><dd>Running, needs input, finished</dd></div>
+            <div><dt>Codex CLI</dt><dd>Running, needs input, finished with lifecycle hooks</dd></div>
+            <div><dt>Gemini CLI</dt><dd>Running, finished</dd></div>
+            <div><dt>OpenCode</dt><dd>Running, needs input, finished via the plugin. Live OpenCode testing is pending.</dd></div>
+            <div><dt>Qoder CLI</dt><dd>Finished</dd></div>
+          </dl>
+          <p>For Codex, restart the CLI after setup and review and trust the Oxishell hooks in <code>/hooks</code>. Older Codex releases can use the completion-only integration.</p>
+          <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/AGENTS.md">Read the agent setup guide <span aria-hidden="true">↗</span></a>
+        </details>
+        <a class="text-link shortcut-link" href="https://github.com/Ajinkyasp99/oxishell#keyboard-shortcuts">See Linux and macOS shortcuts <span aria-hidden="true">↗</span></a>
       </div>
     </section>
 
@@ -152,11 +211,12 @@
             <h3>Linux</h3>
             <p>Ubuntu 24.04+ or Debian 13+ · x86-64</p>
             <a class="button button-primary" href="https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_amd64.deb">Download .deb <span aria-hidden="true">↓</span></a>
-            <p class="install-label">Install from the downloaded file</p>
+            <p class="install-label">Run from the download folder</p>
             <div class="command">
               <code id="linux-command">sudo apt install ./oxishell_amd64.deb</code>
               <button type="button" data-copy="linux-command" aria-label="Copy Linux install command" hidden>Copy</button>
             </div>
+            <p class="install-note">Open Oxishell from your app menu. The package installs the desktop app and the <code>oxi</code> CLI. Supports Wayland and X11.</p>
           </article>
           <article class="install-card">
             <h3>macOS</h3>
@@ -170,13 +230,42 @@
               <code id="mac-command">brew install --cask Ajinkyasp99/oxishell/oxishell</code>
               <button type="button" data-copy="mac-command" aria-label="Copy Homebrew install command" hidden>Copy</button>
             </div>
+            <p class="install-note">If you use a disk image, drag Oxishell into Applications. The app is signed ad hoc. See the <a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md#macos">first-launch instructions</a> if macOS blocks it.</p>
           </article>
         </div>
-        <p id="copy-status" class="visually-hidden" role="status"></p>
+        <details class="reference-panel">
+          <summary>Update an existing installation</summary>
+          <p>Quit Oxishell before updating. Your settings, workspaces, themes and agent hooks carry over.</p>
+          <ul>
+            <li>For the <strong>Linux .deb</strong>, download the new package and run the same install command.</li>
+            <li>For the <strong>macOS disk image</strong>, download the new image for your Mac and replace Oxishell in Applications.</li>
+            <li>For the <strong>Homebrew cask</strong>, run <code>brew update</code> and then <code>brew upgrade --cask oxishell</code>.</li>
+          </ul>
+          <p>Enable <strong>Settings → Notifications → Check for updates</strong> for release notices. Oxishell leaves installation to you.</p>
+          <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md#update">Full update instructions <span aria-hidden="true">↗</span></a>
+        </details>
         <div class="download-links">
+          <a class="text-link" href="#quick-start">Set up your workspace <span aria-hidden="true">↑</span></a>
           <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md">Installation guide <span aria-hidden="true">↗</span></a>
           <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/releases">All releases <span aria-hidden="true">↗</span></a>
         </div>
+      </div>
+    </section>
+
+    <section class="resources section" id="docs" aria-labelledby="docs-title">
+      <div class="shell">
+        <div class="section-heading">
+          <h2 id="docs-title">Documentation</h2>
+          <p>Oxishell is built with Rust, GTK and VTE. It runs without an Oxishell account or telemetry. <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell#privacy--security">Read the privacy and security notes <span aria-hidden="true">↗</span></a></p>
+        </div>
+        <ul class="resource-grid">
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md"><strong>Installation</strong><span>Packages, source builds and updates</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/AGENTS.md"><strong>Agent hooks</strong><span>Events, setup and session resume</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/CLI.md"><strong>CLI reference</strong><span>Commands for workspaces, panes and alerts</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/CONFIGURATION.md"><strong>Configuration</strong><span>Appearance, shortcuts and settings</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/TROUBLESHOOTING.md"><strong>Troubleshooting</strong><span>Help with connections, hooks and notifications</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/RELEASE_NOTES.md"><strong>Release notes</strong><span>New features, fixes and known limits</span></a></li>
+        </ul>
       </div>
     </section>
   </main>

@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- **Homebrew cask:** `brew install --cask Ajinkyasp99/oxishell/oxishell` installs `Oxishell.app` into
-  Applications (so it appears in Launchpad and Spotlight) and links `oxi`. The formula only ever built the
-  command-line binaries, which macOS does not list as an app; it now says so and points to the cask.
+- **Homebrew installs the app:** `brew install Ajinkyasp99/oxishell/oxishell` now installs the cask, i.e.
+  `Oxishell.app` in Applications (Launchpad, Spotlight) with `oxi` linked. In 0.3.0 that command picked the
+  same-named formula, which only builds command-line binaries, so no app appeared. The CLI-only formula is
+  now `oxishell-cli`. If you installed the 0.3.0 formula: `brew uninstall --formula oxishell && brew install
+  --cask Ajinkyasp99/oxishell/oxishell`.
 
 ## 0.3.0 — 2026-11-18
 

@@ -247,7 +247,7 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("prev-workspace", "<Ctrl>Page_Up", "Previous workspace"),
     ("split-right", "<Ctrl><Shift>e", "Split right"),
     ("split-down", "<Ctrl><Shift>o", "Split down"),
-    ("close-pane", "<Ctrl><Shift>w", "Close tab"),
+    ("close-pane", "<Ctrl><Shift>w", "Close pane"),
     ("focus-left", "<Alt>Left", "Focus pane left"),
     ("focus-right", "<Alt>Right", "Focus pane right"),
     ("focus-up", "<Alt>Up", "Focus pane up"),
@@ -283,7 +283,7 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("prev-workspace", "<Meta><Shift>braceleft", "Previous workspace"),
     ("split-right", "<Meta>d", "Split right"),
     ("split-down", "<Meta><Shift>d", "Split down"),
-    ("close-pane", "<Meta>w", "Close tab"),
+    ("close-pane", "<Meta>w", "Close pane"),
     ("focus-left", "<Meta><Alt>Left", "Focus pane left"),
     ("focus-right", "<Meta><Alt>Right", "Focus pane right"),
     ("focus-up", "<Meta><Alt>Up", "Focus pane up"),
@@ -619,6 +619,10 @@ mod tests {
         assert_eq!(default_shortcut("next-tab"), "<Ctrl>Tab");
         assert_eq!(default_shortcut("prev-tab"), "<Ctrl><Shift>Tab");
         assert!(c.shortcut_conflicts().is_empty());
+        // Ctrl+Shift+W / ⌘W closes a pane (a tab's last pane closes the tab).
+        let label = |a: &str| DEFAULT_SHORTCUTS.iter().find(|(n, _, _)| *n == a).unwrap().2;
+        assert_eq!(label("close-pane"), "Close pane");
+        assert_eq!(label("new-tab"), "New tab");
     }
 
     #[test]

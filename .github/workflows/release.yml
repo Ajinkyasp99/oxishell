@@ -177,13 +177,15 @@ jobs:
           SHA_X86_64=$(dmg_sha x86_64)
           git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/Ajinkyasp99/homebrew-oxishell.git" tap
           mkdir -p tap/Formula tap/Casks
-          sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA256@/$SHA/g" packaging/homebrew/oxishell.rb.in > tap/Formula/oxishell.rb
+          # The CLI-only formula is oxishell-cli, so `brew install .../oxishell` gets the cask (the app).
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA256@/$SHA/g" packaging/homebrew/oxishell-cli.rb.in > tap/Formula/oxishell-cli.rb
           sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA256_ARM64@/$SHA_ARM64/g" -e "s/@SHA256_X86_64@/$SHA_X86_64/g" \
             packaging/homebrew/oxishell-cask.rb.in > tap/Casks/oxishell.rb
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/oxishell.rb Casks/oxishell.rb
+          git rm -q --ignore-unmatch Formula/oxishell.rb   # 0.3.0's formula, which shadowed the cask
+          git add Formula/oxishell-cli.rb Casks/oxishell.rb
           if git diff --cached --quiet; then
             echo "Formula and cask already at $VERSION"
             exit 0
