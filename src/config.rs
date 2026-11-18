@@ -237,7 +237,8 @@ impl Default for Notifications {
     }
 }
 
-/// Every bindable action with its default accelerator.
+/// Every bindable action with its default accelerator (Linux: Ctrl-based).
+#[cfg(not(target_os = "macos"))]
 pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("new-workspace", "<Ctrl><Shift>n", "New workspace"),
     ("close-workspace", "<Ctrl><Shift>q", "Close workspace"),
@@ -267,6 +268,116 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("settings", "<Ctrl>comma", "Settings"),
     ("compose-files", "<Ctrl><Shift>l", "Docker Compose files"),
 ];
+
+/// Every bindable action with its default accelerator (macOS: Command-based,
+/// `<Meta>` in GTK, so Ctrl keys stay with the shell).
+#[cfg(target_os = "macos")]
+pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
+    ("new-workspace", "<Meta>t", "New workspace"),
+    ("close-workspace", "<Meta><Shift>w", "Close workspace"),
+    ("rename-workspace", "<Meta><Shift>r", "Rename workspace"),
+    ("next-workspace", "<Meta><Shift>braceright", "Next workspace"),
+    ("prev-workspace", "<Meta><Shift>braceleft", "Previous workspace"),
+    ("split-right", "<Meta>d", "Split right"),
+    ("split-down", "<Meta><Shift>d", "Split down"),
+    ("close-pane", "<Meta>w", "Close pane"),
+    ("focus-left", "<Meta><Alt>Left", "Focus pane left"),
+    ("focus-right", "<Meta><Alt>Right", "Focus pane right"),
+    ("focus-up", "<Meta><Alt>Up", "Focus pane up"),
+    ("focus-down", "<Meta><Alt>Down", "Focus pane down"),
+    ("newline", "<Shift>Return", "New line in prompt"),
+    ("newline-alt", "<Ctrl>Return", "New line in prompt (alternative)"),
+    ("copy", "<Meta>c", "Copy"),
+    ("paste", "<Meta>v", "Paste"),
+    ("search", "<Meta>f", "Search scrollback"),
+    ("command-palette", "<Meta><Shift>p", "Command palette"),
+    ("toggle-sidebar", "<Meta><Shift>b", "Toggle sidebar"),
+    ("jump-unread", "<Meta><Shift>u", "Jump to latest unread"),
+    ("notifications", "<Meta><Shift>i", "Show notifications"),
+    ("zoom-in", "<Meta>equal", "Increase font size"),
+    ("zoom-out", "<Meta>minus", "Decrease font size"),
+    ("zoom-reset", "<Meta>0", "Reset font size"),
+    ("command-history", "<Meta><Shift>h", "Search command history"),
+    ("settings", "<Meta>comma", "Settings"),
+    ("compose-files", "<Meta><Shift>l", "Docker Compose files"),
+];
+
+/// The primary modifier as shown in help texts: Ctrl, or ⌘ on macOS.
+pub const PRIMARY_KEY: &str = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl" };
+
+/// The default accelerator of `action` (empty if there is none).
+pub fn default_shortcut(action: &str) -> &'static str {
+    DEFAULT_SHORTCUTS.iter().find(|(a, _, _)| *a == action).map_or("", |(_, k, _)| k)
+}
+
+/// `text (shortcut)` with the default shortcut of `action`, for tooltips.
+pub fn with_shortcut(text: &str, action: &str) -> String {
+    format!("{text} ({})", accel_label(default_shortcut(action)))
+}
+
+/// A GTK accelerator such as `<Ctrl><Shift>b` as people write it: `Ctrl+Shift+B`
+/// on Linux, `⇧⌘B` on macOS (Control, Option, Shift, Command order).
+pub fn accel_label(accel: &str) -> String {
+    accel_label_for(accel, cfg!(target_os = "macos"))
+}
+
+fn accel_label_for(accel: &str, mac: bool) -> String {
+    let mut mods = Vec::new();
+    let mut rest = accel;
+    while let Some(after) = rest.strip_prefix('<') {
+        let Some((m, tail)) = after.split_once('>') else { break };
+        mods.push(m.to_ascii_lowercase());
+        rest = tail;
+    }
+    let key = match rest {
+        "equal" => "=".to_string(),
+        "minus" => "-".into(),
+        "plus" => "+".into(),
+        "comma" => ",".into(),
+        "period" => ".".into(),
+        "braceright" => "}".into(),
+        "braceleft" => "{".into(),
+        "bracketright" => "]".into(),
+        "bracketleft" => "[".into(),
+        "Return" if mac => "↩".into(),
+        "Return" => "Enter".into(),
+        "Left" if mac => "←".into(),
+        "Right" if mac => "→".into(),
+        "Up" if mac => "↑".into(),
+        "Down" if mac => "↓".into(),
+        k if k.chars().count() == 1 => k.to_uppercase(),
+        k => k.replace('_', " "),
+    };
+    if mac {
+        let order = [
+            ("ctrl", "⌃"),
+            ("control", "⌃"),
+            ("alt", "⌥"),
+            ("shift", "⇧"),
+            ("meta", "⌘"),
+            ("super", "⌘"),
+        ];
+        let mut out: String = order
+            .iter()
+            .filter(|(m, _)| mods.iter().any(|x| x == m))
+            .map(|(_, sym)| *sym)
+            .collect();
+        out.push_str(&key);
+        out
+    } else {
+        let name = |m: &str| match m {
+            "ctrl" | "control" | "primary" => "Ctrl".to_string(),
+            "shift" => "Shift".into(),
+            "alt" => "Alt".into(),
+            "super" => "Super".into(),
+            "meta" => "Meta".into(),
+            other => other.to_string(),
+        };
+        let mut parts: Vec<String> = mods.iter().map(|m| name(m)).collect();
+        parts.push(key);
+        parts.join("+")
+    }
+}
 
 impl Config {
     pub fn path() -> PathBuf {
@@ -365,13 +476,18 @@ impl Config {
         if !self.terminal.shell.trim().is_empty() {
             return self.terminal.shell.clone();
         }
-        if let Ok(s) = std::env::var("SHELL") {
-            if !s.is_empty() {
-                return s;
-            }
-        }
-        passwd_shell().unwrap_or_else(|| "/bin/sh".into())
+        login_shell()
     }
+}
+
+/// The user's own shell: `$SHELL`, else the passwd entry, else `/bin/sh`.
+pub fn login_shell() -> String {
+    if let Ok(s) = std::env::var("SHELL") {
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    passwd_shell().unwrap_or_else(|| "/bin/sh".into())
 }
 
 fn passwd_shell() -> Option<String> {
@@ -388,6 +504,29 @@ fn passwd_shell() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accel_labels_read_naturally_on_each_platform() {
+        assert_eq!(accel_label_for("<Ctrl><Shift>b", false), "Ctrl+Shift+B");
+        assert_eq!(accel_label_for("<Ctrl>equal", false), "Ctrl+=");
+        assert_eq!(accel_label_for("<Ctrl>Page_Down", false), "Ctrl+Page Down");
+        assert_eq!(accel_label_for("<Alt>Left", false), "Alt+Left");
+        assert_eq!(accel_label_for("<Meta><Shift>p", true), "⇧⌘P");
+        assert_eq!(accel_label_for("<Shift><Meta><Alt>Left", true), "⌥⇧⌘←");
+        assert_eq!(accel_label_for("<Meta>comma", true), "⌘,");
+        assert_eq!(accel_label_for("<Ctrl>Return", true), "⌃↩");
+    }
+
+    #[test]
+    fn every_action_has_a_unique_default_on_this_platform() {
+        let mut seen = std::collections::HashSet::new();
+        for (action, accel, _) in DEFAULT_SHORTCUTS {
+            assert!(!accel.is_empty(), "{action}");
+            assert!(seen.insert(accel.to_lowercase()), "{accel} bound twice");
+        }
+        assert_eq!(default_shortcut("command-palette"), DEFAULT_SHORTCUTS[17].1);
+        assert!(with_shortcut("Split right", "split-right").starts_with("Split right ("));
+    }
 
     #[test]
     fn defaults_are_valid_and_roundtrip() {
@@ -462,7 +601,9 @@ mod tests {
     #[test]
     fn compose_shortcut_is_bound_without_conflicts() {
         let c = Config::default();
-        assert!(c.effective_shortcuts().contains(&("compose-files".into(), "<Ctrl><Shift>l".into())));
+        let accel = default_shortcut("compose-files").to_string();
+        assert!(!accel.is_empty());
+        assert!(c.effective_shortcuts().contains(&("compose-files".into(), accel)));
         assert!(c.shortcut_conflicts().is_empty());
     }
 
@@ -525,7 +666,9 @@ mod tests {
     #[test]
     fn detects_shortcut_conflicts() {
         let mut c = Config::default();
-        c.shortcuts.insert("split-down".into(), "<Ctrl><Shift>E".into());
+        // Same keys as split-right, written in another case.
+        c.shortcuts
+            .insert("split-down".into(), default_shortcut("split-right").to_uppercase());
         let conflicts = c.shortcut_conflicts();
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].1, vec!["split-right".to_string(), "split-down".to_string()]);

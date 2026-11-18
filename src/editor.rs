@@ -96,7 +96,17 @@ pub fn is_terminal_editor(editor: &str) -> bool {
 }
 
 /// Graphical editors tried, in order, when nothing is configured.
-const KNOWN_EDITORS: &[&str] = &["code", "zed", "codium", "subl", "kate", "gnome-text-editor", "gedit"];
+const KNOWN_EDITORS: &[&str] = &[
+    "code",
+    "zed",
+    "codium",
+    "subl",
+    "kate",
+    "gnome-text-editor",
+    "gedit",
+    "cursor",
+    "windsurf",
+];
 
 /// Which editor to use: the configured one, then `$VISUAL`, `$EDITOR`, then the
 /// first known graphical editor found by `on_path`. None = use the desktop's

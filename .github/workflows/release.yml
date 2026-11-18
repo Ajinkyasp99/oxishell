@@ -1,5 +1,13 @@
 name: Release
 
+# One tag builds every platform at the same version and publishes them together:
+#   vX.Y.Z        -> release (Ubuntu .deb, macOS .dmg for Apple silicon and Intel,
+#                    Homebrew formula update)
+#   vX.Y.Z-rc.N   -> pre-release with the same files (no Homebrew update; the
+#                    in-app update check ignores pre-releases)
+# The version always comes from Cargo.toml (scripts/bump-version.sh); the tag
+# must match it.
+
 on:
   push:
     tags: ["v*"]
@@ -8,7 +16,33 @@ permissions:
   contents: write
 
 jobs:
-  deb:
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Tag must match Cargo.toml
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          TAG=$GITHUB_REF_NAME
+          if [[ $TAG == "v$VERSION" ]]; then
+            PRE=false
+          elif [[ $TAG == "v$VERSION-"* ]]; then
+            PRE=true
+          else
+            echo "::error::Tag $TAG does not match Cargo.toml version $VERSION. Run scripts/bump-version.sh, commit, then tag v$VERSION."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Releasing oxishell $VERSION from $TAG (pre-release: $PRE)"
+
+  linux:
+    needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -25,8 +59,122 @@ jobs:
           scripts/build-deb.sh
           # Stable name so README links to releases/latest/download/... keep working.
           cp dist/oxishell_*_amd64.deb dist/oxishell_amd64.deb
-          (cd dist && sha256sum *.deb > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/*.deb
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        timeout-minutes: 20
+        run: brew install gtk4 libadwaita vte3 librsvg adwaita-icon-theme pkgconf dylibbundler
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build .app and .dmg
+        run: |
+          scripts/build-macos.sh
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          # Stable name so README links to releases/latest/download/... keep working.
+          cp "dist/oxishell_${{ needs.version.outputs.version }}_macos_${{ matrix.arch }}.dmg" \
+             "dist/oxishell_macos_${{ matrix.arch }}.dmg"
+      - name: Smoke test the bundled CLI
+        run: |
+          dist/Oxishell.app/Contents/MacOS/oxi --version | grep -F "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  # Runs only when every platform built, so a release never lacks one of them.
+  publish:
+    needs: [version, linux, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums and release notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          (cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+          # Only this version's section of docs/RELEASE_NOTES.md.
+          awk -v h="## $VERSION " 'index($0, h) == 1 {f = 1; next} /^## / && f {exit} f' docs/RELEASE_NOTES.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::warning::No '## $VERSION' section in docs/RELEASE_NOTES.md"
+            echo "oxishell $VERSION" > notes.md
+          fi
+          cat >> notes.md <<EOF
+
+          ### Downloads
+
+          | Platform | File |
+          |---|---|
+          | Ubuntu 24.04+ / Debian 13+ (x86_64) | \`oxishell_amd64.deb\` |
+          | macOS, Apple silicon | \`oxishell_macos_arm64.dmg\` |
+          | macOS, Intel | \`oxishell_macos_x86_64.dmg\` |
+
+          The macOS app is not notarized yet: on first launch, right-click Oxishell > Open.
+          Homebrew: \`brew install Ajinkyasp99/oxishell/oxishell\`. Checksums: \`SHA256SUMS\`.
+          EOF
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS --title "$GITHUB_REF_NAME" --notes-file docs/RELEASE_NOTES.md
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          flags=()
+          [[ $PRERELEASE == true ]] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md "${flags[@]}"
+
+  homebrew:
+    needs: [version, publish]
+    if: needs.version.outputs.prerelease == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update the tap formula
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if [[ -z $TAP_TOKEN ]]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew formula update."
+            exit 0
+          fi
+          SHA=$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${VERSION}.tar.gz" | sha256sum | cut -d' ' -f1)
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/Ajinkyasp99/homebrew-oxishell.git" tap
+          mkdir -p tap/Formula
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA256@/$SHA/g" packaging/homebrew/oxishell.rb.in > tap/Formula/oxishell.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/oxishell.rb
+          if git diff --cached --quiet; then
+            echo "Formula already at $VERSION"
+            exit 0
+          fi
+          git commit -m "oxishell $VERSION"
+          git push

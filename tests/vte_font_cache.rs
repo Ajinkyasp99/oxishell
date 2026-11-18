@@ -8,6 +8,8 @@
 //!
 //! The scenario runs in a child process with fatal criticals so any bad unref
 //! aborts it. Needs a display:  xvfb-run -a cargo test --test vte_font_cache
+// Linux only: exercises the ELF GOT patch in ui::vte_fix.
+#![cfg(target_os = "linux")]
 
 use gtk4::glib;
 use gtk4::prelude::*;

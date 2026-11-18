@@ -198,6 +198,11 @@ impl Desktop {
     /// Show a notification for `r`, replacing the pane's previous one.
     pub fn show(self: &Rc<Self>, r: &Request) {
         let Some(conn) = self.conn.clone() else {
+            // macOS has no notification server to play the sound.
+            #[cfg(target_os = "macos")]
+            if r.sound {
+                play_sound(r.kind.sound());
+            }
             self.show_fallback(r);
             return;
         };
@@ -289,6 +294,14 @@ impl Desktop {
     /// GApplication notification: no sound or urgency on GNOME, but works
     /// through the portal inside sandboxes.
     fn show_fallback(&self, r: &Request) {
+        // GLib's macOS backend needs a bundle id, so outside Oxishell.app (a
+        // Homebrew install) ask Notification Center through AppleScript.
+        #[cfg(target_os = "macos")]
+        if !in_app_bundle() {
+            let title = if r.title.is_empty() { APP_NAME } else { r.title };
+            osascript_notify(title, r.body);
+            return;
+        }
         let n = gio::Notification::new(if r.title.is_empty() { APP_NAME } else { r.title });
         n.set_body(Some(r.body));
         n.set_priority(match r.kind.urgency() {
@@ -407,8 +420,63 @@ impl FallbackCopy {
     }
 }
 
+/// Whether this binary runs from inside an `.app` bundle.
+#[cfg(target_os = "macos")]
+fn in_app_bundle() -> bool {
+    crate::platform::macos::bundle_resources().is_some()
+}
+
+/// Quote `s` as an AppleScript string literal.
+#[cfg(any(target_os = "macos", test))]
+fn applescript_string(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+#[cfg(target_os = "macos")]
+fn osascript_notify(title: &str, body: &str) {
+    let script = format!(
+        "display notification {} with title {}",
+        applescript_string(body),
+        applescript_string(title)
+    );
+    let argv = [std::ffi::OsStr::new("/usr/bin/osascript"), "-e".as_ref(), script.as_ref()];
+    let flags = gio::SubprocessFlags::STDOUT_SILENCE | gio::SubprocessFlags::STDERR_SILENCE;
+    if let Ok(p) = gio::Subprocess::newv(&argv, flags) {
+        p.wait_async(gio::Cancellable::NONE, |_| {});
+    }
+}
+
+/// macOS system sound for a freedesktop sound-theme event.
+#[cfg(any(target_os = "macos", test))]
+fn macos_sound(event: &str) -> &'static str {
+    match event {
+        "message-new-instant" => "Glass",
+        "complete" => "Hero",
+        "dialog-warning" => "Basso",
+        "bell" => "Tink",
+        _ => "Pop",
+    }
+}
+
+/// Play a system sound with `afplay`; beep if that fails.
+#[cfg(target_os = "macos")]
+fn play_sound(event: &str) {
+    let file = format!("/System/Library/Sounds/{}.aiff", macos_sound(event));
+    let argv = [std::ffi::OsStr::new("/usr/bin/afplay"), file.as_ref()];
+    let flags = gio::SubprocessFlags::STDOUT_SILENCE | gio::SubprocessFlags::STDERR_SILENCE;
+    match gio::Subprocess::newv(&argv, flags) {
+        Ok(p) => p.wait_async(gio::Cancellable::NONE, |_| {}),
+        Err(_) => {
+            if let Some(d) = gdk::Display::default() {
+                d.beep();
+            }
+        }
+    }
+}
+
 /// Play a sound-theme event ourselves: libcanberra respects the desktop's
 /// sound theme, volume and "event sounds" setting. Without it, beep.
+#[cfg(not(target_os = "macos"))]
 fn play_sound(event: &str) {
     let argv = [
         std::ffi::OsStr::new("canberra-gtk-play"),
@@ -431,6 +499,25 @@ fn play_sound(event: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn applescript_strings_escape_quotes_and_backslashes() {
+        assert_eq!(applescript_string("plain"), "\"plain\"");
+        assert_eq!(applescript_string(r#"say "hi" \o/"#), r#""say \"hi\" \\o/""#);
+    }
+
+    #[test]
+    fn every_sound_event_maps_to_a_macos_sound() {
+        for kind in [
+            crate::notify::Kind::AgentInput,
+            crate::notify::Kind::AgentDone,
+            crate::notify::Kind::CommandFailed,
+            crate::notify::Kind::Bell,
+        ] {
+            assert_ne!(macos_sound(kind.sound()), "Pop", "{kind:?} falls back");
+        }
+        assert_eq!(macos_sound("message"), "Pop");
+    }
 
     #[test]
     fn extra_action_is_appended_after_open() {

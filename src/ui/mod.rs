@@ -24,6 +24,7 @@ mod system_status;
 mod themes;
 mod updates;
 mod usage_footer;
+#[cfg(target_os = "linux")]
 pub mod vte_fix;
 mod zoom;
 
@@ -95,13 +96,24 @@ pub struct App {
 
 pub type AppRc = Rc<App>;
 
+/// The primary shortcut modifier: Command on macOS, Ctrl elsewhere.
+pub fn primary_mask() -> gdk::ModifierType {
+    if cfg!(target_os = "macos") {
+        gdk::ModifierType::META_MASK
+    } else {
+        gdk::ModifierType::CONTROL_MASK
+    }
+}
+
 /// Below this window width the sidebar is hidden automatically.
 const NARROW_WIDTH: i32 = 640;
 
 /// Entry point used by `main`: activate builds the window once.
 pub fn run() -> glib::ExitCode {
     // Before any terminal draws: VTE 0.76 would otherwise crash ~30 s after a
-    // zoom, font change or pane close (see vte_fix).
+    // zoom, font change or pane close (see vte_fix). The patch is ELF-only;
+    // macOS builds need VTE >= 0.78, which has the upstream fix.
+    #[cfg(target_os = "linux")]
     vte_fix::install();
     // Register before GTK creates its first Pango font map. Build surfaces errors.
     let _ = fonts::register();
@@ -157,26 +169,31 @@ impl App {
         header.add_css_class("oxi-header");
         let island = island::Island::new();
         header.set_title_widget(Some(&island.button));
-        // Window controls always sit on the right, whatever the desktop's layout.
-        header.set_decoration_layout(Some(":minimize,maximize,close"));
+        // Window controls always sit on the right, whatever the desktop's
+        // layout; on macOS on the left, as in every Mac app.
+        header.set_decoration_layout(Some(if cfg!(target_os = "macos") {
+            "close,minimize,maximize:"
+        } else {
+            ":minimize,maximize,close"
+        }));
         let sidebar_btn = gtk4::Button::builder()
             .icon_name("sidebar-show-symbolic")
-            .tooltip_text("Toggle sidebar (Ctrl+Shift+B)")
+            .tooltip_text(crate::config::with_shortcut("Toggle sidebar", "toggle-sidebar"))
             .build();
         sidebar_btn.set_action_name(Some("app.toggle-sidebar"));
         let new_ws = gtk4::Button::builder()
             .icon_name("tab-new-symbolic")
-            .tooltip_text("New workspace (Ctrl+Shift+N)")
+            .tooltip_text(crate::config::with_shortcut("New workspace", "new-workspace"))
             .action_name("app.new-workspace")
             .build();
         let split_r = gtk4::Button::builder()
             .icon_name("view-dual-symbolic")
-            .tooltip_text("Split right (Ctrl+Shift+E)")
+            .tooltip_text(crate::config::with_shortcut("Split right", "split-right"))
             .action_name("app.split-right")
             .build();
         let split_d = gtk4::Button::builder()
             .icon_name("view-paged-symbolic")
-            .tooltip_text("Split down (Ctrl+Shift+O)")
+            .tooltip_text(crate::config::with_shortcut("Split down", "split-down"))
             .action_name("app.split-down")
             .build();
 
@@ -1464,8 +1481,14 @@ impl App {
                 a.run_action(&action);
                 return glib::Propagation::Stop;
             }
-            // Alt+1..9 selects workspace N.
-            if mods == gdk::ModifierType::ALT_MASK {
+            // Alt+1..9 (Cmd+1..9 on macOS, where Option+digit types a symbol)
+            // selects workspace N.
+            let workspace_mod = if cfg!(target_os = "macos") {
+                gdk::ModifierType::META_MASK
+            } else {
+                gdk::ModifierType::ALT_MASK
+            };
+            if mods == workspace_mod {
                 if let Some(d) = key.to_unicode().and_then(|c| c.to_digit(10)).filter(|d| (1..=9).contains(d)) {
                     let id = a.inner.borrow().state.workspaces.get(d as usize - 1).map(|w| w.id);
                     if let Some(id) = id {

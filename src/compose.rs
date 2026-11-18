@@ -372,15 +372,22 @@ pub struct LaunchContext {
 impl LaunchContext {
     /// The environment and working folder of process `pid` (None if unreadable).
     pub fn of_process(pid: i32) -> Option<LaunchContext> {
-        let raw = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
-        let env = raw
+        #[cfg(not(target_os = "macos"))]
+        let entries: Vec<Vec<u8>> = std::fs::read(format!("/proc/{pid}/environ"))
+            .ok()?
             .split(|b| *b == 0)
+            .map(<[u8]>::to_vec)
+            .collect();
+        #[cfg(target_os = "macos")]
+        let entries = crate::platform::macos::environ(pid)?;
+        let env = entries
+            .iter()
             .filter_map(|e| {
                 let eq = e.iter().position(|b| *b == b'=')?;
                 Some((OsString::from_vec(e[..eq].to_vec()), OsString::from_vec(e[eq + 1..].to_vec())))
             })
             .collect();
-        let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok();
+        let cwd = crate::meta::cwd_of(pid);
         Some(LaunchContext { env, cwd })
     }
 

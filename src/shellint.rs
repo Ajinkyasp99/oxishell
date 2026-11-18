@@ -7,8 +7,9 @@
 //! `$OXISHELL_ENV_FILE`, using only shell builtins (no extra process).
 //!
 //! bash is set up automatically through `PROMPT_COMMAND` in the pane
-//! environment (unless your own config replaces PROMPT_COMMAND). zsh and fish
-//! need one line in their config: `oxi shell-integration zsh|fish`.
+//! environment (unless your own config replaces PROMPT_COMMAND). zsh is set up
+//! automatically through `ZDOTDIR` (see [`zsh_zdotdir`]). fish needs one line in
+//! its config: `oxi shell-integration fish`.
 //!
 //! The same hook optionally replaces the prompt with a compact `❯` (the chips
 //! already show folder, branch and environment), only inside oxishell panes.
@@ -25,7 +26,8 @@ pub fn env_file(pane: crate::model::PaneId) -> PathBuf {
 /// the chips (`${var##*/}` keeps the venv's folder name) and, with
 /// `OXISHELL_COMPACT_PROMPT=1`, sets the prompt to `❯` (green, or red after a
 /// failed command). With `OXISHELL_HIGHLIGHT_CMD=1` as well, the typed command is
-/// bold cyan and `PS0` resets the colour before the command's output. With
+/// bold cyan and `PS0` resets the colour before the command's output (bash 4.4+
+/// only: without `PS0`, as in macOS's bash 3.2, output would stay cyan). With
 /// `OXISHELL_BLOCKS=1` the prompt starts with an empty row, where oxishell draws
 /// the command block's separator and header.
 ///
@@ -36,7 +38,7 @@ pub const BASH_PROMPT_COMMAND: &str = concat!(
     r#"[ -n "$OXISHELL_ENV_FILE" ] && builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV##*/}" "$CONDA_DEFAULT_ENV" "$__oxishell_status" >| "$OXISHELL_ENV_FILE" 2>/dev/null; "#,
     r#"if [ "$OXISHELL_COMPACT_PROMPT" = 1 ]; then if [ "$__oxishell_status" = 0 ]; then PS1='\[\e[1;32m\]❯\[\e[0m\] '; else PS1='\[\e[1;31m\]❯\[\e[0m\] '; fi; "#,
     r#"if [ "$OXISHELL_BLOCKS" = 1 ]; then PS1='\n'"$PS1"; fi; "#,
-    r#"if [ "$OXISHELL_HIGHLIGHT_CMD" = 1 ]; then PS1="$PS1"'\[\e[1;36m\]'; PS0='\e[0m'; fi; fi"#
+    r#"if [ "$OXISHELL_HIGHLIGHT_CMD" = 1 ] && (( BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] >= 404 )); then PS1="$PS1"'\[\e[1;36m\]'; PS0='\e[0m'; fi; fi"#
 );
 
 pub fn snippet(shell: &str) -> Option<String> {
@@ -81,6 +83,41 @@ end
         .to_string(),
         _ => return None,
     })
+}
+
+/// `.zshenv` of the private `ZDOTDIR` that zsh panes start with. It puts the
+/// user's own `ZDOTDIR` back (saved in `OXISHELL_ORIG_ZDOTDIR`, or none = $HOME)
+/// and runs their `.zshenv`, so zsh then reads their `.zprofile`, `.zshrc` and
+/// `.zlogin` as usual; interactive shells also get the zsh snippet.
+pub fn zshenv() -> String {
+    format!(
+        r#"# Written by oxishell for its zsh panes; regenerated at every start.
+if [[ -n "${{OXISHELL_ORIG_ZDOTDIR+x}}" ]]; then
+  ZDOTDIR=$OXISHELL_ORIG_ZDOTDIR
+  unset OXISHELL_ORIG_ZDOTDIR
+else
+  unset ZDOTDIR
+fi
+if [[ -r "${{ZDOTDIR:-$HOME}}/.zshenv" ]]; then
+  builtin source "${{ZDOTDIR:-$HOME}}/.zshenv"
+fi
+if [[ -o interactive ]]; then
+{}fi
+"#,
+        snippet("zsh").unwrap_or_default()
+    )
+}
+
+/// The private `ZDOTDIR` for zsh panes, with an up-to-date `.zshenv`.
+pub fn zsh_zdotdir() -> std::io::Result<PathBuf> {
+    let dir = crate::paths::runtime_dir().join("zsh");
+    crate::paths::ensure_private_dir(&dir)?;
+    let file = dir.join(".zshenv");
+    let text = zshenv();
+    if std::fs::read_to_string(&file).ok().as_deref() != Some(text.as_str()) {
+        crate::paths::write_atomic(&file, text.as_bytes(), 0o600)?;
+    }
+    Ok(dir)
 }
 
 /// The environment name to show: the virtualenv, else a conda env other than `base`.
@@ -166,6 +203,43 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout), "one\ntwo\n");
     }
 
+    /// A zsh pane runs the user's own startup files and reports to the env file.
+    #[test]
+    fn zsh_zdotdir_keeps_user_config_and_reports_status() {
+        if std::process::Command::new("zsh").arg("-fc").arg("true").status().is_err() {
+            eprintln!("zsh not installed; skipping");
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("oxishell-zdotdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (ours, home) = (root.join("ours"), root.join("home"));
+        std::fs::create_dir_all(&ours).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(ours.join(".zshenv"), zshenv()).unwrap();
+        std::fs::write(home.join(".zshenv"), "export FROM_ZSHENV=1\n").unwrap();
+        std::fs::write(home.join(".zshrc"), "FROM_ZSHRC=1\n").unwrap();
+        let file = root.join("p.env");
+        let out = std::process::Command::new("zsh")
+            .args([
+                "-i",
+                "-c",
+                "(exit 4); for f in $precmd_functions; do $f; done; print -r -- \"$FROM_ZSHENV$FROM_ZSHRC:${ZDOTDIR-unset}\"",
+            ])
+            .env("HOME", &home)
+            .env("ZDOTDIR", &ours)
+            .env_remove("OXISHELL_ORIG_ZDOTDIR")
+            .env("OXISHELL_ENV_FILE", &file)
+            .env("VIRTUAL_ENV", "/x/venv")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(stdout.lines().last(), Some("11:unset"), "{stdout}");
+        let report = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(parse_env_file(&report), Some("venv".into()));
+        assert_eq!(parse_status(&report), Some(4));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn parses_env_names() {
         assert_eq!(parse_env_file("CommonVenv\n\n"), Some("CommonVenv".into()));
@@ -246,7 +320,21 @@ mod tests {
             .output()
             .unwrap();
         let out = String::from_utf8(out.stdout).unwrap();
-        assert!(out.ends_with(r"\[\e[1;36m\]|\e[0m"), "{out}");
+        let version = std::process::Command::new("bash")
+            .args([
+                "--norc",
+                "--noprofile",
+                "-c",
+                "printf %s $((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1]))",
+            ])
+            .output()
+            .unwrap();
+        let has_ps0 = String::from_utf8(version.stdout).unwrap().parse::<u32>().unwrap() >= 404;
+        if has_ps0 {
+            assert!(out.ends_with(r"\[\e[1;36m\]|\e[0m"), "{out}");
+        } else {
+            assert!(!out.contains("36m"), "no highlight without PS0: {out}");
+        }
         assert!(!ok.contains("36m"), "no highlight without the flag");
         // Command blocks: an empty row above the prompt for the block header.
         let out = std::process::Command::new("bash")

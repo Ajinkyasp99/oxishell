@@ -269,7 +269,11 @@ fn appearance_page(app: &AppRc, d: &adw::PreferencesDialog, cfg: &Config, ap: &A
     font_btn.set_use_font(true);
     let font = adw::ActionRow::builder()
         .title("Font")
-        .subtitle("Ctrl+= and Ctrl+- zoom without changing it")
+        .subtitle(format!(
+            "{} and {} zoom without changing it",
+            crate::config::accel_label(crate::config::default_shortcut("zoom-in")),
+            crate::config::accel_label(crate::config::default_shortcut("zoom-out"))
+        ))
         .build();
     font.add_suffix(&font_btn);
     font.set_activatable_widget(Some(&font_btn));
@@ -612,7 +616,11 @@ fn hook_row(app: &AppRc, agent: &'static str) -> adw::SwitchRow {
 
 fn shortcuts_page(app: &AppRc, cfg: &Config, ap: &Ap) -> adw::PreferencesPage {
     let p = page(PAGE_SHORTCUTS, "Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic");
-    p.set_description("Type a GTK accelerator such as &lt;Ctrl&gt;&lt;Shift&gt;e and press Enter. Leave empty to disable.");
+    p.set_description(if cfg!(target_os = "macos") {
+        "Type a GTK accelerator such as &lt;Meta&gt;&lt;Shift&gt;e (Meta is ⌘) and press Enter. Leave empty to disable."
+    } else {
+        "Type a GTK accelerator such as &lt;Ctrl&gt;&lt;Shift&gt;e and press Enter. Leave empty to disable."
+    });
     let effective: std::collections::HashMap<String, String> = cfg.effective_shortcuts().into_iter().collect();
     let mut sections: Vec<(&str, Vec<&str>)> = SHORTCUT_SECTIONS.iter().map(|(t, a)| (*t, a.to_vec())).collect();
     let other: Vec<&str> = DEFAULT_SHORTCUTS
@@ -737,7 +745,10 @@ fn workflow_page(cfg: &Config, ap: &Ap) -> adw::PreferencesPage {
     let cg = group(
         &p,
         "Custom Commands",
-        "Shown in the command palette (Ctrl+Shift+P) as \"Run: name\". One per line, for example: build = cargo build --release",
+        &format!(
+            "Shown in the command palette ({}) as \"Run: name\". One per line, for example: build = cargo build --release",
+            crate::config::accel_label(crate::config::default_shortcut("command-palette"))
+        ),
     );
     let buf = gtk4::TextBuffer::new(None);
     buf.set_text(

@@ -64,7 +64,7 @@ command = ""             # empty = auto-detect docker compose, docker-compose or
 enabled = true
 allow_send = false       # allow `oxi pane send` to type into panes
 
-[shortcuts]              # action = GTK accelerator; "" disables
+[shortcuts]              # action = GTK accelerator; "" disables; <Meta> is ⌘ on macOS
 split-right = "<Ctrl><Shift>d"
 
 [[commands]]             # shown in the command palette as "Run: <name>"
@@ -76,9 +76,11 @@ Shortcut actions: `new-workspace`, `close-workspace`, `rename-workspace`, `next-
 `prev-workspace`, `split-right`, `split-down`, `close-pane`, `focus-left|right|up|down`, `copy`, `paste`,
 `newline`, `newline-alt`, `search`, `command-palette`, `toggle-sidebar`, `jump-unread`, `notifications`, `zoom-in`, `zoom-out`,
 `zoom-reset`, `command-history`, `settings`, `compose-files`. Conflicting bindings are reported when the app starts.
+The defaults are Ctrl-based on Linux and ⌘-based (`<Meta>`) on macOS; see the README's keyboard shortcuts.
 
 Environment variables: `OXISHELL_SOCKET` (socket path), `OXISHELL_GEOMETRY=WxH` (initial window size),
-`OXISHELL_NON_UNIQUE=1` (allow a second independent instance, used by tests).
+`OXISHELL_NON_UNIQUE=1` (allow a second independent instance, used by tests), `OXISHELL_KEEP_PATH=1`
+(macOS: keep the `PATH` the app was started with instead of the login shell's).
 
 ## Files
 

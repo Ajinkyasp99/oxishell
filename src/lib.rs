@@ -11,6 +11,7 @@ pub mod meta;
 pub mod model;
 pub mod notify;
 pub mod paths;
+pub mod platform;
 pub mod session;
 pub mod shellint;
 pub mod sysstat;

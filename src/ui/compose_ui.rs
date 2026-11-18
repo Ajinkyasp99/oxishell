@@ -14,7 +14,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Weak;
 use std::time::{Duration, Instant};
 
-pub const TOOLTIP: &str = "Compose files in this repo (Ctrl+Shift+L)";
+pub fn tooltip() -> String {
+    crate::config::with_shortcut("Compose files in this repo", "compose-files")
+}
 pub const TOOLTIP_BUSY: &str = "Busy: wait for the command to finish";
 
 /// A new stack is never hidden this soon, so a `ps` that runs before the
@@ -249,7 +251,7 @@ fn attach_button(app: &AppRc, id: PaneId, actions: &gtk4::Box) -> gtk4::Button {
     for c in ["flat", "circular", "pane-compose"] {
         b.add_css_class(c);
     }
-    b.set_tooltip_text(Some(TOOLTIP));
+    b.set_tooltip_text(Some(&tooltip()));
     b.set_focus_on_click(false);
     // The picker popover is a child of this button. `can-focus = false` would
     // stop every widget in it (the filter box, the rows) from taking focus, so
@@ -273,7 +275,8 @@ pub fn sync(p: &Pane, cfg: &Config) {
     set_visible(&c.button, on && has_files);
     if c.button.is_sensitive() == p.busy {
         c.button.set_sensitive(!p.busy);
-        c.button.set_tooltip_text(Some(if p.busy { TOOLTIP_BUSY } else { TOOLTIP }));
+        let idle = tooltip();
+        c.button.set_tooltip_text(Some(if p.busy { TOOLTIP_BUSY } else { &idle }));
     }
 
     let logs = c.logs.as_ref().filter(|_| on && p.busy);
@@ -476,7 +479,7 @@ pub fn run_background(app: &AppRc, id: PaneId, action: Action) {
             Action::RestartService(s) => format!("Restarting {s}…"),
             other => format!("{}…", other.args().join(" ")),
         });
-        // Without a captured context (unreadable /proc): the app's environment,
+        // Without a captured context (process unreadable): the app's environment,
         // from the compose file's folder.
         let context = stack.context.clone().unwrap_or_else(|| compose::LaunchContext {
             env: std::env::vars_os().collect(),
@@ -688,7 +691,7 @@ fn capture_context(app: &AppRc, id: PaneId) {
     else {
         return;
     };
-    let cmdline = |pid: i32| std::fs::read(format!("/proc/{pid}/cmdline")).ok();
+    let cmdline = |pid: i32| Some(crate::meta::cmdline(pid)).filter(|c| !c.is_empty());
     let w = app.weak();
     let since = Instant::now();
     glib::timeout_add_local(Duration::from_millis(5), move || {
@@ -952,7 +955,7 @@ pub fn open_picker(app: &AppRc, id: PaneId) {
     {
         let (w, pop, list, entry, rescan_btn) = (app.weak(), pop.clone(), list.clone(), entry.clone(), rescan_btn);
         keyc.connect_key_pressed(move |_, key, _, mods| {
-            if mods.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK) {
+            if mods.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK | super::primary_mask()) {
                 return glib::Propagation::Proceed;
             }
             let in_entry = entry.state_flags().contains(gtk4::StateFlags::FOCUS_WITHIN);

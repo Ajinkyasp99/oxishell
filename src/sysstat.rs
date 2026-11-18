@@ -1,8 +1,7 @@
-//! System-wide CPU and memory usage read from `/proc` for the status bar.
+//! System-wide CPU and memory usage for the status bar: `/proc` on Linux,
+//! Mach host statistics on macOS.
 //! Parsing is pure and unit-tested; `Sampler` keeps the previous CPU reading
 //! because CPU usage is a delta between two samples.
-
-use std::fs;
 
 /// Aggregate CPU jiffies from the first `cpu` line of `/proc/stat`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +105,7 @@ impl Sampler {
     }
 
     pub fn sample_values(&mut self) -> Sample {
-        let cur = fs::read_to_string("/proc/stat").ok().and_then(|s| parse_cpu(&s));
+        let cur = read_cpu();
         let cpu = match (self.prev, cur) {
             (Some(p), Some(c)) => cpu_percent(p, c),
             _ => None,
@@ -114,9 +113,29 @@ impl Sampler {
         if cur.is_some() {
             self.prev = cur;
         }
-        let mem = fs::read_to_string("/proc/meminfo").ok().and_then(|s| parse_mem(&s));
+        let mem = read_mem();
         Sample { cpu, mem }
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_cpu() -> Option<CpuTimes> {
+    std::fs::read_to_string("/proc/stat").ok().and_then(|s| parse_cpu(&s))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_mem() -> Option<(u64, u64)> {
+    std::fs::read_to_string("/proc/meminfo").ok().and_then(|s| parse_mem(&s))
+}
+
+#[cfg(target_os = "macos")]
+fn read_cpu() -> Option<CpuTimes> {
+    crate::platform::macos::cpu_ticks().map(|(idle, total)| CpuTimes { idle, total })
+}
+
+#[cfg(target_os = "macos")]
+fn read_mem() -> Option<(u64, u64)> {
+    crate::platform::macos::memory_kib()
 }
 
 #[cfg(test)]

@@ -2,14 +2,14 @@
 name = "oxishell"
 version = "0.2.1"
 edition = "2021"
-description = "Native Linux terminal workspace manager for AI coding agents, inspired by cmux"
+description = "Native terminal workspace manager for AI coding agents on Linux and macOS, inspired by cmux"
 license = "GPL-3.0-or-later"
 rust-version = "1.87"
 authors = ["Ajinkya Patil"]
 repository = "https://github.com/Ajinkyasp99/oxishell"
 homepage = "https://github.com/Ajinkyasp99/oxishell"
 readme = "README.md"
-keywords = ["terminal", "gtk", "linux", "ai-agents", "workspace"]
+keywords = ["terminal", "gtk", "linux", "macos", "ai-agents"]
 categories = ["command-line-utilities"]
 
 [lib]

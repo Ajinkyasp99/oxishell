@@ -1,4 +1,6 @@
 //! Real pointer input against the GTK widgets. Run under Xvfb with xdotool.
+// Linux only: needs X11/Xvfb, xdotool and /proc.
+#![cfg(target_os = "linux")]
 use gtk4::prelude::*;
 use gtk4::{gio, glib};
 use libadwaita as adw;
