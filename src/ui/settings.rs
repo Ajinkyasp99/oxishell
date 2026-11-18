@@ -47,6 +47,9 @@ pub const SHORTCUT_SECTIONS: &[(&str, &[&str])] = &[
         &[
             "split-right",
             "split-down",
+            "new-tab",
+            "next-tab",
+            "prev-tab",
             "close-pane",
             "focus-left",
             "focus-right",

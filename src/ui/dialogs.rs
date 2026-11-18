@@ -53,6 +53,50 @@ pub fn rename_workspace(app: &AppRc, wid: WorkspaceId) {
     entry.select_region(0, -1);
 }
 
+/// Ask for a new name for tab `tab`. "Use Automatic Name" clears it, so the
+/// tab is labelled by what runs in it again.
+pub fn rename_tab(app: &AppRc, tab: crate::model::TabId) {
+    let current = {
+        let i = app.inner.borrow();
+        let Some((wid, idx)) = i.state.locate_tab(tab) else { return };
+        let t = &i.state.workspace(wid).unwrap().tabs[idx];
+        (t.name.clone(), super::tabs::tab_label(&i, t))
+    };
+    let (name, label) = current;
+    let d = adw::AlertDialog::new(Some("Rename Tab"), None);
+    let entry = gtk4::Entry::builder()
+        .text(name.as_deref().unwrap_or(&label))
+        .placeholder_text("Automatic name")
+        .activates_default(true)
+        .build();
+    d.set_extra_child(Some(&entry));
+    d.add_response("cancel", "Cancel");
+    if name.is_some() {
+        d.add_response("auto", "Use Automatic Name");
+    }
+    d.add_response("ok", "Rename");
+    d.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+    d.set_default_response(Some("ok"));
+    d.set_close_response("cancel");
+    let w = app.weak();
+    let e = entry.clone();
+    d.connect_response(None, move |_, r| {
+        let Some(a) = w.upgrade() else { return };
+        let text = e.text();
+        let result = match r {
+            "ok" => a.rename_tab(tab, Some(&text)),
+            "auto" => a.rename_tab(tab, None),
+            _ => Ok(()),
+        };
+        if let Err(err) = result {
+            a.toast(&err);
+        }
+    });
+    d.present(Some(&app.window));
+    entry.grab_focus();
+    entry.select_region(0, -1);
+}
+
 // ---- command palette --------------------------------------------------------
 
 #[derive(Clone)]

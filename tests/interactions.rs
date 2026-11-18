@@ -51,6 +51,9 @@ impl Harness {
 
     /// Like `new`, with `history` (oldest first) as the shell's ~/.bash_history.
     fn with_history(name: &str, history: &[&str]) -> Self {
+        // As the app does at startup: without it VTE 0.76 crashes ~30 s after
+        // a terminal closes, i.e. in whichever test runs next.
+        oxishell::ui::vte_fix::install();
         let root = std::env::temp_dir().join(format!("oxishell-pointer-{}-{name}", std::process::id()));
         for dir in ["home", "config/oxishell", "state", "run"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
@@ -432,7 +435,7 @@ fn dragging_a_pane_handle_onto_another_pane_swaps_them() {
         let first = h.app.focused_pane().unwrap();
         let second = h.app.split(Some(first), oxishell::model::Orient::Horizontal, None).unwrap();
         pump(400);
-        let layout = || h.app.inner.borrow().state.workspace(wid).unwrap().layout.panes();
+        let layout = || h.app.inner.borrow().state.workspace(wid).unwrap().tab().layout.panes();
         assert_eq!(layout(), vec![first, second]);
         let (first_frame, second_frame, first_term) = {
             let i = h.app.inner.borrow();
@@ -534,7 +537,8 @@ fn dragging_where_dividers_meet_resizes_both_directions() {
         h.app.split(Some(second), oxishell::model::Orient::Vertical, None).unwrap();
         pump(700);
         let page = h.app.inner.borrow().pages[&wid].clone();
-        let root = page.first_child().and_downcast::<gtk4::Paned>().unwrap();
+        // The page is the tab bar over the shown tab's split tree.
+        let root = find_descendant::<gtk4::Paned>(page.upcast_ref()).unwrap();
         let column = root.end_child().and_downcast::<gtk4::Paned>().unwrap();
         let (root_handle, column_handle) = (paned_handle(&root), paned_handle(&column));
         // Exact X coordinates: include the window's client-side shadow, which
@@ -584,7 +588,7 @@ fn dragging_where_dividers_meet_resizes_both_directions() {
             column.position()
         );
         // Both new ratios are saved in the layout.
-        let rects = h.app.inner.borrow().state.workspace(wid).unwrap().layout.rects();
+        let rects = h.app.inner.borrow().state.workspace(wid).unwrap().tab().layout.rects();
         assert!(rects[0].1.w < 0.49, "first pane got narrower: {rects:?}");
         assert!(rects[1].1.h < 0.49, "top-right pane got shorter: {rects:?}");
 
@@ -1217,7 +1221,7 @@ fn deep_t1_terminal_editors_open_in_a_new_pane() {
         pump(1500);
         term.feed(b"\x1b[2J\x1b[Hsrc/model.rs:42\r\n");
         pump(300);
-        let panes = || h.app.inner.borrow().state.workspace(wid).unwrap().layout.panes().len();
+        let panes = || h.app.inner.borrow().state.workspace(wid).unwrap().tab().layout.panes().len();
         assert_eq!(panes(), 1);
         click_cell(&h, &term, 3, 0, 1, true);
         assert!(wait_until(&|| panes() == 2, 3), "vim gets its own pane");
@@ -3104,5 +3108,484 @@ fn ui_launcher_stop_on_running_containers_uses_docker_compose_stop_not_ctrl_c() 
         // The proper stop runs in the background; the pane got no Ctrl+C, so the
         // attached `up` keeps running until compose stops it.
         assert!(h.app.inner.borrow().panes[&pane].busy, "no Ctrl+C was sent to the pane");
+    });
+}
+
+fn all_by_class(root: &gtk4::Widget, class: &str, out: &mut Vec<gtk4::Widget>) {
+    if root.has_css_class(class) {
+        out.push(root.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(c) = child {
+        all_by_class(&c, class, out);
+        child = c.next_sibling();
+    }
+}
+
+fn all_of_type<T: IsA<gtk4::Widget>>(root: &gtk4::Widget, out: &mut Vec<T>) {
+    if let Ok(t) = root.clone().downcast::<T>() {
+        out.push(t);
+    }
+    let mut child = root.first_child();
+    while let Some(c) = child {
+        all_of_type(&c, out);
+        child = c.next_sibling();
+    }
+}
+
+fn widget_text(w: &gtk4::Widget) -> String {
+    let mut labels: Vec<gtk4::Label> = Vec::new();
+    all_of_type(w, &mut labels);
+    labels.iter().map(|l| l.label().to_string()).collect::<Vec<_>>().join(" ")
+}
+
+/// Mapped widgets with `class` anywhere in the window.
+fn by_class(h: &Harness, class: &str) -> Vec<gtk4::Widget> {
+    let mut out = Vec::new();
+    all_by_class(h.app.window.upcast_ref(), class, &mut out);
+    out.into_iter().filter(|w| w.is_mapped()).collect()
+}
+
+/// Tab ids of a workspace and the shown one.
+fn ws_tabs(h: &Harness, wid: u64) -> (Vec<u64>, u64) {
+    let i = h.app.inner.borrow();
+    let ws = i.state.workspace(wid).unwrap();
+    (ws.tabs.iter().map(|t| t.id).collect(), ws.tab().id)
+}
+
+fn tab_of(h: &Harness, tab: u64) -> gtk4::Widget {
+    by_class(h, "tab")
+        .into_iter()
+        .find(|t| t.widget_name() == format!("tab-{tab}"))
+        .unwrap_or_else(|| panic!("no tab widget for tab {tab}"))
+}
+
+fn shown_tab_page(h: &Harness) -> Option<String> {
+    let bar_parent = by_class(h, "tab-bar").first()?.parent()?;
+    find_descendant::<gtk4::Stack>(&bar_parent)?
+        .visible_child_name()
+        .map(|n| n.to_string())
+}
+
+/// Press on `from`, move in small real steps to `to` (window coordinates), release.
+fn drag_between(h: &Harness, from: (i32, i32), to: (i32, i32)) {
+    xdo(&["mousemove", "--window", &h.window, &from.0.to_string(), &from.1.to_string()]);
+    pump(60);
+    xdo(&["mousedown", "1"]);
+    pump(60);
+    let steps = 12;
+    let (dx, dy) = ((to.0 - from.0) / steps, (to.1 - from.1) / steps);
+    for _ in 0..steps {
+        xdo(&["mousemove_relative", "--", &dx.to_string(), &dy.to_string()]);
+        pump(25);
+    }
+    pump(150);
+    xdo(&["mouseup", "1"]);
+    pump(400);
+}
+
+fn at(h: &Harness, w: &gtk4::Widget, fx: f32) -> (i32, i32) {
+    let p = w
+        .compute_point(
+            &h.app.window,
+            &gtk4::graphene::Point::new(w.width() as f32 * fx, w.height() as f32 / 2.0),
+        )
+        .unwrap();
+    (p.x() as i32, p.y() as i32)
+}
+
+#[test]
+fn tab_bar_new_switch_and_close() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("wstabs");
+        let p = h.app.focused_pane().unwrap();
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        pump(300);
+        let (term_before, pid) = {
+            let i = h.app.inner.borrow();
+            (i.panes[&p].term.clone(), i.panes[&p].pid.get().unwrap())
+        };
+        assert_eq!(by_class(&h, "tab-bar").len(), 1, "one tab bar for the workspace");
+        assert_eq!(by_class(&h, "tab").len(), 1);
+        h.point(&by_class(&h, "tab-new")[0]);
+        xdo(&["click", "1"]);
+        pump(400);
+        let (tabs, shown) = ws_tabs(&h, wid);
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(shown, tabs[1], "the new tab is shown");
+        let q = h.app.focused_pane().unwrap();
+        assert_ne!(q, p);
+        assert!(h.app.inner.borrow().panes[&q].term.has_focus(), "the new tab's terminal has focus");
+        assert_eq!(by_class(&h, "tab").len(), 2);
+        assert_eq!(by_class(&h, "tab-bar").len(), 1, "still one bar");
+        assert!(!term_before.is_mapped(), "the first tab's terminal is hidden");
+        assert_eq!(unsafe { libc::kill(pid, 0) }, 0, "and its shell keeps running");
+
+        h.point(&tab_of(&h, tabs[0]));
+        xdo(&["click", "1"]);
+        pump(300);
+        assert_eq!(h.app.focused_pane(), Some(p));
+        assert_eq!(shown_tab_page(&h), Some(tabs[0].to_string()));
+        assert!(tab_of(&h, tabs[0]).has_css_class("tab-active"));
+        assert_eq!(h.app.inner.borrow().panes[&p].term, term_before, "not recreated");
+        assert!(term_before.has_focus());
+
+        let close = find_by_class(&tab_of(&h, tabs[1]), "tab-close").expect("tab has a close button");
+        h.point(&close);
+        xdo(&["click", "1"]);
+        pump(400);
+        assert_eq!(ws_tabs(&h, wid).0, vec![tabs[0]]);
+        assert!(!h.app.inner.borrow().panes.contains_key(&q));
+    });
+}
+
+#[test]
+fn split_inside_a_tab_keeps_one_tab_bar() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("wstabsplit");
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        h.app.new_tab(Some(wid), None).unwrap();
+        pump(300);
+        let q = h.app.split(None, oxishell::model::Orient::Horizontal, None).unwrap();
+        pump(300);
+        assert_eq!(by_class(&h, "tab-bar").len(), 1, "splits get no tab bars");
+        assert_eq!(by_class(&h, "tab").len(), 2, "a split adds no tab");
+        let (tabs, shown) = ws_tabs(&h, wid);
+        assert_eq!(shown, tabs[1]);
+        let i = h.app.inner.borrow();
+        let ws = i.state.workspace(wid).unwrap();
+        assert_eq!(ws.tab().layout.panes().len(), 2, "the split is in the shown tab");
+        assert_eq!(ws.tabs[0].layout.panes().len(), 1);
+        assert!(i.panes[&q].term.is_mapped());
+    });
+}
+
+#[test]
+fn jump_to_unread_selects_background_tab() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("wstabjump");
+        let p = h.app.focused_pane().unwrap();
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        let (t, q) = h.app.new_tab(Some(wid), None).unwrap();
+        pump(300);
+        h.app.focus_pane(p);
+        pump(200);
+        h.app.notify(Some(q), "Agent", "needs you", "test");
+        pump(200);
+        assert!(tab_of(&h, t).has_css_class("tab-unread"), "a hidden tab shows its unread dot");
+        assert_eq!(h.app.jump_to_unread(), Some(q));
+        pump(300);
+        assert_eq!(shown_tab_page(&h), Some(t.to_string()));
+        assert!(h.app.inner.borrow().panes[&q].term.has_focus());
+        assert!(!tab_of(&h, t).has_css_class("tab-unread"));
+    });
+}
+
+#[test]
+fn sidebar_lists_each_tab_and_click_selects_it() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        use oxishell::agents::{AgentState, HookInfo};
+        let h = Harness::new("wstabsidebar");
+        let p = h.app.focused_pane().unwrap();
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        let sidebar: gtk4::Widget = h.app.sidebar_list.clone().upcast();
+        let lines = || {
+            let mut v = Vec::new();
+            all_by_class(&sidebar, "ws-session", &mut v);
+            v
+        };
+        pump(300);
+        assert!(lines().is_empty(), "a single plain tab gets no line");
+        let (t, q) = h.app.new_tab(Some(wid), None).unwrap();
+        pump(300);
+        let prompt = |s: &str| HookInfo {
+            prompt: Some(s.into()),
+            ..Default::default()
+        };
+        h.app.agent_event(p, "claude", AgentState::Running, prompt("Fix A")).unwrap();
+        h.app.agent_event(q, "codex", AgentState::Waiting, prompt("Fix B")).unwrap();
+        h.app.focus_pane(p);
+        pump(200);
+        let l = lines();
+        assert_eq!(l.len(), 2, "one line per tab");
+        let texts: Vec<String> = l.iter().map(widget_text).collect();
+        assert!(texts[0].contains("Claude") && texts[0].contains("Fix A"), "{texts:?}");
+        assert!(texts[1].contains("Codex") && texts[1].contains("Needs input: Fix B"), "{texts:?}");
+        assert!(l[0].has_css_class("ws-session-active") && !l[1].has_css_class("ws-session-active"));
+        h.point(&l[1]);
+        xdo(&["click", "1"]);
+        pump(300);
+        assert_eq!(ws_tabs(&h, wid).1, t, "clicking a line shows its tab");
+        assert_eq!(h.app.focused_pane(), Some(q));
+        assert_eq!(lines()[1], l[1], "line widgets are reused across refreshes");
+
+        // Only tabs with an AI agent are listed: a plain shell tab gets no line.
+        h.app.new_tab(Some(wid), None).unwrap();
+        pump(300);
+        let l = lines();
+        assert_eq!(l.len(), 2, "plain shell tabs are not listed");
+        assert!(l
+            .iter()
+            .all(|x| !widget_text(x).contains("cmux") && !widget_text(x).contains("home")));
+    });
+}
+
+#[test]
+fn dragging_a_tab_reorders_it() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("wstabdrag");
+        let p = h.app.focused_pane().unwrap();
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        let first = ws_tabs(&h, wid).0[0];
+        let (t1, _) = h.app.new_tab(Some(wid), None).unwrap();
+        let (t2, _) = h.app.new_tab(Some(wid), None).unwrap();
+        pump(400);
+        drag_between(&h, at(&h, &tab_of(&h, t2), 0.5), at(&h, &tab_of(&h, first), 0.2));
+        assert_eq!(ws_tabs(&h, wid), (vec![t2, first, t1], t2), "moved to the front, still shown");
+
+        // Dropping a tab on a terminal does nothing: no move, no pasted text.
+        h.app.focus_pane(p);
+        pump(300);
+        let term = h.app.inner.borrow().panes[&p].term.clone();
+        let target: gtk4::Widget = term.clone().upcast();
+        drag_between(&h, at(&h, &tab_of(&h, t1), 0.5), at(&h, &target, 0.5));
+        assert_eq!(ws_tabs(&h, wid).0, vec![t2, first, t1]);
+        let text = term.text_format(vte4::Format::Text).unwrap_or_default();
+        assert!(!text.contains("oxishell-tab"), "the drag payload must not be pasted: {text}");
+    });
+}
+
+#[test]
+fn ctrl_tab_cycles_tabs_and_ctrl_shift_t_opens_one() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("wstabkeys");
+        let p = h.app.focused_pane().unwrap();
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        pump(300);
+        h.app.inner.borrow().panes[&p].term.grab_focus();
+        pump(100);
+        xdo(&["key", "--window", &h.window, "ctrl+shift+t"]);
+        pump(400);
+        let (tabs, shown) = ws_tabs(&h, wid);
+        assert_eq!(tabs.len(), 2, "Ctrl+Shift+T opens a tab");
+        assert_eq!(shown, tabs[1]);
+        let q = h.app.focused_pane().unwrap();
+        xdo(&["key", "--window", &h.window, "ctrl+Tab"]);
+        pump(300);
+        assert_eq!(h.app.focused_pane(), Some(p), "Ctrl+Tab wraps to the first tab");
+        xdo(&["key", "--window", &h.window, "ctrl+shift+Tab"]);
+        pump(300);
+        assert_eq!(h.app.focused_pane(), Some(q), "Ctrl+Shift+Tab goes back");
+        assert!(h.app.inner.borrow().panes[&q].term.has_focus());
+    });
+}
+
+#[test]
+fn tab_label_follows_the_agent_title_with_the_sidebar() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        use oxishell::agents::{AgentState, HookInfo};
+        let h = Harness::new("wstabtitle");
+        let p = h.app.focused_pane().unwrap();
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        let t = ws_tabs(&h, wid).1;
+        pump(300);
+        let info = HookInfo {
+            prompt: Some("Fix A".into()),
+            ..Default::default()
+        };
+        h.app.agent_event(p, "claude", AgentState::Running, info).unwrap();
+        pump(200);
+        assert!(
+            widget_text(&tab_of(&h, t)).contains("Claude: Fix A"),
+            "{}",
+            widget_text(&tab_of(&h, t))
+        );
+        h.app.inner.borrow().panes[&p]
+            .term
+            .feed_child(b"sh -c \"printf '\\033]0;\\342\\234\\263 Title T\\007'; sleep 3\"\r");
+        let sidebar: gtk4::Widget = h.app.sidebar_list.clone().upcast();
+        wait_for(5_000, || {
+            let mut lines = Vec::new();
+            all_by_class(&sidebar, "ws-session", &mut lines);
+            lines.first().is_some_and(|l| widget_text(l).contains("Title T"))
+        });
+        // Same moment: the tab says what the sidebar says.
+        assert!(
+            widget_text(&tab_of(&h, t)).contains("Claude: Title T"),
+            "{}",
+            widget_text(&tab_of(&h, t))
+        );
+    });
+}
+
+#[test]
+fn rebuilding_frees_the_old_tab_bar() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("wstableak");
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        let t = ws_tabs(&h, wid).1;
+        pump(300);
+        let (tab, area) = {
+            let tab = tab_of(&h, t);
+            let fill = by_class(&h, "tab-fill")[0].clone();
+            (tab.downgrade(), fill.parent().unwrap().downgrade())
+        };
+        h.app.rebuild_workspace(wid);
+        pump(300);
+        assert!(tab.upgrade().is_none(), "the old tab widget is freed");
+        assert!(area.upgrade().is_none(), "the old bar (drop target area) is freed");
+    });
+}
+
+#[test]
+fn double_clicking_a_tab_renames_it() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        use oxishell::agents::{AgentState, HookInfo};
+        let h = Harness::new("wstabrename");
+        let p = h.app.focused_pane().unwrap();
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        h.app.new_tab(Some(wid), None).unwrap();
+        let t = ws_tabs(&h, wid).0[0];
+        h.app.focus_pane(p);
+        let info = HookInfo {
+            prompt: Some("Fix A".into()),
+            ..Default::default()
+        };
+        h.app.agent_event(p, "claude", AgentState::Running, info).unwrap();
+        pump(300);
+        let settings = gtk4::Settings::default().unwrap();
+        let saved = settings.gtk_double_click_time();
+        settings.set_gtk_double_click_time(1500);
+        h.point(&tab_of(&h, t));
+        xdo(&["click", "--repeat", "2", "--delay", "60", "1"]);
+        pump(300);
+        settings.set_gtk_double_click_time(saved);
+        let dialog = h.app.window.visible_dialog().expect("double click opens rename");
+        let entry = find_descendant::<gtk4::Entry>(dialog.upcast_ref()).expect("name entry");
+        entry.set_text("api server");
+        dialog.emit_by_name::<()>("response", &[&"ok"]);
+        dialog.force_close();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while h.app.window.visible_dialog().is_some() {
+            assert!(Instant::now() < deadline, "rename dialog did not close");
+            pump(20);
+        }
+        pump(200);
+        let label = widget_text(&tab_of(&h, t));
+        assert!(label.contains("api server") && !label.contains("Fix A"), "{label}");
+        let tip = tab_of(&h, t).tooltip_text().unwrap_or_default();
+        assert!(tip.contains("Fix A"), "the agent's summary moves to the tooltip: {tip}");
+        let sidebar: gtk4::Widget = h.app.sidebar_list.clone().upcast();
+        let mut lines = Vec::new();
+        all_by_class(&sidebar, "ws-session", &mut lines);
+        let first = widget_text(&lines[0]);
+        assert!(first.contains("Claude") && first.contains("api server"), "{first}");
+        assert_eq!(h.app.focused_pane(), Some(p), "renaming keeps the tab shown");
+
+        // Clearing the name brings the automatic label back.
+        h.app.rename_tab(t, None).unwrap();
+        pump(200);
+        assert!(widget_text(&tab_of(&h, t)).contains("Claude: Fix A"));
+    });
+}
+
+/// Pump for `ms`, but give up on draining a busy main loop (a focus or
+/// layout loop would otherwise hang the test instead of failing it).
+fn pump_bounded(ms: u64) {
+    let context = glib::MainContext::default();
+    let until = Instant::now() + Duration::from_millis(ms);
+    while Instant::now() < until {
+        let slice = Instant::now() + Duration::from_millis(20);
+        while context.pending() && Instant::now() < slice {
+            context.iteration(false);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn switching_back_before_a_new_tab_is_shown_settles() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("wstabsettle");
+        let p = h.app.focused_pane().unwrap();
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        let first = ws_tabs(&h, wid).1;
+        // New tab, then straight back to the first one before the new tab's
+        // terminal was ever shown (as `oxi tab new; oxi tab select` can do).
+        h.app.new_tab(Some(wid), None).unwrap();
+        h.app.focus_pane(p);
+        pump_bounded(1500);
+        assert_eq!(ws_tabs(&h, wid).1, first, "the first tab stays shown");
+        assert_eq!(h.app.focused_pane(), Some(p));
+        let context = glib::MainContext::default();
+        let mut busy = 0;
+        for _ in 0..50 {
+            if context.pending() {
+                busy += 1;
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(busy < 25, "the main loop must go idle, it was busy in {busy}/50 checks");
+    });
+}
+
+#[test]
+fn workspace_rows_show_no_ports_or_git_branch() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("wsrowclean");
+        let p = h.app.focused_pane().unwrap();
+        pump(300);
+        {
+            let mut i = h.app.inner.borrow_mut();
+            let pane = i.panes.get_mut(&p).unwrap();
+            pane.git = Some(oxishell::meta::GitInfo {
+                branch: "feature/auth".into(),
+                changes: 2,
+                ..Default::default()
+            });
+            pane.ports = vec![8020];
+        }
+        h.app.refresh();
+        pump(100);
+        let row: gtk4::Widget = h.app.sidebar_list.row_at_index(0).unwrap().upcast();
+        let text = widget_text(&row);
+        assert!(!text.contains("feature/auth") && !text.contains('⎇'), "no git branch: {text}");
+        assert!(!text.contains("8020") && !text.contains("ports"), "no ports: {text}");
+        let cwd = h.app.inner.borrow().panes[&p].cwd.clone().unwrap();
+        assert!(text.contains(&oxishell::meta::display_path(&cwd)), "the folder stays: {text}");
     });
 }

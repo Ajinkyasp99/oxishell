@@ -35,6 +35,7 @@ pub struct Update {
     git: Option<GitInfo>,
     ports: Option<Vec<u16>>,
     fg_agent: Option<&'static str>,
+    fg_program: Option<String>,
     python_env: Option<String>,
     busy: bool,
     compose: Option<ComposeScan>,
@@ -203,6 +204,7 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
                         git_cache.retain(|_, (t, _)| t.elapsed() < GIT_TTL);
                     }
                     let busy = fg.is_some_and(|p| p != job.shell_pid);
+                    let fg_program = fg.filter(|p| *p != job.shell_pid).and_then(meta::comm);
                     let (compose_scan, ps) = match (&job.compose_cmd, &cwd) {
                         (Some(setting), Some(c)) => {
                             let scan = compose_cache.scan(job.pane, c, setting, job.rescan);
@@ -225,6 +227,7 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
                             git,
                             ports,
                             fg_agent,
+                            fg_program,
                             python_env: crate::shellint::read_env(&job.env_file),
                             busy,
                             compose: compose_scan,
@@ -265,7 +268,17 @@ pub fn attach(app: &AppRc, rx: async_channel::Receiver<Update>) {
                     }
                 }
                 if p.fg_agent != u.fg_agent {
+                    let had_agent = p.agent_id().is_some();
                     p.fg_agent = u.fg_agent;
+                    match (had_agent, p.agent_id().is_some()) {
+                        (false, true) => p.agent_started(),
+                        (true, false) => p.clear_agent_info(),
+                        _ => {}
+                    }
+                    changed = true;
+                }
+                if p.fg_program != u.fg_program {
+                    p.fg_program = u.fg_program;
                     changed = true;
                 }
                 if p.python_env != u.python_env {
@@ -324,6 +337,10 @@ pub fn attach(app: &AppRc, rx: async_channel::Receiver<Update>) {
         let Some(a) = w.upgrade() else { return glib::ControlFlow::Break };
         tick += 1;
         a.request_meta(!tick.is_multiple_of(5));
+        // Keep the sidebar's "time since activity" current.
+        if tick.is_multiple_of(10) {
+            super::sidebar::rebuild(&a);
+        }
         glib::ControlFlow::Continue
     });
 }

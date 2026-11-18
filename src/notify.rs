@@ -171,6 +171,15 @@ impl NotificationCenter {
         self.items.iter().rev().find(|n| !n.read && n.workspace == Some(ws))
     }
 
+    /// Like [`Self::latest_for_workspace`] but without agent notifications,
+    /// which the sidebar already shows as session lines.
+    pub fn latest_non_agent_for_workspace(&self, ws: WorkspaceId) -> Option<&Notification> {
+        self.items
+            .iter()
+            .rev()
+            .find(|n| !n.read && n.workspace == Some(ws) && !n.source.starts_with("agent:"))
+    }
+
     pub fn is_unread(&self, id: u64) -> bool {
         self.items.iter().any(|n| n.id == id && !n.read)
     }
@@ -295,5 +304,17 @@ mod tests {
             c.push(None, None, "t", "", "cli");
         }
         assert_eq!(c.all().len(), MAX_HISTORY);
+    }
+
+    #[test]
+    fn latest_non_agent_skips_agent_notifications() {
+        let mut c = NotificationCenter::default();
+        c.push(Some(1), Some(1), "Claude Code needs input", "", "agent:claude");
+        c.push(Some(2), Some(1), "Bell", "rang", "bell");
+        c.push(Some(1), Some(1), "Codex finished", "", "agent:codex");
+        assert_eq!(c.latest_non_agent_for_workspace(1).unwrap().title, "Bell");
+        assert!(c.latest_non_agent_for_workspace(2).is_none());
+        c.mark_pane_read(2);
+        assert!(c.latest_non_agent_for_workspace(1).is_none());
     }
 }

@@ -42,8 +42,9 @@ input.
 
 | | |
 |---|---|
-| 🗂 **Workspaces** | Vertical sidebar with git branch, uncommitted-change count, working directory, listening ports, agent status and unread badges. Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). Right-click → Colour / Icon to mark a workspace (say, red for production). |
-| ⊞ **Split panes** | Split right or down, nest them, drag dividers (or the point where two meet, to resize both ways at once), move focus with <kbd>Alt</kbd>+arrows. Drag a pane's ✥ move handle (next to its ✕) onto another pane to swap their places. Each pane is an independent shell. |
+| 🗂 **Workspaces** | Vertical sidebar with each workspace's folder and unread badge, plus **one line per AI agent tab** under it: a coloured state dot (running, needs input, done), the agent, what it is working on (or the tab's name), its model and how long ago it last did something. Click a line to show that tab. (Git branch and ports are in each pane's chips and the status bar.) Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). Right-click → Colour / Icon to mark a workspace (say, red for production). |
+| ⊞ **Split panes** | Split right or down, nest them, drag dividers (or the point where two meet, to resize both ways at once), move focus with <kbd>Alt</kbd>+arrows. Drag a pane's ✥ move handle (next to its ✕) onto another pane of the same tab to swap their places. Each pane is an independent shell. |
+| 📑 **Tabs** | Each workspace has its own tab bar, and each tab has its own split layout. Tabs show the agent and its task (or the running program, or the folder), a state dot and an unread dot, and are listed under the workspace in the sidebar. <kbd>+</kbd> or a double-click on the bar opens a tab in the workspace's folder; double-click a tab (or right-click → Rename…) to name it; ✕ or middle-click closes one (asks first if a program runs); drag tabs to reorder them. Background tabs keep running, and tabs come back after a restart. |
 | 🔔 **Agent notifications** | Hooks for **Claude Code, Codex, Gemini CLI, Qoder, OpenCode**. A blue ring on the pane, a badge on the workspace, a system notification with sound (stays on screen while an agent waits for input; click it to jump to the pane), and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> jumps to it. Long shell commands notify when they finish in a pane you are not watching. |
 | 📊 **Agent limits** | Open Codex and Claude Code sessions show **5-hour and weekly** usage percentages, progress bars and local reset dates/times in AM/PM format at the bottom of the sidebar. Uses local CLI data. |
 | 🎨 **Warp themes** | 41 built-in themes from [Warp](https://github.com/warpdotdev/themes), including gradients. They colour the whole window, not just the text. Drop any Warp `.yaml` theme in to add your own. Background opacity lets windows behind show through while text stays solid. |
@@ -283,7 +284,9 @@ See [docs/THEMES.md](docs/THEMES.md).
 | New / close / rename workspace | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> / <kbd>Q</kbd> / <kbd>R</kbd> |
 | Next / previous workspace | <kbd>Ctrl</kbd>+<kbd>PgDn</kbd> / <kbd>Ctrl</kbd>+<kbd>PgUp</kbd>, or <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> |
 | Split right / down | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> / <kbd>O</kbd> |
-| Close pane | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
+| New tab | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
+| Close pane (a tab's last pane closes the tab) | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
+| Next / previous tab | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> |
 | Move focus | <kbd>Alt</kbd>+<kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> |
 | Command palette | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
 | Docker Compose files | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> |

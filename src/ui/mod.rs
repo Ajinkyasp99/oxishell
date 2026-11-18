@@ -21,6 +21,7 @@ mod settings;
 mod sidebar;
 mod suggest;
 mod system_status;
+mod tabs;
 mod themes;
 mod updates;
 mod usage_footer;
@@ -30,7 +31,7 @@ mod zoom;
 
 use crate::agents::AgentState;
 use crate::config::Config;
-use crate::model::{AppState, Direction, Node, Orient, PaneClosed, PaneId, WorkspaceId};
+use crate::model::{AppState, Direction, Node, Orient, PaneClosed, PaneId, TabId, WorkspaceId};
 use crate::notify::{Kind, NotificationCenter};
 use crate::session::{PaneSnapshot, Snapshot};
 use gtk4::glib::translate::IntoGlib;
@@ -64,6 +65,8 @@ pub struct App {
     pub stack: gtk4::Stack,
     pub sidebar_list: gtk4::ListBox,
     sidebar_rows: RefCell<HashMap<WorkspaceId, sidebar::Row>>,
+    /// Tab bar of each workspace, rebuilt with its layout.
+    tab_bars: RefCell<HashMap<WorkspaceId, tabs::TabBar>>,
     pub usage_footer: usage_footer::Footer,
     pub split: gtk4::Paned,
     pub status: gtk4::Label,
@@ -319,6 +322,7 @@ impl App {
             stack,
             sidebar_list,
             sidebar_rows: RefCell::new(HashMap::new()),
+            tab_bars: RefCell::new(HashMap::new()),
             usage_footer,
             split,
             status,
@@ -522,7 +526,7 @@ impl App {
             if i.state.select(wid).is_err() {
                 return;
             }
-            i.state.workspace(wid).map(|w| w.focused)
+            i.state.workspace(wid).map(|w| w.focused())
         };
         self.stack.set_visible_child_name(&wid.to_string());
         if let Some(p) = focused {
@@ -579,8 +583,7 @@ impl App {
     pub fn workspace_running(&self, wid: WorkspaceId) -> Vec<PaneId> {
         let i = self.inner.borrow();
         let Some(ws) = i.state.workspace(wid) else { return vec![] };
-        ws.layout
-            .panes()
+        ws.panes()
             .into_iter()
             .filter(|p| i.panes.get(p).is_some_and(|p| p.has_running_child()))
             .collect()
@@ -597,7 +600,7 @@ impl App {
             let (name, panes) = {
                 let i = self.inner.borrow();
                 let ws = i.state.workspace(wid).unwrap();
-                (ws.name.clone(), ws.layout.panes().len())
+                (ws.name.clone(), ws.panes().len())
             };
             let mut body = if panes == 1 {
                 "This closes its terminal and ends the shell.".to_string()
@@ -636,6 +639,7 @@ impl App {
         if let Some(page) = page {
             self.stack.remove(&page);
         }
+        self.tab_bars.borrow_mut().remove(&wid);
         self.inner.borrow_mut().notes.forget_workspace(wid);
         self.after_structure_change();
         Ok(())
@@ -659,7 +663,7 @@ impl App {
     // ---- panes --------------------------------------------------------------
 
     pub fn focused_pane(&self) -> Option<PaneId> {
-        self.inner.borrow().state.active_workspace().map(|w| w.focused)
+        self.inner.borrow().state.active_workspace().map(|w| w.focused())
     }
 
     pub fn split(self: &Rc<Self>, pane: Option<PaneId>, orient: Orient, cwd: Option<PathBuf>) -> Result<PaneId, String> {
@@ -674,6 +678,95 @@ impl App {
         self.focus_pane(new);
         self.schedule_save();
         Ok(new)
+    }
+
+    /// Open a tab in `wid` (default: the active workspace) after its shown
+    /// tab. It starts in `cwd`, or the folder of the workspace's focused pane,
+    /// and gets focus. Returns (tab, pane).
+    pub fn new_tab(self: &Rc<Self>, wid: Option<WorkspaceId>, cwd: Option<PathBuf>) -> Result<(TabId, PaneId), String> {
+        let wid = wid.or(self.inner.borrow().state.active).ok_or("no workspace to add a tab to")?;
+        let cwd = cwd.or_else(|| {
+            let i = self.inner.borrow();
+            let focused = i.state.workspace(wid)?.focused();
+            i.panes.get(&focused).and_then(|p| p.cwd.clone())
+        });
+        let (tab, pane) = self.inner.borrow_mut().state.new_tab(wid).map_err(|e| e.to_string())?;
+        self.create_pane(wid, pane, cwd, None);
+        self.rebuild_workspace(wid);
+        self.select_workspace(wid);
+        self.focus_pane(pane);
+        self.schedule_save();
+        Ok((tab, pane))
+    }
+
+    /// Show tab `tab` (switching workspace if needed) and focus its pane.
+    pub fn select_tab(self: &Rc<Self>, tab: TabId) -> Result<(), String> {
+        let pane = self.inner.borrow_mut().state.select_tab(tab).map_err(|e| e.to_string())?;
+        self.focus_pane(pane);
+        self.refresh();
+        Ok(())
+    }
+
+    /// Name tab `tab`; `None` or a blank name goes back to the automatic label.
+    pub fn rename_tab(self: &Rc<Self>, tab: TabId, name: Option<&str>) -> Result<(), String> {
+        self.inner.borrow_mut().state.rename_tab(tab, name).map_err(|e| e.to_string())?;
+        self.refresh();
+        self.schedule_save();
+        Ok(())
+    }
+
+    /// Show the tab `delta` places from the shown one (wrapping).
+    pub fn cycle_tab(self: &Rc<Self>, delta: isize) {
+        let Some(wid) = self.inner.borrow().state.active else { return };
+        let next = self.inner.borrow_mut().state.cycle_tab(wid, delta);
+        if let Ok(next) = next {
+            self.focus_pane(next);
+            self.refresh();
+        }
+    }
+
+    /// Move tab `tab` to position `index` of its workspace's tab bar.
+    pub fn move_tab(self: &Rc<Self>, tab: TabId, index: usize) -> Result<(), String> {
+        let wid = self.inner.borrow_mut().state.move_tab(tab, index).map_err(|e| e.to_string())?;
+        self.rebuild_workspace(wid);
+        self.refresh();
+        self.schedule_save();
+        Ok(())
+    }
+
+    /// Close every pane of tab `tab`. With `interactive`, asks first when a
+    /// program is running; otherwise refuses unless `force`.
+    pub fn close_tab(self: &Rc<Self>, tab: TabId, force: bool, interactive: bool) -> Result<(), String> {
+        let panes = self.inner.borrow().state.tab_panes(tab).map_err(|e| e.to_string())?;
+        let (running, confirm) = {
+            let i = self.inner.borrow();
+            let running = panes
+                .iter()
+                .filter(|p| i.panes.get(p).is_some_and(|p| p.has_running_child()))
+                .count();
+            (running, i.config.terminal.confirm_close_running)
+        };
+        if running > 0 && !force && confirm {
+            if interactive {
+                let w = self.weak();
+                let body = format!(
+                    "{running} program{} still running in this tab. Closing it will terminate {}.",
+                    if running == 1 { " is" } else { "s are" },
+                    if running == 1 { "it" } else { "them" }
+                );
+                dialogs::confirm(self, "Close tab?", &body, "Close", move || {
+                    if let Some(a) = w.upgrade() {
+                        let _ = a.close_tab(tab, true, false);
+                    }
+                });
+                return Ok(());
+            }
+            return Err("tab has a running program; pass force to close it".into());
+        }
+        for p in panes {
+            self.remove_pane(p, true);
+        }
+        Ok(())
     }
 
     /// Swap the positions of two panes in the same workspace (drag handle).
@@ -727,8 +820,11 @@ impl App {
         let (frame_min_h, _, _, _) = p.frame.measure(Orientation::Vertical, -1);
         let min_w = ((p.term.char_width() * MIN_PANE_COLS) as f64 + 24.0).max(frame_min_w as f64);
         let min_h = ((p.term.char_height() * MIN_PANE_ROWS) as f64 + 44.0).max(frame_min_h as f64);
-        let before: HashMap<PaneId, crate::model::Rect> = ws.layout.rects().into_iter().collect();
-        let mut after = ws.layout.clone();
+        let Some(tab) = ws.tab_index_of(pane).map(|t| &ws.tabs[t]) else {
+            return Ok(());
+        };
+        let before: HashMap<PaneId, crate::model::Rect> = tab.layout.rects().into_iter().collect();
+        let mut after = tab.layout.clone();
         after.split_balanced(pane, PaneId::MAX, orient);
         let cramped = after.rects().into_iter().any(|(id, r)| {
             let changed = before.get(&id).is_none_or(|b| *b != r);
@@ -793,6 +889,7 @@ impl App {
                 if let Some(page) = page {
                     self.stack.remove(&page);
                 }
+                self.tab_bars.borrow_mut().remove(&wid);
                 self.inner.borrow_mut().notes.forget_workspace(wid);
                 self.after_structure_change();
             }
@@ -839,6 +936,8 @@ impl App {
         if self.stack.visible_child_name().as_deref() != Some(&wid.to_string()) {
             self.stack.set_visible_child_name(&wid.to_string());
         }
+        // Show the pane's tab before focusing its terminal.
+        tabs::sync(self);
         if let Some(t) = term {
             if t.is_mapped() {
                 if !t.has_focus() {
@@ -869,9 +968,21 @@ impl App {
         if wid.is_none() || self.stack.visible_child_name().as_deref() != wid.map(|w| w.to_string()).as_deref() {
             return;
         }
+        // Likewise for a terminal in a hidden tab (e.g. a new tab's focus-on-map
+        // after switching back): taking it as a user focus would switch tabs, and
+        // the two tabs' terminals would keep taking focus from each other.
+        let shown = {
+            let i = self.inner.borrow();
+            i.state
+                .workspace(wid.unwrap())
+                .is_some_and(|ws| ws.tab_index_of(pane) == Some(ws.active_tab))
+        };
+        if !shown {
+            return;
+        }
         let changed = {
             let mut i = self.inner.borrow_mut();
-            let before = i.state.active_workspace().map(|w| w.focused);
+            let before = i.state.active_workspace().map(|w| w.focused());
             let _ = i.state.focus(pane);
             before != Some(pane)
         };
@@ -889,33 +1000,43 @@ impl App {
         }
     }
 
-    /// Rebuild the widget tree of a workspace from its layout.
+    /// Rebuild the widget tree of a workspace: its tab bar and, in a stack,
+    /// each tab's split layout. Pane frames are re-parented, never recreated.
     pub fn rebuild_workspace(self: &Rc<Self>, wid: WorkspaceId) {
-        let (layout, page, frames) = {
+        let (tabs, page, frames) = {
             let i = self.inner.borrow();
             let Some(ws) = i.state.workspace(wid) else { return };
             let frames: HashMap<PaneId, gtk4::Box> = ws
-                .layout
                 .panes()
                 .iter()
                 .filter_map(|p| i.panes.get(p).map(|x| (*p, x.frame.clone())))
                 .collect();
-            (ws.layout.clone(), i.pages.get(&wid).cloned(), frames)
+            (ws.tabs.clone(), i.pages.get(&wid).cloned(), frames)
         };
         let Some(page) = page else { return };
         for f in frames.values() {
             pane::detach(f);
         }
+        self.tab_bars.borrow_mut().remove(&wid);
         while let Some(c) = page.first_child() {
             page.remove(&c);
         }
-        let root = self.build_node(wid, &layout, &frames, &mut Vec::new());
-        page.append(&root);
+        let ids: Vec<TabId> = tabs.iter().map(|t| t.id).collect();
+        let (bar, tab_bar) = tabs::build_bar(self, wid, &ids);
+        for t in &tabs {
+            let root = self.build_node(wid, t.id, &t.layout, &frames, &mut Vec::new());
+            tab_bar.stack().add_named(&root, Some(&t.id.to_string()));
+        }
+        page.append(&bar);
+        page.append(tab_bar.stack());
+        self.tab_bars.borrow_mut().insert(wid, tab_bar);
+        tabs::sync(self);
     }
 
     fn build_node(
         self: &Rc<Self>,
         wid: WorkspaceId,
+        tab: TabId,
         node: &Node,
         frames: &HashMap<PaneId, gtk4::Box>,
         path: &mut Vec<bool>,
@@ -940,10 +1061,10 @@ impl App {
                 paned.set_shrink_start_child(true);
                 paned.set_shrink_end_child(true);
                 path.push(false);
-                let wa = self.build_node(wid, a, frames, path);
+                let wa = self.build_node(wid, tab, a, frames, path);
                 path.pop();
                 path.push(true);
-                let wb = self.build_node(wid, b, frames, path);
+                let wb = self.build_node(wid, tab, b, frames, path);
                 path.pop();
                 paned.set_start_child(Some(&wa));
                 paned.set_end_child(Some(&wb));
@@ -999,7 +1120,10 @@ impl App {
                         if let Some(a) = w.upgrade() {
                             let r = p.position() as f64 / size as f64;
                             if let Ok(ws) = a.inner.borrow_mut().state.workspace_mut(wid) {
-                                ws.layout.set_ratio_at(&my_path, r);
+                                // This split's own tab, which need not be the shown one.
+                                if let Some(t) = ws.tabs.iter_mut().find(|t| t.id == tab) {
+                                    t.layout.set_ratio_at(&my_path, r);
+                                }
                             }
                             a.schedule_save();
                         }
@@ -1192,17 +1316,19 @@ impl App {
         }
     }
 
-    pub fn agent_event(
-        self: &Rc<Self>,
-        pane: PaneId,
-        agent: &str,
-        state: AgentState,
-        message: Option<String>,
-        session: Option<String>,
-    ) -> Result<(), String> {
+    pub fn agent_event(self: &Rc<Self>, pane: PaneId, agent: &str, state: AgentState, info: crate::agents::HookInfo) -> Result<(), String> {
+        let crate::agents::HookInfo {
+            session,
+            message,
+            prompt,
+            model,
+        } = info;
         let worked = {
             let mut i = self.inner.borrow_mut();
             let p = i.panes.get_mut(&pane).ok_or(format!("no such pane: {pane}"))?;
+            if p.agent_id().is_none() && state != AgentState::Ended {
+                p.agent_started();
+            }
             // Time the turn: from the first Running report to the next stop.
             let worked = match state {
                 AgentState::Running => {
@@ -1215,6 +1341,19 @@ impl App {
                 AgentState::Idle | AgentState::Ended => p.agent_since.take().map(|t| t.elapsed()),
             };
             p.agent = Some((agent.to_string(), state, message.clone()));
+            p.agent_activity = Some(std::time::Instant::now());
+            if let Some(line) = prompt.as_deref().and_then(crate::agent_info::prompt_line) {
+                if p.agent_prompt.as_ref() != Some(&line) {
+                    p.agent_prompt = Some(line);
+                    p.agent_title = None;
+                }
+            }
+            if model.is_some() {
+                p.agent_model = model;
+            }
+            if state == AgentState::Ended {
+                p.clear_agent_info();
+            }
             if let Some(s) = session {
                 p.agent_session = Some((agent.to_string(), s));
             }
@@ -1247,9 +1386,10 @@ impl App {
     /// Refresh sidebar, status bar, badges and pane classes from the model.
     pub fn refresh(self: &Rc<Self>) {
         sidebar::rebuild(self);
+        tabs::sync(self);
         usage_footer::refresh(self);
         let i = self.inner.borrow();
-        let focused = i.state.active_workspace().map(|w| w.focused);
+        let focused = i.state.active_workspace().map(|w| w.focused());
         for (id, p) in &i.panes {
             set_class(&p.frame, "focused", Some(*id) == focused);
             set_class(&p.frame, "attention", i.notes.unread_for_pane(*id) > 0);
@@ -1280,7 +1420,7 @@ impl App {
             return;
         };
         let mut activity = island::Activity::None;
-        for p in ws.layout.panes().iter().filter_map(|id| i.panes.get(id)) {
+        for p in ws.panes().iter().filter_map(|id| i.panes.get(id)) {
             let a = match &p.agent {
                 Some((_, AgentState::Waiting, _)) => island::Activity::Waiting,
                 Some((_, AgentState::Running, _)) => island::Activity::Working,
@@ -1467,6 +1607,8 @@ impl App {
         ctl.connect_key_pressed(move |_, key, _, state| {
             let Some(a) = w.upgrade() else { return glib::Propagation::Proceed };
             let mods = state & gtk4::accelerator_get_default_mod_mask();
+            // Shift+Tab arrives as ISO_Left_Tab; shortcuts name it Tab.
+            let key = if key == gdk::Key::ISO_Left_Tab { gdk::Key::Tab } else { key };
             let action = a.inner.borrow().keymap.get(&(key.to_lower().into_glib(), mods)).cloned();
             if let Some(action) = action {
                 if action == "newline" || action == "newline-alt" {
@@ -1553,6 +1695,8 @@ impl App {
             "open-notification",
             "ws-rename",
             "ws-close",
+            "tab-rename",
+            "tab-close",
             "ws-move-up",
             "ws-move-down",
             "pane-split-right",
@@ -1580,6 +1724,8 @@ impl App {
         match name {
             "open-notification" => self.open_notification(id),
             "ws-rename" => dialogs::rename_workspace(self, id),
+            "tab-rename" => dialogs::rename_tab(self, id),
+            "tab-close" => self.report(self.close_tab(id, false, true)),
             "ws-close" => {
                 let _ = self.close_workspace(id, false, true);
             }
@@ -1700,6 +1846,9 @@ impl App {
             }
             "split-right" => self.report(self.split(None, Orient::Horizontal, None).map(|_| ())),
             "split-down" => self.report(self.split(None, Orient::Vertical, None).map(|_| ())),
+            "new-tab" => self.report(self.new_tab(None, None).map(|_| ())),
+            "next-tab" => self.cycle_tab(1),
+            "prev-tab" => self.cycle_tab(-1),
             "close-pane" => {
                 if let Some(p) = focused {
                     self.report(self.close_pane(p, false, true));
@@ -1878,7 +2027,7 @@ impl App {
     fn restore(self: &Rc<Self>, snap: Snapshot) {
         let lines = self.inner.borrow().config.session.replay_lines;
         let active = snap.state.active;
-        let workspaces: Vec<_> = snap.state.workspaces.iter().map(|w| (w.id, w.layout.panes())).collect();
+        let workspaces: Vec<_> = snap.state.workspaces.iter().map(|w| (w.id, w.panes())).collect();
         self.inner.borrow_mut().state = snap.state;
         for (wid, panes) in workspaces {
             self.add_page(wid);
@@ -1918,14 +2067,6 @@ impl App {
     }
 }
 
-fn set_class(w: &impl IsA<gtk4::Widget>, class: &str, on: bool) {
-    if on {
-        w.add_css_class(class);
-    } else {
-        w.remove_css_class(class);
-    }
-}
-
 /// The more urgent of two activities (Waiting > Working > Present > None).
 fn strongest(a: island::Activity, b: island::Activity) -> island::Activity {
     use island::Activity::*;
@@ -1947,7 +2088,7 @@ fn status_text(i: &Inner) -> String {
         return String::new();
     };
     let mut parts = vec![format!("Workspace: {}", ws.name)];
-    if let Some(p) = i.panes.get(&ws.focused) {
+    if let Some(p) = i.panes.get(&ws.focused()) {
         if let Some(c) = &p.cwd {
             parts.push(crate::meta::display_path(c));
         }
@@ -1972,7 +2113,15 @@ fn status_text(i: &Inner) -> String {
         }
         parts.push(format!("Agent: {}", p.agent_label().unwrap_or_else(|| "—".into())));
     }
-    let n = ws.layout.panes().len();
+    let n = ws.panes().len();
     parts.push(format!("{n} pane{}", if n == 1 { "" } else { "s" }));
     parts.join("  |  ")
+}
+
+fn set_class(w: &impl IsA<gtk4::Widget>, class: &str, on: bool) {
+    if on {
+        w.add_css_class(class);
+    } else {
+        w.remove_css_class(class);
+    }
 }

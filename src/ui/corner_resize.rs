@@ -152,7 +152,8 @@ pub fn attach(app: &AppRc, page: &gtk4::Box, wid: WorkspaceId) {
                 let Some(path) = split_path(&p.widget_name()) else { continue };
                 if size > 0 {
                     if let Ok(ws) = a.inner.borrow_mut().state.workspace_mut(wid) {
-                        ws.layout.set_ratio_at(&path, p.position() as f64 / size as f64);
+                        // Junctions are only reachable in the shown tab.
+                        ws.tab_mut().layout.set_ratio_at(&path, p.position() as f64 / size as f64);
                     }
                 }
             }

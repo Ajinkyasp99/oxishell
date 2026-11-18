@@ -384,8 +384,20 @@ pub fn uninstall(agent: &str, home: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Extract a session id and a human message from a hook's stdin payload.
-pub fn parse_hook_payload(agent: &str, v: &Value) -> (Option<String>, Option<String>) {
+/// What a hook's stdin payload tells us about the agent session.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookInfo {
+    pub session: Option<String>,
+    /// Human message (notification text, final response preview, question).
+    pub message: Option<String>,
+    /// Prompt the user just submitted (`UserPromptSubmit`).
+    pub prompt: Option<String>,
+    /// Model id or display name, when the agent reports one.
+    pub model: Option<String>,
+}
+
+/// Extract session id, message, prompt and model from a hook's stdin payload.
+pub fn parse_hook_payload(agent: &str, v: &Value) -> HookInfo {
     let s = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
     let session = s("session_id").or_else(|| s("sessionId")).or_else(|| s("thread-id"));
     let message = match agent {
@@ -400,7 +412,15 @@ pub fn parse_hook_payload(agent: &str, v: &Value) -> (Option<String>, Option<Str
             }),
         _ => s("message"),
     };
-    (session, message)
+    let model = s("model")
+        .or_else(|| v.pointer("/model/display_name").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| v.pointer("/model/id").and_then(Value::as_str).map(str::to_string));
+    HookInfo {
+        session,
+        message,
+        prompt: s("prompt"),
+        model,
+    }
 }
 
 /// Command that resumes a session; only ever typed into a pane on explicit user action.
@@ -562,13 +582,13 @@ timeout = 20
                 "Which option?",
             ),
         ] {
-            let (s, m) = parse_hook_payload("codex", &payload);
-            assert_eq!(s.as_deref(), Some(session));
-            assert_eq!(m.as_deref(), Some(message));
+            let h = parse_hook_payload("codex", &payload);
+            assert_eq!(h.session.as_deref(), Some(session));
+            assert_eq!(h.message.as_deref(), Some(message));
         }
         assert_eq!(
             parse_hook_payload("codex", &json!({"tool_input": {"command": "private command"}})),
-            (None, None)
+            HookInfo::default()
         );
     }
 
@@ -625,10 +645,22 @@ timeout = 20
     }
 
     #[test]
+    fn hook_payload_carries_prompt_and_model() {
+        let h = parse_hook_payload("claude", &json!({"session_id": "s1", "prompt": "fix login\nmore"}));
+        assert_eq!(h.prompt.as_deref(), Some("fix login\nmore"));
+        let h = parse_hook_payload("codex", &json!({"session_id": "s2", "model": "gpt-5-codex", "prompt": "x"}));
+        assert_eq!(h.model.as_deref(), Some("gpt-5-codex"));
+        let h = parse_hook_payload("claude", &json!({"model": {"id": "claude-opus-5-5", "display_name": "Opus 5.5"}}));
+        assert_eq!(h.model.as_deref(), Some("Opus 5.5"));
+        let h = parse_hook_payload("claude", &json!({"model": {"id": "claude-opus-5-5"}}));
+        assert_eq!(h.model.as_deref(), Some("claude-opus-5-5"));
+    }
+
+    #[test]
     fn payload_and_resume() {
-        let (s, m) = parse_hook_payload("claude", &json!({"session_id": "abc-1", "message": "Claude needs your permission"}));
-        assert_eq!(s.as_deref(), Some("abc-1"));
-        assert_eq!(m.as_deref(), Some("Claude needs your permission"));
+        let h = parse_hook_payload("claude", &json!({"session_id": "abc-1", "message": "Claude needs your permission"}));
+        assert_eq!(h.session.as_deref(), Some("abc-1"));
+        assert_eq!(h.message.as_deref(), Some("Claude needs your permission"));
         assert_eq!(resume_command("claude", "abc-1").unwrap(), "claude --resume abc-1");
         assert_eq!(resume_command("claude", "x; rm -rf ~"), None);
         assert_eq!(resume_command("unknown", "abc"), None);

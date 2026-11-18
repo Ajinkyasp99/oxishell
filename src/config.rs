@@ -247,7 +247,7 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("prev-workspace", "<Ctrl>Page_Up", "Previous workspace"),
     ("split-right", "<Ctrl><Shift>e", "Split right"),
     ("split-down", "<Ctrl><Shift>o", "Split down"),
-    ("close-pane", "<Ctrl><Shift>w", "Close pane"),
+    ("close-pane", "<Ctrl><Shift>w", "Close tab"),
     ("focus-left", "<Alt>Left", "Focus pane left"),
     ("focus-right", "<Alt>Right", "Focus pane right"),
     ("focus-up", "<Alt>Up", "Focus pane up"),
@@ -267,6 +267,9 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("command-history", "<Ctrl><Shift>h", "Search command history"),
     ("settings", "<Ctrl>comma", "Settings"),
     ("compose-files", "<Ctrl><Shift>l", "Docker Compose files"),
+    ("new-tab", "<Ctrl><Shift>t", "New tab"),
+    ("next-tab", "<Ctrl>Tab", "Next tab"),
+    ("prev-tab", "<Ctrl><Shift>Tab", "Previous tab"),
 ];
 
 /// Every bindable action with its default accelerator (macOS: Command-based,
@@ -280,7 +283,7 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("prev-workspace", "<Meta><Shift>braceleft", "Previous workspace"),
     ("split-right", "<Meta>d", "Split right"),
     ("split-down", "<Meta><Shift>d", "Split down"),
-    ("close-pane", "<Meta>w", "Close pane"),
+    ("close-pane", "<Meta>w", "Close tab"),
     ("focus-left", "<Meta><Alt>Left", "Focus pane left"),
     ("focus-right", "<Meta><Alt>Right", "Focus pane right"),
     ("focus-up", "<Meta><Alt>Up", "Focus pane up"),
@@ -300,6 +303,9 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("command-history", "<Meta><Shift>h", "Search command history"),
     ("settings", "<Meta>comma", "Settings"),
     ("compose-files", "<Meta><Shift>l", "Docker Compose files"),
+    ("new-tab", "<Meta><Shift>t", "New tab"),
+    ("next-tab", "<Ctrl>Tab", "Next tab"),
+    ("prev-tab", "<Ctrl><Shift>Tab", "Previous tab"),
 ];
 
 /// The primary modifier as shown in help texts: Ctrl, or ⌘ on macOS.
@@ -596,6 +602,23 @@ mod tests {
             assert!(Config::parse(&format!("[compose]\ndefault_action = \"{ok}\"\n")).is_ok(), "{ok}");
         }
         assert!(Config::parse("[compose]\ndefault_action = \"explode\"\n").is_err());
+    }
+
+    #[test]
+    fn tab_shortcuts_are_bound_without_conflicts() {
+        let c = Config::default();
+        for action in ["new-tab", "next-tab", "prev-tab"] {
+            let accel = default_shortcut(action);
+            assert!(!accel.is_empty(), "{action} has a default shortcut");
+            assert!(c.effective_shortcuts().contains(&(action.to_string(), accel.to_string())));
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(default_shortcut("new-tab"), "<Ctrl><Shift>t");
+        #[cfg(target_os = "macos")]
+        assert_eq!(default_shortcut("new-tab"), "<Meta><Shift>t");
+        assert_eq!(default_shortcut("next-tab"), "<Ctrl>Tab");
+        assert_eq!(default_shortcut("prev-tab"), "<Ctrl><Shift>Tab");
+        assert!(c.shortcut_conflicts().is_empty());
     }
 
     #[test]

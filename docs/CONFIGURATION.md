@@ -73,7 +73,8 @@ command = "cargo test"
 ```
 
 Shortcut actions: `new-workspace`, `close-workspace`, `rename-workspace`, `next-workspace`,
-`prev-workspace`, `split-right`, `split-down`, `close-pane`, `focus-left|right|up|down`, `copy`, `paste`,
+`prev-workspace`, `split-right`, `split-down`, `new-tab`, `next-tab`, `prev-tab`, `close-pane` (a tab's last
+pane closes the tab), `focus-left|right|up|down`, `copy`, `paste`,
 `newline`, `newline-alt`, `search`, `command-palette`, `toggle-sidebar`, `jump-unread`, `notifications`, `zoom-in`, `zoom-out`,
 `zoom-reset`, `command-history`, `settings`, `compose-files`. Conflicting bindings are reported when the app starts.
 The defaults are Ctrl-based on Linux and ⌘-based (`<Meta>`) on macOS; see the README's keyboard shortcuts.
