@@ -491,11 +491,14 @@ impl Theme {
 .badge {{ background: {accent_css}; color: {afg}; }}
 .pane.focused {{ border-color: {focus}; }}
 .pane.attention {{ border-color: {a}; box-shadow: 0 0 0 1px {a}, 0 0 10px {glow}; }}
-.ws-agent, .ws-attention, .notif-unread .ws-name {{ color: {a}; }}
+.ws-attention, .notif-unread .ws-name {{ color: {a}; }}
 .chip-env {{ color: {chip_env}; }}
 .chip-dir {{ color: {chip_dir}; }}
 .chip-git {{ color: {chip_git}; }}
 .compose-chip.compose-up:not(:hover), .compose-dot.compose-up {{ color: {chip_git}; }}
+.ws-session-dot.dot-running {{ color: {chip_dir}; }}
+.ws-session-dot.dot-waiting {{ color: {chip_env}; }}
+.ws-session-dot.dot-done {{ color: {chip_git}; }}
 .compose-chip.compose-pending:not(:hover), .compose-dot.compose-pending {{ color: {chip_env}; }}
 .compose-chip.compose-down:not(:hover), .compose-dot.compose-down {{ color: {chip_red}; }}
 .ghost {{ color: {ghost}; }}

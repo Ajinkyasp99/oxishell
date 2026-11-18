@@ -32,6 +32,9 @@ enum Cmd {
     /// Manage panes
     #[command(subcommand)]
     Pane(PaneCmd),
+    /// Manage tabs (each pane slot holds a group of tabs)
+    #[command(subcommand)]
+    Tab(TabCmd),
     /// Post a notification (defaults to the current pane)
     Notify {
         #[arg(long, short)]
@@ -171,6 +174,38 @@ enum PaneCmd {
 }
 
 #[derive(Subcommand)]
+enum TabCmd {
+    /// List tabs (default: of every workspace)
+    List {
+        #[arg(long)]
+        workspace: Option<u64>,
+    },
+    /// Open a tab in a workspace (default: this pane's, else the active one)
+    New {
+        #[arg(long)]
+        workspace: Option<u64>,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+    /// Show a tab and focus its pane
+    Select { id: u64 },
+    /// Move a tab to a position in its workspace's tab bar
+    Move {
+        id: u64,
+        #[arg(long)]
+        index: u64,
+    },
+    /// Name a tab; without NAME, go back to the automatic label
+    Rename { id: u64, name: Option<String> },
+    /// Close a tab; refuses if a program is running unless --force
+    Close {
+        id: u64,
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum NotifCmd {
     List,
     Clear,
@@ -256,6 +291,17 @@ fn main() -> ExitCode {
             }
             PaneCmd::Read { pane, lines } => call("pane.read", json!({"pane": pane.or_else(env_pane), "lines": lines})),
         },
+        Cmd::Tab(c) => match c {
+            TabCmd::List { workspace } => call("tab.list", json!({"workspace": workspace})),
+            TabCmd::New { workspace, cwd } => call(
+                "tab.new",
+                json!({"workspace": workspace, "pane": env_pane(), "cwd": cwd.map(abs_dir)}),
+            ),
+            TabCmd::Select { id } => call("tab.select", json!({"tab": id})),
+            TabCmd::Move { id, index } => call("tab.move", json!({"tab": id, "index": index})),
+            TabCmd::Rename { id, name } => call("tab.rename", json!({"tab": id, "name": name})),
+            TabCmd::Close { id, force } => call("tab.close", json!({"tab": id, "force": force})),
+        },
         Cmd::Notify { title, body, pane, global } => {
             let pane = if global { None } else { pane.or_else(env_pane) };
             call(
@@ -275,11 +321,13 @@ fn main() -> ExitCode {
             }
             if let Some(pane) = env_pane() {
                 if let Ok(payload) = serde_json::from_slice::<Value>(&input) {
-                    // Only quota fields leave this process, never transcript/context data.
+                    // Only quota fields and the model name leave this process, never
+                    // transcript/context data.
+                    let model = payload.pointer("/model/display_name").or_else(|| payload.pointer("/model/id"));
                     let _ = ipc::call_at_with_timeout(
                         &socket,
                         "agent.usage",
-                        json!({"pane": pane, "rate_limits": payload.get("rate_limits")}),
+                        json!({"pane": pane, "rate_limits": payload.get("rate_limits"), "model": model}),
                         std::time::Duration::from_millis(250),
                     );
                 }
@@ -327,15 +375,19 @@ fn main() -> ExitCode {
                     _ => return ExitCode::SUCCESS,
                 }
             }
+            let (mut prompt, mut model) = (None, None);
             if let Some(v) = &payload_v {
-                let (s, m) = agents::parse_hook_payload(&agent, v);
-                session = session.or(s);
-                message = message.or(m.map(|m| m.chars().take(300).collect()));
+                let h = agents::parse_hook_payload(&agent, v);
+                session = session.or(h.session);
+                message = message.or(h.message.map(|m| m.chars().take(300).collect()));
+                prompt = h.prompt.map(|p| p.chars().take(2000).collect::<String>());
+                model = h.model.map(|m| m.chars().take(64).collect::<String>());
             }
             let Some(state) = state else { return ExitCode::SUCCESS };
             let r = call(
                 "agent.event",
-                json!({"pane": pane, "agent": agent, "state": state, "message": message, "session": session}),
+                json!({"pane": pane, "agent": agent, "state": state, "message": message, "session": session,
+                       "prompt": prompt, "model": model}),
             );
             if let Err(e) = r {
                 if std::env::var_os("OXISHELL_DEBUG").is_some() {
@@ -421,6 +473,23 @@ fn print_result(v: &Value, json_out: bool) {
         return;
     }
     match v {
+        // Tabs (`tab list`): shown tab, id, workspace, label, panes.
+        Value::Array(items)
+            if items
+                .first()
+                .is_some_and(|i| i.get("label").is_some() && i.get("focused_pane").is_some()) =>
+        {
+            for t in items {
+                println!(
+                    "{} {:>3}  ws={:<3} {:<32} panes={}",
+                    if t["active"] == json!(true) { "*" } else { " " },
+                    t["id"],
+                    t["workspace"],
+                    t["label"].as_str().unwrap_or(""),
+                    t["panes"].as_array().map(|a| a.len()).unwrap_or(0),
+                );
+            }
+        }
         Value::Array(items) if items.first().is_some_and(|i| i.get("name").is_some() && i.get("panes").is_some()) => {
             for w in items {
                 println!(

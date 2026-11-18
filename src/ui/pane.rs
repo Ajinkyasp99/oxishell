@@ -28,12 +28,25 @@ pub struct Pane {
     pub ports: Vec<u16>,
     /// Agent program detected in the foreground (process name only).
     pub fg_agent: Option<&'static str>,
+    /// Name of the program holding the terminal, when it is not the shell.
+    pub fg_program: Option<String>,
     /// Last state reported by agent hooks: (agent, state, message).
     pub agent: Option<(String, AgentState, Option<String>)>,
     /// When the agent's current turn started (first Running report).
     pub agent_since: Option<Instant>,
     /// (agent, session id) reported by hooks, offered for explicit resume.
     pub agent_session: Option<(String, String)>,
+    /// Task summary from the terminal title the agent set.
+    pub agent_title: Option<String>,
+    /// First line of the prompt last submitted to the agent.
+    pub agent_prompt: Option<String>,
+    /// Model id or display name the agent reported (shortened for display).
+    pub agent_model: Option<String>,
+    /// Last hook event or title change of the agent.
+    pub agent_activity: Option<Instant>,
+    /// Terminal title when the agent was first seen; it is the shell's own
+    /// title and never counts as a summary.
+    pub agent_seen_title: Option<String>,
     pub last_bell: Cell<Option<Instant>>,
     /// Input sent before the shell finished spawning; flushed once it has.
     pub pending_input: Rc<std::cell::RefCell<Option<Vec<u8>>>>,
@@ -113,12 +126,65 @@ impl Pane {
     }
 
     pub fn agent_label(&self) -> Option<String> {
-        if let Some((a, s, _)) = &self.agent {
-            if *s != AgentState::Ended {
-                return Some(format!("{} — {}", crate::agents::display_name(a), s.label()));
-            }
+        let agent = self.agent_id()?;
+        Some(format!("{} — {}", crate::agents::display_name(agent), self.agent_summary()?))
+    }
+
+    /// The live agent in this pane: hook-reported unless ended, else detected.
+    pub fn agent_id(&self) -> Option<&str> {
+        self.agent_state()
+            .map(|_| self.agent.as_ref().unwrap().0.as_str())
+            .or(self.fg_agent)
+    }
+
+    /// Hook-reported state while the session is live.
+    pub fn agent_state(&self) -> Option<AgentState> {
+        self.agent.as_ref().map(|(_, s, _)| *s).filter(|s| *s != AgentState::Ended)
+    }
+
+    /// What the live agent is doing (title, else prompt, else state).
+    pub fn agent_summary(&self) -> Option<String> {
+        self.agent_id()?;
+        Some(crate::agent_info::summary(
+            self.agent_title.as_deref(),
+            self.agent_prompt.as_deref(),
+            self.agent_state(),
+        ))
+    }
+
+    /// Forget what the previous agent was doing; the current title stays the
+    /// shell's, so it cannot become the next agent's summary.
+    pub fn clear_agent_info(&mut self) {
+        self.agent_title = None;
+        self.agent_prompt = None;
+        self.agent_model = None;
+        self.agent_activity = None;
+        self.agent_seen_title = self.term.window_title().map(|t| t.to_string());
+    }
+
+    /// An agent appeared in this pane: remember the shell's title.
+    pub fn agent_started(&mut self) {
+        self.agent_seen_title = self.term.window_title().map(|t| t.to_string());
+        self.agent_title = None;
+        self.agent_activity = Some(Instant::now());
+    }
+
+    /// The terminal title changed: take it as the summary if the agent set it.
+    pub fn title_changed(&mut self) {
+        let Some(agent) = self.agent_id() else { return };
+        // Only a program holding the terminal sets the agent's title; with the
+        // shell in the foreground it is the shell's own (e.g. PROMPT_COMMAND
+        // after the agent exited, before hooks or the meta worker notice).
+        let fg = crate::meta::foreground_pgrp(self.pty_fd());
+        if fg.is_none() || fg == self.pid.get() {
+            return;
         }
-        self.fg_agent.map(|a| format!("{} (running)", crate::agents::display_name(a)))
+        let title = self.term.window_title().map(|t| t.to_string()).unwrap_or_default();
+        if Some(&title) == self.agent_seen_title.as_ref() {
+            return;
+        }
+        self.agent_title = crate::agent_info::title_summary(&title, agent);
+        self.agent_activity = Some(Instant::now());
     }
 
     pub fn hangup(&self) {
@@ -174,6 +240,8 @@ pub fn detach(w: &impl IsA<gtk4::Widget>) {
         }
     } else if let Some(b) = parent.downcast_ref::<gtk4::Box>() {
         b.remove(w);
+    } else if let Some(s) = parent.downcast_ref::<gtk4::Stack>() {
+        s.remove(w);
     } else {
         w.unparent();
     }
@@ -454,7 +522,14 @@ impl App {
             let w = self.weak();
             term.connect_window_title_changed(move |_| {
                 if let Some(a) = w.upgrade() {
-                    super::sidebar::rebuild(&a);
+                    // Deferred: the title can change while the model is borrowed.
+                    glib::idle_add_local_once(move || {
+                        if let Some(p) = a.inner.borrow_mut().panes.get_mut(&id) {
+                            p.title_changed();
+                        }
+                        super::sidebar::rebuild(&a);
+                        super::tabs::sync(&a);
+                    });
                 }
             });
         }
@@ -595,9 +670,15 @@ impl App {
                 git: None,
                 ports: vec![],
                 fg_agent: None,
+                fg_program: None,
                 agent: None,
                 agent_since: None,
                 agent_session: None,
+                agent_title: None,
+                agent_prompt: None,
+                agent_model: None,
+                agent_activity: None,
+                agent_seen_title: None,
                 last_bell: Cell::new(None),
                 pending_input: pending,
                 python_env: None,

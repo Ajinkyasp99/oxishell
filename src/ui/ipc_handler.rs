@@ -56,15 +56,37 @@ fn param_dir(p: &Value) -> Result<Option<PathBuf>, String> {
     Ok(Some(c))
 }
 
+fn tab_json(i: &super::Inner, w: &crate::model::Workspace, t: &crate::model::Tab) -> Value {
+    json!({
+        "id": t.id,
+        "workspace": w.id,
+        "index": w.tab_index(t.id),
+        "active": w.tab().id == t.id,
+        "label": super::tabs::tab_label(i, t),
+        "name": t.name,
+        "panes": t.layout.panes(),
+        "focused_pane": t.focused,
+    })
+}
+
 fn pane_json(a: &AppRc, pane: u64) -> Value {
     let i = a.inner.borrow();
     let wid = i.state.workspace_of(pane);
-    let focused = wid.and_then(|w| i.state.workspace(w)).map(|w| w.focused == pane).unwrap_or(false);
+    let ws = wid.and_then(|w| i.state.workspace(w));
+    let focused = ws.map(|w| w.focused() == pane).unwrap_or(false);
+    let tab_index = ws.and_then(|w| w.tab_index_of(pane));
+    let tab = ws.zip(tab_index).map(|(w, t)| w.tabs[t].id);
+    let active_tab = ws.zip(tab_index).is_some_and(|(w, t)| w.active_tab == t);
+    let visible = active_tab && wid.is_some() && i.state.active == wid;
     match i.panes.get(&pane) {
         Some(p) => json!({
             "id": pane,
             "workspace": wid,
             "focused": focused,
+            "tab": tab,
+            "tab_index": tab_index,
+            "active_tab": active_tab,
+            "visible": visible,
             "pid": p.pid.get(),
             "cwd": p.cwd.as_ref().map(|c| c.display().to_string()),
             "title": p.term.window_title().map(|t| t.to_string()),
@@ -72,6 +94,9 @@ fn pane_json(a: &AppRc, pane: u64) -> Value {
             "ports": p.ports,
             "agent": p.agent.as_ref().map(|(a, s, m)| json!({"agent": a, "state": s, "message": m})),
             "detected_agent": p.fg_agent,
+            "agent_summary": p.agent_summary(),
+            "agent_title": p.agent_title,
+            "agent_model": p.agent_id().and(p.agent_model.as_deref()).and_then(crate::agent_info::short_model),
             "python_env": p.python_env,
             "unread": i.notes.unread_for_pane(pane),
         }),
@@ -109,15 +134,17 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
                 .iter()
                 .enumerate()
                 .map(|(idx, w)| {
-                    let fp = i.panes.get(&w.focused);
+                    let fp = i.panes.get(&w.focused());
                     json!({
                         "id": w.id,
                         "index": idx,
                         "name": w.name,
                         "active": i.state.active == Some(w.id),
-                        "panes": w.layout.panes(),
-                        "focused_pane": w.focused,
-                        "layout": w.layout,
+                        "panes": w.panes(),
+                        "focused_pane": w.focused(),
+                        "layout": w.tab().layout,
+                        "active_tab": w.tab().id,
+                        "tabs": w.tabs.iter().map(|t| tab_json(&i, w, t)).collect::<Vec<_>>(),
                         "cwd": fp.and_then(|p| p.cwd.as_ref()).map(|c| c.display().to_string()),
                         "branch": fp.and_then(|p| p.git.as_ref()).map(|g| g.branch.clone()),
                         "unread": i.notes.unread_for_workspace(w.id),
@@ -203,6 +230,51 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
             let new = a.split(Some(pane), orient, cwd)?;
             Ok(json!({"pane": new}))
         }
+        "tab.list" => {
+            let wid = param_u64(p, "workspace")?;
+            let i = a.inner.borrow();
+            let tabs: Vec<Value> = i
+                .state
+                .workspaces
+                .iter()
+                .filter(|w| wid.is_none_or(|x| x == w.id))
+                .flat_map(|w| w.tabs.iter().map(|t| tab_json(&i, w, t)).collect::<Vec<_>>())
+                .collect();
+            Ok(Value::Array(tabs))
+        }
+        "tab.new" => {
+            let wid = match param_u64(p, "workspace")? {
+                Some(w) => Some(w),
+                // From inside a pane: that pane's workspace.
+                None => param_u64(p, "pane")?.and_then(|pane| a.inner.borrow().state.workspace_of(pane)),
+            };
+            let cwd = param_dir(p)?;
+            let (tab, pane) = a.new_tab(wid, cwd)?;
+            Ok(json!({"tab": tab, "pane": pane}))
+        }
+        "tab.select" => {
+            let tab = param_u64(p, "tab")?.ok_or("missing tab")?;
+            a.select_tab(tab)?;
+            Ok(json!({"tab": tab}))
+        }
+        "tab.move" => {
+            let tab = param_u64(p, "tab")?.ok_or("missing tab")?;
+            let index = param_u64(p, "index")?.ok_or("missing index")?.min(usize::MAX as u64) as usize;
+            a.move_tab(tab, index)?;
+            Ok(json!({"tab": tab}))
+        }
+        "tab.rename" => {
+            let tab = param_u64(p, "tab")?.ok_or("missing tab")?;
+            // Empty or missing name: back to the automatic label.
+            a.rename_tab(tab, param_str(p, "name")?)?;
+            Ok(json!({"tab": tab}))
+        }
+        "tab.close" => {
+            let tab = param_u64(p, "tab")?.ok_or("missing tab")?;
+            let force = p.get("force").and_then(Value::as_bool).unwrap_or(false);
+            a.close_tab(tab, force, false)?;
+            Ok(json!({"closed": tab}))
+        }
         "pane.focus" => {
             let pane = resolve_pane(a, p)?;
             a.focus_pane(pane);
@@ -257,6 +329,14 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
                 return Err(format!("no such pane: {pane}"));
             }
             a.usage_footer.claude.borrow_mut().update(pane, crate::usage::claude(p));
+            if let Some(model) = param_str(p, "model")?
+                .map(|m| crate::notify::sanitize(m, 64))
+                .filter(|m| !m.is_empty())
+            {
+                if let Some(pane) = a.inner.borrow_mut().panes.get_mut(&pane) {
+                    pane.agent_model = Some(model);
+                }
+            }
             super::usage_footer::refresh(a);
             Ok(json!({"pane": pane}))
         }
@@ -273,7 +353,19 @@ fn handle(a: &AppRc, method: &str, p: &Value) -> Result<Value, String> {
             let session = param_str(p, "session")?
                 .map(str::to_string)
                 .filter(|s| crate::agents::resume_command(agent, s).is_some());
-            a.agent_event(pane, agent, state, message, session)?;
+            let prompt = param_str(p, "prompt")?
+                .map(|m| crate::notify::sanitize(m, crate::notify::MAX_BODY))
+                .filter(|m| !m.is_empty());
+            let model = param_str(p, "model")?
+                .map(|m| crate::notify::sanitize(m, 64))
+                .filter(|m| !m.is_empty());
+            let info = crate::agents::HookInfo {
+                session,
+                message,
+                prompt,
+                model,
+            };
+            a.agent_event(pane, agent, state, info)?;
             Ok(json!({"pane": pane}))
         }
         "notification.list" => {

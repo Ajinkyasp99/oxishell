@@ -3,7 +3,9 @@
 # as an app). The release workflow fills in @VERSION@, @SHA256_ARM64@ and
 # @SHA256_X86_64@ and pushes the result to the tap repository
 # (Ajinkyasp99/homebrew-oxishell, as Casks/oxishell.rb).
-# Install: brew install --cask Ajinkyasp99/oxishell/oxishell
+# Install: brew install Ajinkyasp99/oxishell/oxishell   (or with --cask)
+# There is deliberately no formula named oxishell in the tap (the CLI-only one
+# is oxishell-cli), so the plain command installs this cask and the app.
 cask "oxishell" do
   arch arm: "arm64", intel: "x86_64"
 
@@ -39,7 +41,8 @@ cask "oxishell" do
     or run:
       xattr -dr com.apple.quarantine #{appdir}/Oxishell.app
 
-    The `oxi` CLI is linked into Homebrew's bin. If the oxishell formula is also
-    installed, remove it first: brew uninstall --formula oxishell
+    The `oxi` CLI is linked into Homebrew's bin. If the command-line formula is
+    installed, remove it first: brew uninstall --formula oxishell-cli
+    (or, from oxishell 0.3.0: brew uninstall --formula oxishell)
   EOS
 end

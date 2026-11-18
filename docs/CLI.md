@@ -15,12 +15,18 @@
 | `oxi workspace move ID INDEX` | Reorder |
 | `oxi workspace set ID [--color C] [--icon I]` | Sidebar colour (red, yellow, green, cyan, blue, magenta, gray) and icon (terminal, server, database, web, tools, docs, science, star, lock, cloud, warning, home); `none` clears |
 | `oxi workspace close ID [--force]` | Close; refuses if programs are running unless `--force` |
-| `oxi pane list [--workspace ID]` | List panes with cwd, git, ports, agent state |
+| `oxi pane list [--workspace ID]` | List panes with cwd, git, ports, agent state, agent summary/model and tab (`tab`, `tab_index`, `active_tab`, `visible`) |
 | `oxi pane split [--pane ID] [-d right\|down] [--cwd DIR]` | Split a pane |
-| `oxi pane focus ID` | Focus a pane (switches workspace) |
+| `oxi pane focus ID` | Focus a pane (switches workspace and shows its tab) |
 | `oxi pane close ID [--force]` | Close; refuses if a program is running unless `--force` |
 | `oxi pane send [--pane ID] [--enter] TEXT` | Type text into a pane (**disabled by default**) |
 | `oxi pane read [--pane ID] [--lines N]` | Print the last N lines (plain text) |
+| `oxi tab list [--workspace ID]` | List tabs (id, workspace, index, active, label, panes) |
+| `oxi tab new [--workspace ID] [--cwd DIR]` | Open a tab (default: this pane's workspace, in its focused pane's folder) |
+| `oxi tab select ID` | Show a tab (switches workspace) and focus its pane |
+| `oxi tab move ID --index N` | Move a tab to position N of its workspace's tab bar |
+| `oxi tab rename ID [NAME]` | Name a tab; without NAME it goes back to the automatic label |
+| `oxi tab close ID [--force]` | Close a tab; refuses if a program is running unless `--force` |
 | `oxi notify [-t TITLE] [-b BODY] [--pane ID] [--global]` | Post a notification |
 | `oxi notifications list` / `clear` / `jump` | History, clear, focus latest unread |
 | `oxi agent-event --agent A --state running\|waiting\|idle\|ended` | Report agent state (used by hooks) |
@@ -38,4 +44,5 @@
 
 One JSON object per line: `{"id":1,"method":"pane.split","params":{"pane":2,"direction":"down"}}` →
 `{"id":1,"ok":true,"result":{"pane":5}}`. Methods: `ping`, `workspace.{list,create,select,next,prev,rename,move,close}`,
-`pane.{list,split,focus,close,send,read}`, `notify`, `agent.event`, `notification.{list,clear,jump}`.
+`pane.{list,split,focus,close,send,read}`, `tab.{list,new,select,move,rename,close}`, `notify`, `agent.event`, `notification.{list,clear,jump}`.
+`agent.event` also takes optional `prompt` and `model` strings (the hook sends them from the agent's payload).

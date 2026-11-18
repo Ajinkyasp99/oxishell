@@ -1,0 +1,46 @@
+name: Publish marketing website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "marketing-website/**"
+
+permissions: {}
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  package:
+    permissions:
+      contents: read
+      pages: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test install command controls
+        run: node --test tests/marketing-website.test.mjs
+      # Set Settings → Pages → Source to GitHub Actions before the first run.
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: marketing-website
+
+  deploy:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

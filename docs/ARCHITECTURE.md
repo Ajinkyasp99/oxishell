@@ -8,7 +8,8 @@
                                                                                   │
  ┌────────────────────────────── GTK main thread (ui/) ─────────────────────────┐ │
  │ mod.rs      App: window, actions, key handler, workspace/pane operations     │◀┘
- │ sidebar.rs  workspace rows, drag-reorder, context menu                       │
+ │ sidebar.rs  workspace rows, agent session lines, drag-reorder, context menu  │
+ │ tabs.rs     workspace tab bar + stack of tab layouts, tab DnD reorder         │
  │ pane.rs     VTE terminal per pane (owns PTY + child), search, lifecycle      │
  │ dialogs.rs  palette, settings, notifications panel, rename/confirm           │
  │ meta_worker.rs ── jobs ─▶ worker thread (procfs, git) ── updates ─▶ back      │
@@ -21,15 +22,20 @@
  │ session.rs snapshot save/load, scrollback sanitizer                           │
  │ meta.rs    cwd / foreground process / ports from /proc, git porcelain parser  │
  │ agents.rs  hook install/uninstall per agent, payload parsing, resume commands │
+ │ agent_info.rs  session summary / model / age / tab label text                 │
  │ paths.rs   XDG paths, private dirs, atomic writes                             │
  └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Key decisions
 
-- **Model is the source of truth.** `Node = Leaf { pane } | Split { orient, ratio, a, b }`. Every
-  structural change mutates the model, then `rebuild_workspace` re-parents the existing pane widgets into a
-  fresh `gtk::Paned` tree. Terminals are never recreated, so processes survive layout changes.
+- **Model is the source of truth.** `Workspace { tabs: [Tab { id, layout: Node, focused }], active_tab }`,
+  `Node = Leaf { pane } | Split { orient, ratio, a, b }`. Each tab has its own split tree; workspaces, tabs
+  and panes share one id space. Every structural change mutates the model, then `rebuild_workspace`
+  re-parents the existing pane frames into the workspace page: a tab bar (`ui/tabs.rs`) over a
+  `gtk::Stack` with one `gtk::Paned` tree per tab. Terminals are never recreated, so processes survive
+  layout and tab changes; hidden tabs keep running. Session files from before tabs (version 1, a
+  workspace with `layout` + `focused`) load as one tab.
 - **Workspaces are `gtk::Stack` pages.** Hidden workspaces stay alive and keep processing output.
 - **VTE owns the PTY.** We pass env (`OXISHELL_PANE_ID`, `OXISHELL_WORKSPACE_ID`, `OXISHELL_SOCKET`,
   `TERM_PROGRAM=oxishell`) at spawn. Input sent before the shell is ready is queued until the tty

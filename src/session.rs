@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const VERSION: u32 = 1;
+/// 2: workspaces hold tabs. Version 1 files load unchanged (one tab per workspace).
+pub const VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PaneSnapshot {
@@ -51,11 +52,12 @@ impl Snapshot {
             Err(e) => return Err(e.to_string()),
         };
         let parsed: Result<Snapshot, String> = serde_json::from_str(&text).map_err(|e| e.to_string()).and_then(|mut s: Snapshot| {
-            if s.version != VERSION {
+            if s.version == 0 || s.version > VERSION {
                 return Err(format!("unsupported session version {}", s.version));
             }
-            s.state.validate()?;
+            // Before validating: gives tabs from version-1 files their ids.
             s.state.normalize_ids();
+            s.state.validate()?;
             let live: std::collections::HashSet<_> = s.state.all_panes().into_iter().map(|(_, p)| p).collect();
             s.panes.retain(|p, _| live.contains(p));
             Ok(s)
@@ -176,7 +178,7 @@ mod tests {
         let path = dir.join("session.json");
         snap.save(&path).unwrap();
         let back = Snapshot::load(&path).unwrap().unwrap();
-        assert_eq!(back.state.workspaces[0].layout, snap.state.workspaces[0].layout);
+        assert_eq!(back.state.workspaces[0].tabs, snap.state.workspaces[0].tabs);
         assert_eq!(back.panes.len(), 1);
         assert_eq!(back.panes[&p2].cwd.as_deref(), Some("/tmp"));
         std::fs::remove_dir_all(&dir).unwrap();
@@ -202,5 +204,51 @@ mod tests {
         let evil = "ok\u{1b}[31mred\u{1b}[0m\n\u{1b}]52;c;ZXZpbA==\u{7}clip\n\u{1b}]0;title\u{1b}\\x\r\nbell\u{7}";
         assert_eq!(sanitize_scrollback(evil, 100), "okred\nclip\nx\nbell");
         assert_eq!(sanitize_scrollback("1\n2\n3\n", 2), "2\n3");
+    }
+
+    #[test]
+    fn loads_v1_workspace_as_one_tab() {
+        let dir = tmp("v1");
+        let path = dir.join("session.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"state":{"workspaces":[{"id":1,"name":"a","layout":{"type":"split","orient":"horizontal","ratio":0.3,"a":{"type":"leaf","pane":2},"b":{"type":"leaf","pane":4}},"focused":4}],"active":1,"next_id":4}}"#,
+        )
+        .unwrap();
+        let snap = Snapshot::load(&path).unwrap().unwrap();
+        let ws = &snap.state.workspaces[0];
+        assert_eq!(ws.tabs.len(), 1);
+        assert_eq!(ws.active_tab, 0);
+        let tab = ws.tab();
+        assert!(tab.id > 4, "the tab gets a fresh id, got {}", tab.id);
+        assert_eq!(tab.focused, 4);
+        assert_eq!(tab.layout.panes(), vec![2, 4]);
+        assert!(matches!(tab.layout, crate::model::Node::Split { ratio, .. } if ratio == 0.3));
+        assert!(snap.state.validate().is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn tabs_round_trip() {
+        let mut st = AppState::default();
+        let (w, p) = st.create_workspace(None).unwrap();
+        st.split(p, Orient::Horizontal).unwrap();
+        let (t, _) = st.new_tab(w).unwrap();
+        let snap = Snapshot {
+            version: VERSION,
+            state: st,
+            panes: BTreeMap::new(),
+        };
+        let dir = tmp("tabs");
+        let path = dir.join("session.json");
+        snap.save(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(json["version"], 2);
+        assert_eq!(json["state"]["workspaces"][0]["tabs"][1]["id"], t);
+        assert_eq!(json["state"]["workspaces"][0]["active_tab"], 1);
+        let back = Snapshot::load(&path).unwrap().unwrap();
+        assert_eq!(back.state.workspaces[0].tabs, snap.state.workspaces[0].tabs);
+        assert_eq!(back.state.workspaces[0].active_tab, 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

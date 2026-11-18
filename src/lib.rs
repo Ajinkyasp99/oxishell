@@ -1,6 +1,7 @@
 //! oxishell library. Everything except `ui` is GTK-free and unit-tested.
 pub const APP_ID: &str = "dev.oxishell.Oxishell";
 
+pub mod agent_info;
 pub mod agents;
 pub mod compose;
 pub mod config;

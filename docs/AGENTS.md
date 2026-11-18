@@ -4,12 +4,30 @@ Any terminal agent runs in an oxishell pane like any other program. What the int
 
 1. **Identification (no setup)** — the foreground process name is matched against known agents
    (`claude`, `codex`, `opencode`, `gemini`, `qodercli`, `cursor-agent`, `amp`, `aider`). The sidebar then
-   shows e.g. "Claude Code (running)". This only says which program is in the foreground; it does not
+   lists the agent with a grey dot. This only says which program is in the foreground; it does not
    claim to know whether the agent is thinking or waiting.
 2. **State and notifications (hooks)** — agents that offer hooks report real events. oxishell shows
    the state, rings the pane, badges the workspace and sends a desktop notification.
 3. **Bell** — agents configured to ring the terminal bell (e.g. Claude Code's terminal-bell notification
    channel) mark the pane for attention without any hooks.
+
+## Sidebar tab lines
+
+Each tab running an AI agent gets one line under its workspace in the sidebar (up to eight, then
+"+N more"); plain shell tabs appear only in the tab bar. The same text labels the tab in the workspace's
+tab bar. A tab is described by its focused pane if an agent runs there, else its first pane with an
+agent. A tab you renamed shows its name instead of the summary (the summary is in the tooltip).
+
+- **Dot**: blue running, amber needs input, green done, grey detected without hooks.
+- **Summary**: the terminal title the agent sets (Claude Code sets a short task title), with spinner
+  glyphs removed. A title that was already there when the agent started is the shell's own and is never
+  used, nor is one that only names the agent. Without a title, the first line of the last prompt you
+  submitted (from the `UserPromptSubmit` hook payload). "Needs input: " is prefixed while it waits.
+- **Model**: only when the agent reports it (Codex hook payloads, Claude Code's status-line payload),
+  shortened (`claude-opus-5-5` → `opus`, `gpt-5-codex` → `gpt-5`). Never guessed.
+- **Age**: time since the last hook event or title change, refreshed every 30 s.
+
+When the agent ends, its summary, prompt and model are forgotten. None of this is saved in the session.
 
 ## Hooks
 

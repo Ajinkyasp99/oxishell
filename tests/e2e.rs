@@ -899,3 +899,185 @@ fn pane_split_cwd_is_relative_to_the_caller_and_must_exist() {
     assert_eq!(e.panes().len(), before);
     e.stop(app);
 }
+
+/// Polls `pane.list` until `field` of `pane` equals `want`.
+fn wait_field(e: &Env, pane: u64, field: &str, want: &Value) -> Value {
+    let t = Instant::now();
+    loop {
+        let p = e.panes().into_iter().find(|p| p["id"] == pane).unwrap();
+        if &p[field] == want {
+            return p;
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(10),
+            "pane {pane} {field} never became {want}; got {p}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn agent_prompt_title_and_model_reach_pane_list() {
+    if !have_display() {
+        return;
+    }
+    let e = Env::new("agentinfo");
+    let app = e.start();
+    let p = first_pane(&e);
+    e.ok("pane.send", json!({"pane": p, "text": "echo ready\r"}));
+    e.wait_text(p, "ready");
+
+    // A shell title with no agent is never a summary.
+    e.ok("pane.send", json!({"pane": p, "text": "printf '\\033]0;user@host: ~\\007'\r"}));
+    wait_field(&e, p, "title", &json!("user@host: ~"));
+    assert_eq!(e.panes()[0]["agent_summary"], Value::Null);
+
+    // The prompt is the summary until the agent sets a title; the model is shortened.
+    e.ok(
+        "agent.event",
+        json!({"pane": p, "agent": "claude", "state": "running",
+               "prompt": "Fix the login bug\nmore detail", "model": "claude-opus-5-5"}),
+    );
+    let info = wait_field(&e, p, "agent_summary", &json!("Fix the login bug"));
+    assert_eq!(info["agent_model"], json!("opus"));
+
+    // A title the shell itself sets (bash's PROMPT_COMMAND after the agent
+    // exited, while a stale hook state still says running) is not a summary.
+    e.ok("pane.send", json!({"pane": p, "text": "printf '\\033]0;user@host: ~/leak\\007'\r"}));
+    wait_field(&e, p, "title", &json!("user@host: ~/leak"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(e.panes()[0]["agent_summary"], json!("Fix the login bug"), "shell title leaked");
+
+    // A title set by the program in the foreground (the agent) wins over the prompt.
+    e.ok(
+        "pane.send",
+        json!({"pane": p, "text": "sh -c \"printf '\\033]0;\\342\\234\\263 Fix token refresh\\007'; sleep 2\"\r"}),
+    );
+    wait_field(&e, p, "agent_summary", &json!("Fix token refresh"));
+
+    // Waiting is prefixed.
+    e.ok(
+        "agent.event",
+        json!({"pane": p, "agent": "claude", "state": "waiting", "message": "permission"}),
+    );
+    wait_field(&e, p, "agent_summary", &json!("Needs input: Fix token refresh"));
+
+    // title_cleared_when_agent_ends: the title outlives the agent but is no longer a summary.
+    e.ok("agent.event", json!({"pane": p, "agent": "claude", "state": "ended"}));
+    let gone = wait_field(&e, p, "agent_summary", &Value::Null);
+    assert_eq!(gone["agent_model"], Value::Null);
+    assert_eq!(gone["agent_title"], Value::Null);
+    e.stop(app);
+}
+
+fn tabs(e: &Env) -> Vec<Value> {
+    e.ok("tab.list", json!({})).as_array().unwrap().clone()
+}
+
+fn tab_ids(e: &Env) -> Vec<u64> {
+    tabs(e).iter().map(|t| t["id"].as_u64().unwrap()).collect()
+}
+
+fn shown_tab(e: &Env) -> u64 {
+    tabs(e).iter().find(|t| t["active"] == true).unwrap()["id"].as_u64().unwrap()
+}
+
+#[test]
+fn tabs_via_ipc_survive_restart() {
+    if !have_display() {
+        return;
+    }
+    let e = Env::new("tabs");
+    let app = e.start();
+    let p = first_pane(&e);
+    let first = tab_ids(&e)[0];
+    let r1 = e.ok("tab.new", json!({}));
+    let (t1, q1) = (r1["tab"].as_u64().unwrap(), r1["pane"].as_u64().unwrap());
+    let r2 = e.ok("tab.new", json!({}));
+    let t2 = r2["tab"].as_u64().unwrap();
+    assert_eq!(tab_ids(&e), vec![first, t1, t2]);
+    assert_eq!(shown_tab(&e), t2);
+    let pane = |id: u64| e.panes().into_iter().find(|x| x["id"] == id).unwrap();
+    assert_eq!(pane(q1)["tab"], t1);
+    assert_eq!(pane(q1)["visible"], false);
+    assert_eq!(pane(p)["tab_index"], 0);
+
+    // A split stays inside its tab.
+    let s = e.ok("pane.split", json!({"pane": q1}))["pane"].as_u64().unwrap();
+    assert_eq!(pane(s)["tab"], t1);
+    assert_eq!(shown_tab(&e), t1, "splitting a hidden tab's pane shows that tab");
+    assert_eq!(tab_ids(&e).len(), 3, "a split adds no tab");
+
+    // A hidden tab keeps running.
+    e.ok("tab.select", json!({"tab": first}));
+    assert_eq!(pane(q1)["visible"], false);
+    e.ok("pane.send", json!({"pane": q1, "text": "echo hidden-$((40+2))\r"}));
+    e.wait_text(q1, "hidden-42");
+
+    e.ok("tab.move", json!({"tab": t2, "index": 0}));
+    assert_eq!(tab_ids(&e), vec![t2, first, t1]);
+    assert_eq!(shown_tab(&e), first, "moving keeps the shown tab");
+    assert!(e.call("tab.move", json!({"tab": 999, "index": 0})).is_err());
+    assert!(e.call("tab.select", json!({"tab": 999})).is_err());
+
+    // Renaming: the name labels the tab; an empty name clears it.
+    e.ok("tab.rename", json!({"tab": t2, "name": "api server"}));
+    let named = |id: u64| tabs(&e).into_iter().find(|t| t["id"] == id).unwrap();
+    assert_eq!(named(t2)["name"], "api server");
+    assert_eq!(named(t2)["label"], "api server");
+    assert!(e.call("tab.rename", json!({"tab": t2, "name": "bad\u{7}name"})).is_err());
+    let (ok, out) = e.cli(&["tab", "rename", &t1.to_string(), "scratch"], None);
+    assert!(ok, "oxi tab rename: {out}");
+    assert_eq!(named(t1)["name"], "scratch");
+    let (ok, out) = e.cli(&["tab", "rename", &t1.to_string()], None);
+    assert!(ok, "oxi tab rename without a name clears it: {out}");
+    assert_eq!(named(t1)["name"], Value::Null);
+
+    // pane.focus shows the pane's tab.
+    e.ok("pane.focus", json!({"pane": s}));
+    assert_eq!(shown_tab(&e), t1);
+
+    let (ok, out) = e.cli(&["tab", "new"], Some(p));
+    assert!(ok, "oxi tab new: {out}");
+    let (ok, out) = e.cli(&["tab", "list"], None);
+    assert!(
+        ok && out.contains(&format!(" {t1}  ws=")) && out.contains("api server"),
+        "oxi tab list: {out}"
+    );
+    assert_eq!(tab_ids(&e).len(), 4);
+    let ws = &e.ok("workspace.list", json!({}))[0];
+    assert_eq!(ws["tabs"].as_array().unwrap().len(), 4);
+    let before: Vec<Value> = tabs(&e)
+        .iter()
+        .map(|t| json!([t["id"], t["panes"], t["active"], t["name"]]))
+        .collect();
+    assert!(before.iter().any(|t| t[3] == "api server"));
+    e.stop(app);
+
+    let app = e.start();
+    let t = Instant::now();
+    while tab_ids(&e).len() < 4 {
+        assert!(t.elapsed() < Duration::from_secs(10), "tabs were not restored");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let after: Vec<Value> = tabs(&e)
+        .iter()
+        .map(|t| json!([t["id"], t["panes"], t["active"], t["name"]]))
+        .collect();
+    assert_eq!(after, before, "tabs, their panes, names and the shown tab survive a restart");
+
+    // Closing a tab with a running program needs force; closing the last pane
+    // of a tab closes the tab; the last tab closes the workspace.
+    e.ok("pane.send", json!({"pane": q1, "text": "sleep 30\r"}));
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(e.call("tab.close", json!({"tab": t1})).is_err(), "refuses with a running program");
+    e.ok("tab.close", json!({"tab": t1, "force": true}));
+    assert!(!tab_ids(&e).contains(&t1));
+    assert!(e.panes().iter().all(|x| x["id"] != q1 && x["id"] != s));
+    for id in tab_ids(&e)[1..].to_vec() {
+        e.ok("tab.close", json!({"tab": id, "force": true}));
+    }
+    assert_eq!(tab_ids(&e).len(), 1);
+    assert_eq!(e.ok("workspace.list", json!({})).as_array().unwrap().len(), 1);
+    e.stop(app);
+}

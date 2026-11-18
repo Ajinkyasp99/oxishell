@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Oxishell is a free, open-source terminal for running AI coding agents side by side on Linux and macOS.">
+  <meta name="theme-color" content="#101018">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Oxishell — The terminal for AI coding agents">
+  <meta property="og:description" content="Run agents side by side and get notified when they need you. For Linux and macOS.">
+  <meta property="og:image" content="https://ajinkyasp99.github.io/oxishell/assets/hero.webp">
+  <title>Oxishell — The terminal for AI coding agents</title>
+  <link rel="icon" href="./assets/oxishell.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header" id="top">
+    <div class="shell nav-bar">
+      <a class="brand" href="#top">
+        <img src="./assets/oxishell.svg" width="36" height="36" alt="">
+        <span>oxishell</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#features">Features</a>
+        <a href="#download">Download</a>
+        <a href="#docs">Docs</a>
+      </nav>
+      <a class="button button-small" href="https://github.com/Ajinkyasp99/oxishell">GitHub <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+
+  <main id="main">
+    <p id="copy-status" class="visually-hidden" role="status"></p>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="shell hero-layout">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open-source terminal for Linux &amp; macOS</p>
+          <h1 id="hero-title">Your agents.<br><span>One terminal.</span></h1>
+          <p class="hero-description">Run AI coding agents side by side. Keep projects in separate workspaces and jump straight to a pane when an agent needs you.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#download">Get Oxishell <span aria-hidden="true">↓</span></a>
+            <a class="button button-secondary" href="#features">See how it works <span aria-hidden="true">↘</span></a>
+          </div>
+        </div>
+
+        <div class="showcase" role="group" aria-label="Product screenshots">
+          <div class="showcase-stage">
+            <fieldset class="gallery-options">
+              <legend class="visually-hidden">Choose an Oxishell screenshot</legend>
+              <label><input id="preview-workspaces" name="preview" type="radio" checked> <span>Workspaces</span></label>
+              <label><input id="preview-alerts" name="preview" type="radio"> <span>Agent alerts</span></label>
+              <label><input id="preview-themes" name="preview" type="radio"> <span>Themes</span></label>
+            </fieldset>
+            <div class="gallery-views">
+              <figure class="gallery-view workspace-preview">
+                <a class="showcase-image" href="./assets/hero.webp" aria-label="Open full workspaces screenshot">
+                  <img src="./assets/hero.webp" width="1320" height="820" alt="Oxishell showing a workspace sidebar, split panes for a shell, tests and a server, and a Claude Code alert." fetchpriority="high">
+                </a>
+                <figcaption><span class="status-dot" aria-hidden="true"></span> Oxishell on Ubuntu <span class="preview-note">Split panes &amp; workspaces</span></figcaption>
+              </figure>
+              <figure class="gallery-view alerts-preview">
+                <a class="showcase-image" href="./assets/notifications.webp" aria-label="Open full agent alerts screenshot">
+                  <img src="./assets/notifications.webp" width="1320" height="820" loading="lazy" alt="Oxishell's notification panel with two alerts, one for Claude Code asking for input and one for a completed build.">
+                </a>
+                <figcaption><span class="status-dot" aria-hidden="true"></span> Oxishell on Ubuntu <span class="preview-note">Agent notifications</span></figcaption>
+              </figure>
+              <figure class="gallery-view themes-preview">
+                <a class="showcase-image" href="./assets/theme-gallery.webp" aria-label="Open full theme settings screenshot">
+                  <img src="./assets/theme-gallery.webp" width="720" height="680" loading="lazy" alt="Theme settings with six previews, including Warp Dark, Tokyo Night and Catppuccin.">
+                </a>
+                <figcaption><span class="status-dot" aria-hidden="true"></span> Oxishell on Ubuntu <span class="preview-note">Theme settings</span></figcaption>
+              </figure>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="shell agents">
+        <p class="eyebrow">Agent integrations</p>
+        <ul aria-label="Supported agent integrations">
+          <li><span aria-hidden="true" class="agent-marker claude">✳</span> Claude Code</li>
+          <li><span aria-hidden="true" class="agent-marker codex">›_</span> Codex</li>
+          <li><span aria-hidden="true" class="agent-marker gemini">✦</span> Gemini CLI</li>
+          <li><span aria-hidden="true" class="agent-marker qoder">◇</span> Qoder</li>
+          <li><span aria-hidden="true" class="agent-marker opencode">⬡</span> OpenCode</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="features section" id="features" aria-labelledby="features-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="eyebrow">Workspaces &amp; agents</p>
+          <h2 id="features-title">Keep parallel work <span>in view.</span></h2>
+          <p>Set up a space for each project, switch between tasks, and jump straight to the pane that needs your attention.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card workspace-card">
+            <div class="feature-copy">
+              <h3>A workspace for every project</h3>
+              <p>Keep your agent, tests and dev server in split panes. Switch projects while background work keeps running. After a restart, reopen your layout and resume supported agent sessions from the pane menu.</p>
+            </div>
+            <div class="pane-example" aria-hidden="true">
+              <div class="pane-sidebar">
+                <span>WORKSPACES</span>
+                <span class="pane-selected">▸&nbsp; api</span>
+                <span>▸&nbsp; web</span>
+              </div>
+              <div class="pane-content">
+                <div><span>❯</span> cargo test<br><span>✓</span> 5 tests passed</div>
+                <div><span>❯</span> pnpm dev<br><span>→</span> localhost:5173</div>
+              </div>
+            </div>
+          </article>
+
+          <article class="feature-card alert-card">
+            <div class="feature-copy">
+              <h3>Know when an agent needs you</h3>
+              <p>Enable agent hooks to get desktop alerts for the events your agent reports. Select an alert to jump to the right pane.</p>
+            </div>
+            <div class="alert-example" aria-hidden="true">
+              <div><span class="agent-icon">✳</span><span><strong>Claude Code</strong><small>Permission requested</small></span><span class="agent-state waiting">Needs input</span></div>
+              <div><span class="agent-icon codex-icon">⌘</span><span><strong>Codex</strong><small>Task completed</small></span><span class="agent-state complete">Done</span></div>
+            </div>
+          </article>
+
+          <article class="feature-card theme-card">
+            <div class="feature-copy">
+              <p class="eyebrow">Native terminal</p>
+              <h3>Make the terminal yours.</h3>
+              <p>Apply a Warp theme across the whole window or import your own. Find themes, actions and custom commands in the command palette.</p>
+              <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/THEMES.md">Browse the theme guide <span aria-hidden="true">↗</span></a>
+            </div>
+            <div class="theme-image">
+              <img src="./assets/theme-gallery.webp" width="720" height="680" loading="lazy" alt="Theme settings showing Warp Dark, Tokyo Night, Dracula, Catppuccin and Nord.">
+            </div>
+          </article>
+        </div>
+
+        <div class="workflow-grid">
+          <article>
+            <h3>Track agent usage</h3>
+            <p>See reported 5-hour and weekly limits for active Codex and Claude Code sessions, including reset times.</p>
+            <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell#codex-and-claude-usage-limits">Usage and setup <span aria-hidden="true">↗</span></a>
+          </article>
+          <article>
+            <h3>Run Docker Compose</h3>
+            <p>Choose a Compose file from the pane. See service status and ports, rebuild or restart services, and get an alert if one crashes.</p>
+            <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/COMPOSE_LAUNCHER.md">Compose guide <span aria-hidden="true">↗</span></a>
+          </article>
+          <article>
+            <h3>Script your workspace</h3>
+            <p>Use the <code>oxi</code> CLI to create workspaces, split panes, read output or send notifications over a private local socket.</p>
+            <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/CLI.md">CLI reference <span aria-hidden="true">↗</span></a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="quick-start section" id="quick-start" aria-labelledby="quick-start-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="eyebrow">Quick start</p>
+          <h2 id="quick-start-title">Set up your first workspace.</h2>
+        </div>
+        <ol class="setup-steps">
+          <li>
+            <h3>Open a workspace</h3>
+            <p>Give each project a workspace. Create one with <kbd>Ctrl+Shift+N</kbd> on Linux or <kbd>⌘T</kbd> on macOS.</p>
+          </li>
+          <li>
+            <h3>Split your terminal</h3>
+            <p>Split right with <kbd>Ctrl+Shift+E</kbd> or <kbd>⌘D</kbd>. Run an agent in one pane and your tests or server in the other.</p>
+          </li>
+          <li>
+            <h3>Turn on agent hooks</h3>
+            <p>Open <strong>Settings → Notifications → Agent Hooks</strong>, or run this command to set up supported agents on your <code>PATH</code>.</p>
+            <div class="command">
+              <code id="hooks-command">oxi hooks install --all</code>
+              <button type="button" data-copy="hooks-command" aria-label="Copy agent hook setup command" hidden>Copy</button>
+            </div>
+          </li>
+        </ol>
+        <details class="reference-panel">
+          <summary>Which alerts does each agent support?</summary>
+          <dl class="agent-support">
+            <div><dt>Claude Code</dt><dd>Running, needs input, finished</dd></div>
+            <div><dt>Codex CLI</dt><dd>Running, needs input, finished with lifecycle hooks</dd></div>
+            <div><dt>Gemini CLI</dt><dd>Running, finished</dd></div>
+            <div><dt>OpenCode</dt><dd>Running, needs input, finished via the plugin. Live OpenCode testing is pending.</dd></div>
+            <div><dt>Qoder CLI</dt><dd>Finished</dd></div>
+          </dl>
+          <p>For Codex, restart the CLI after setup and review and trust the Oxishell hooks in <code>/hooks</code>. Older Codex releases can use the completion-only integration.</p>
+          <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/AGENTS.md">Read the agent setup guide <span aria-hidden="true">↗</span></a>
+        </details>
+        <a class="text-link shortcut-link" href="https://github.com/Ajinkyasp99/oxishell#keyboard-shortcuts">See Linux and macOS shortcuts <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+
+    <section class="download section" id="download" aria-labelledby="download-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="eyebrow">Download</p>
+          <h2 id="download-title">Take Oxishell for a spin.</h2>
+          <p>Choose the package for your desktop or install from the command line.</p>
+        </div>
+        <div class="download-grid">
+          <article class="install-card">
+            <h3>Linux</h3>
+            <p>Ubuntu 24.04+ or Debian 13+ · x86-64</p>
+            <a class="button button-primary" href="https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_amd64.deb">Download .deb <span aria-hidden="true">↓</span></a>
+            <p class="install-label">Run from the download folder</p>
+            <div class="command">
+              <code id="linux-command">sudo apt install ./oxishell_amd64.deb</code>
+              <button type="button" data-copy="linux-command" aria-label="Copy Linux install command" hidden>Copy</button>
+            </div>
+            <p class="install-note">Open Oxishell from your app menu. The package installs the desktop app and the <code>oxi</code> CLI. Supports Wayland and X11.</p>
+          </article>
+          <article class="install-card">
+            <h3>macOS</h3>
+            <p>Disk images for Apple silicon and Intel</p>
+            <div class="install-actions">
+              <a class="button button-primary" href="https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_macos_arm64.dmg">Apple silicon <span aria-hidden="true">↓</span></a>
+              <a class="button button-secondary" href="https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_macos_x86_64.dmg">Intel <span aria-hidden="true">↓</span></a>
+            </div>
+            <p class="install-label">Or install with Homebrew</p>
+            <div class="command">
+              <code id="mac-command">brew install --cask Ajinkyasp99/oxishell/oxishell</code>
+              <button type="button" data-copy="mac-command" aria-label="Copy Homebrew install command" hidden>Copy</button>
+            </div>
+            <p class="install-note">If you use a disk image, drag Oxishell into Applications. The app is signed ad hoc. See the <a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md#macos">first-launch instructions</a> if macOS blocks it.</p>
+          </article>
+        </div>
+        <details class="reference-panel">
+          <summary>Update an existing installation</summary>
+          <p>Quit Oxishell before updating. Your settings, workspaces, themes and agent hooks carry over.</p>
+          <ul>
+            <li>For the <strong>Linux .deb</strong>, download the new package and run the same install command.</li>
+            <li>For the <strong>macOS disk image</strong>, download the new image for your Mac and replace Oxishell in Applications.</li>
+            <li>For the <strong>Homebrew cask</strong>, run <code>brew update</code> and then <code>brew upgrade --cask oxishell</code>.</li>
+          </ul>
+          <p>Enable <strong>Settings → Notifications → Check for updates</strong> for release notices. Oxishell leaves installation to you.</p>
+          <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md#update">Full update instructions <span aria-hidden="true">↗</span></a>
+        </details>
+        <div class="download-links">
+          <a class="text-link" href="#quick-start">Set up your workspace <span aria-hidden="true">↑</span></a>
+          <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md">Installation guide <span aria-hidden="true">↗</span></a>
+          <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/releases">All releases <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="resources section" id="docs" aria-labelledby="docs-title">
+      <div class="shell">
+        <div class="section-heading">
+          <h2 id="docs-title">Documentation</h2>
+          <p>Oxishell is built with Rust, GTK and VTE. It runs without an Oxishell account or telemetry. <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell#privacy--security">Read the privacy and security notes <span aria-hidden="true">↗</span></a></p>
+        </div>
+        <ul class="resource-grid">
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md"><strong>Installation</strong><span>Packages, source builds and updates</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/AGENTS.md"><strong>Agent hooks</strong><span>Events, setup and session resume</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/CLI.md"><strong>CLI reference</strong><span>Commands for workspaces, panes and alerts</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/CONFIGURATION.md"><strong>Configuration</strong><span>Appearance, shortcuts and settings</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/TROUBLESHOOTING.md"><strong>Troubleshooting</strong><span>Help with connections, hooks and notifications</span></a></li>
+          <li><a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/RELEASE_NOTES.md"><strong>Release notes</strong><span>New features, fixes and known limits</span></a></li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-content">
+      <a class="brand" href="#top">
+        <img src="./assets/oxishell.svg" width="36" height="36" alt="">
+        <span>oxishell</span>
+      </a>
+      <nav aria-label="Project links">
+        <a href="https://github.com/Ajinkyasp99/oxishell">Source</a>
+        <a href="https://github.com/Ajinkyasp99/oxishell/issues">Issues</a>
+        <a href="https://github.com/Ajinkyasp99/oxishell/blob/main/LICENSE">GPL-3.0-or-later</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

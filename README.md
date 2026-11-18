@@ -42,8 +42,9 @@ input.
 
 | | |
 |---|---|
-| 🗂 **Workspaces** | Vertical sidebar with git branch, uncommitted-change count, working directory, listening ports, agent status and unread badges. Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). Right-click → Colour / Icon to mark a workspace (say, red for production). |
-| ⊞ **Split panes** | Split right or down, nest them, drag dividers (or the point where two meet, to resize both ways at once), move focus with <kbd>Alt</kbd>+arrows. Drag a pane's ✥ move handle (next to its ✕) onto another pane to swap their places. Each pane is an independent shell. |
+| 🗂 **Workspaces** | Vertical sidebar with each workspace's folder and unread badge, plus **one line per AI agent tab** under it: a coloured state dot (running, needs input, done), the agent, what it is working on (or the tab's name), its model and how long ago it last did something. Click a line to show that tab. (Git branch and ports are in each pane's chips and the status bar.) Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). Right-click → Colour / Icon to mark a workspace (say, red for production). |
+| ⊞ **Split panes** | Split right or down, nest them, drag dividers (or the point where two meet, to resize both ways at once), move focus with <kbd>Alt</kbd>+arrows. Drag a pane's ✥ move handle (next to its ✕) onto another pane of the same tab to swap their places. Each pane is an independent shell. |
+| 📑 **Tabs** | Each workspace has its own tab bar, and each tab has its own split layout. Tabs show the agent and its task (or the running program, or the folder), a state dot and an unread dot, and are listed under the workspace in the sidebar. <kbd>+</kbd> or a double-click on the bar opens a tab in the workspace's folder; double-click a tab (or right-click → Rename…) to name it; ✕ or middle-click closes one (asks first if a program runs); drag tabs to reorder them. Background tabs keep running, and tabs come back after a restart. |
 | 🔔 **Agent notifications** | Hooks for **Claude Code, Codex, Gemini CLI, Qoder, OpenCode**. A blue ring on the pane, a badge on the workspace, a system notification with sound (stays on screen while an agent waits for input; click it to jump to the pane), and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> jumps to it. Long shell commands notify when they finish in a pane you are not watching. |
 | 📊 **Agent limits** | Open Codex and Claude Code sessions show **5-hour and weekly** usage percentages, progress bars and local reset dates/times in AM/PM format at the bottom of the sidebar. Uses local CLI data. |
 | 🎨 **Warp themes** | 41 built-in themes from [Warp](https://github.com/warpdotdev/themes), including gradients. They colour the whole window, not just the text. Drop any Warp `.yaml` theme in to add your own. Background opacity lets windows behind show through while text stays solid. |
@@ -162,6 +163,42 @@ scripts/build-deb.sh && sudo apt install --reinstall ./dist/oxishell_*.deb
 `--reinstall` matters here: a local build keeps the version number, and without it apt says
 *already the newest version* and skips the install.
 
+**macOS, installed with Homebrew (app):**
+
+```bash
+oxi --version                          # the version you have now
+brew update
+brew upgrade --cask oxishell           # replaces /Applications/Oxishell.app
+oxi --version                          # the new version
+```
+
+Quit Oxishell (<kbd>⌘</kbd>+<kbd>Q</kbd>) first, or restart it afterwards. The app is not notarized, so if macOS
+refuses to open the new version, allow it in System Settings → Privacy & Security ("Open Anyway") or run
+`xattr -dr com.apple.quarantine /Applications/Oxishell.app`. Homebrew formula (CLI only):
+`brew upgrade oxishell-cli`.
+
+**macOS, installed from the .dmg:** quit Oxishell, download the new image for your Mac and replace the app
+(by hand: open the .dmg and drag **Oxishell** onto Applications → Replace), or from a terminal:
+
+```bash
+curl -fLo ~/Downloads/oxishell.dmg \
+  "https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_macos_$(uname -m).dmg"   # arm64 or x86_64
+hdiutil attach ~/Downloads/oxishell.dmg -nobrowse -mountpoint /Volumes/oxishell-update
+rm -rf /Applications/Oxishell.app
+cp -R /Volumes/oxishell-update/Oxishell.app /Applications/
+hdiutil detach /Volumes/oxishell-update
+xattr -dr com.apple.quarantine /Applications/Oxishell.app
+oxi --version
+```
+
+The `oxi` link in `/usr/local/bin` points into the app, so it uses the new version automatically.
+
+**macOS, built from source:** `git pull`, then `scripts/build-macos.sh` and install `dist/oxishell_*_macos_*.dmg`
+as above (or run `./target/release/oxishell` after `cargo build --release`).
+
+With Settings → Notifications → Check for updates on, oxishell shows "oxishell X is out" on both Linux and
+macOS when a new release appears; use the commands above for your install method.
+
 ## Install on macOS
 
 macOS support is new: please [report](https://github.com/Ajinkyasp99/oxishell/issues) anything that
@@ -178,14 +215,17 @@ notarized by Apple yet, so the first time, right-click it in Applications and ch
 sudo ln -sf /Applications/Oxishell.app/Contents/MacOS/oxi /usr/local/bin/oxi
 ```
 
-**Homebrew** installs the same app into Applications and links the `oxi` CLI:
+**Homebrew** installs the same app into Applications (so it is in Launchpad and Spotlight) and links the
+`oxi` CLI:
 
 ```bash
-brew install --cask Ajinkyasp99/oxishell/oxishell
+brew install Ajinkyasp99/oxishell/oxishell      # same as: brew install --cask Ajinkyasp99/oxishell/oxishell
 ```
 
-`brew install --formula Ajinkyasp99/oxishell/oxishell` instead builds only the `oxishell` and `oxi`
-binaries from source; they do not show up in Applications or Launchpad.
+`brew install Ajinkyasp99/oxishell/oxishell-cli` instead builds only the `oxishell` and `oxi` binaries
+from source; they do not show up in Applications or Launchpad. If you installed 0.3.0 with
+`brew install Ajinkyasp99/oxishell/oxishell` and have no app, switch:
+`brew uninstall --formula oxishell && brew install --cask Ajinkyasp99/oxishell/oxishell`.
 
 On macOS, shortcuts use <kbd>⌘</kbd> (see [Keyboard shortcuts](#keyboard-shortcuts)), panes start your
 login shell, and notifications appear in Notification Center.
@@ -283,7 +323,9 @@ See [docs/THEMES.md](docs/THEMES.md).
 | New / close / rename workspace | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> / <kbd>Q</kbd> / <kbd>R</kbd> |
 | Next / previous workspace | <kbd>Ctrl</kbd>+<kbd>PgDn</kbd> / <kbd>Ctrl</kbd>+<kbd>PgUp</kbd>, or <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> |
 | Split right / down | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> / <kbd>O</kbd> |
-| Close pane | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
+| New tab | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
+| Close pane (a tab's last pane closes the tab) | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
+| Next / previous tab | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> |
 | Move focus | <kbd>Alt</kbd>+<kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> |
 | Command palette | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
 | Docker Compose files | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> |

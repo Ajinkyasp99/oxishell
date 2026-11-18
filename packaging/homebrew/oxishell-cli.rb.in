@@ -1,10 +1,15 @@
-# Homebrew formula template. The release workflow fills in @VERSION@ and
-# @SHA256@ and pushes the result to the tap repository
-# (Ajinkyasp99/homebrew-oxishell, as Formula/oxishell.rb).
-# Install: brew install --formula Ajinkyasp99/oxishell/oxishell
-# (CLI binaries only; the app comes from the cask, oxishell-cask.rb.in.)
-class Oxishell < Formula
-  desc "Terminal workspace manager for AI coding agents"
+# Homebrew formula template for the command-line build. The release workflow
+# fills in @VERSION@ and @SHA256@ and pushes the result to the tap repository
+# (Ajinkyasp99/homebrew-oxishell, as Formula/oxishell-cli.rb).
+#
+# It is named oxishell-cli, not oxishell, on purpose: with a formula and a cask
+# of the same name, `brew install Ajinkyasp99/oxishell/oxishell` picks the
+# formula, which cannot put an app in /Applications. Without a formula of that
+# name, the plain command installs the cask (oxishell-cask.rb.in), so Oxishell
+# shows up in Applications, Launchpad and Spotlight.
+# Install: brew install Ajinkyasp99/oxishell/oxishell-cli
+class OxishellCli < Formula
+  desc "Terminal workspace manager for AI coding agents (command-line build)"
   homepage "https://github.com/Ajinkyasp99/oxishell"
   url "https://github.com/Ajinkyasp99/oxishell/archive/refs/tags/v@VERSION@.tar.gz"
   sha256 "@SHA256@"
@@ -28,8 +33,8 @@ class Oxishell < Formula
       Start it with `oxishell` (the `oxi` CLI is installed too).
       This formula installs command-line binaries only, so Oxishell does not
       appear in /Applications or Launchpad. For the app, use the cask instead:
-        brew uninstall --formula oxishell
-        brew install --cask Ajinkyasp99/oxishell/oxishell
+        brew uninstall --formula oxishell-cli
+        brew install Ajinkyasp99/oxishell/oxishell
     EOS
   end
 
