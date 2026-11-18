@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.3.0 — 2026-11-18
 
 - **macOS support** (new, please report issues): a self-contained `Oxishell.app` for Apple silicon and Intel
   as a `.dmg`, and a Homebrew formula (`brew install Ajinkyasp99/oxishell/oxishell`). Shortcuts use ⌘

@@ -58,6 +58,11 @@
     <category>TerminalEmulator</category>
   </categories>
   <releases>
+    <release version="0.3.0" date="2026-11-18">
+      <description>
+        <p>macOS support: .dmg for Apple silicon and Intel, Homebrew, Cmd shortcuts</p>
+      </description>
+    </release>
     <release version="0.2.1" date="2026-11-15">
       <description>
         <p>The Compose stack bar shows only the chosen file's services, with coloured service chips and bar buttons.</p>
