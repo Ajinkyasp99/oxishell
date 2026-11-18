@@ -1,7 +1,8 @@
 # Homebrew formula template. The release workflow fills in @VERSION@ and
 # @SHA256@ and pushes the result to the tap repository
 # (Ajinkyasp99/homebrew-oxishell, as Formula/oxishell.rb).
-# Install: brew install Ajinkyasp99/oxishell/oxishell
+# Install: brew install --formula Ajinkyasp99/oxishell/oxishell
+# (CLI binaries only; the app comes from the cask, oxishell-cask.rb.in.)
 class Oxishell < Formula
   desc "Terminal workspace manager for AI coding agents"
   homepage "https://github.com/Ajinkyasp99/oxishell"
@@ -25,7 +26,10 @@ class Oxishell < Formula
   def caveats
     <<~EOS
       Start it with `oxishell` (the `oxi` CLI is installed too).
-      A double-clickable app is attached to each GitHub release as a .dmg.
+      This formula installs command-line binaries only, so Oxishell does not
+      appear in /Applications or Launchpad. For the app, use the cask instead:
+        brew uninstall --formula oxishell
+        brew install --cask Ajinkyasp99/oxishell/oxishell
     EOS
   end
 

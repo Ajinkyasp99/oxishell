@@ -42,7 +42,13 @@ first time, right-click it and choose **Open**, or run
 `xattr -dr com.apple.quarantine /Applications/Oxishell.app`. For the CLI:
 `sudo ln -sf /Applications/Oxishell.app/Contents/MacOS/oxi /usr/local/bin/oxi`.
 
-**Homebrew** (builds from source): `brew install Ajinkyasp99/oxishell/oxishell`.
+**Homebrew app:** `brew install --cask Ajinkyasp99/oxishell/oxishell` installs the same app into
+Applications and links `oxi` into Homebrew's `bin`. The not-notarized note above applies.
+
+**Homebrew formula** (command line only, builds from source):
+`brew install --formula Ajinkyasp99/oxishell/oxishell`. It installs the `oxishell` and `oxi` binaries,
+not an app, so nothing appears in Applications or Launchpad; start it with `oxishell` from a terminal.
+To switch to the app: `brew uninstall --formula oxishell`, then install the cask.
 
 **From source:**
 
@@ -97,7 +103,7 @@ A local build keeps its version number, so `--reinstall` is needed or apt skips 
    ```
 
 On macOS: remove the hooks as in step 1, then delete `/Applications/Oxishell.app` (or
-`brew uninstall oxishell`) and, optionally, the two folders from step 3.
+`brew uninstall --cask oxishell` / `brew uninstall --formula oxishell`) and, optionally, the two folders from step 3.
 
 The package installs only: `/usr/bin/oxishell`, `/usr/bin/oxi`, the desktop entry, icon, AppStream
 metadata and docs under `/usr/share/doc/oxishell`.

@@ -136,7 +136,7 @@ jobs:
           | macOS, Intel | \`oxishell_macos_x86_64.dmg\` |
 
           The macOS app is not notarized yet: on first launch, right-click Oxishell > Open.
-          Homebrew: \`brew install Ajinkyasp99/oxishell/oxishell\`. Checksums: \`SHA256SUMS\`.
+          Homebrew: \`brew install --cask Ajinkyasp99/oxishell/oxishell\` (the app). Checksums: \`SHA256SUMS\`.
           EOF
       - name: Publish release
         env:
@@ -155,25 +155,37 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Update the tap formula
+      - name: Update the tap formula and cask
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           if [[ -z $TAP_TOKEN ]]; then
-            echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew formula update."
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew formula and cask update."
             exit 0
           fi
           SHA=$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${VERSION}.tar.gz" | sha256sum | cut -d' ' -f1)
+          # The cask installs the published .dmg files; take their checksums from the release.
+          SUMS=$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/SHA256SUMS")
+          dmg_sha() {
+            local s
+            s=$(awk -v f="oxishell_${VERSION}_macos_$1.dmg" '$2 == f {print $1}' <<<"$SUMS")
+            [[ $s =~ ^[0-9a-f]{64}$ ]] || { echo "::error::no checksum for the $1 .dmg in SHA256SUMS" >&2; return 1; }
+            echo "$s"
+          }
+          SHA_ARM64=$(dmg_sha arm64)
+          SHA_X86_64=$(dmg_sha x86_64)
           git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/Ajinkyasp99/homebrew-oxishell.git" tap
-          mkdir -p tap/Formula
+          mkdir -p tap/Formula tap/Casks
           sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA256@/$SHA/g" packaging/homebrew/oxishell.rb.in > tap/Formula/oxishell.rb
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA256_ARM64@/$SHA_ARM64/g" -e "s/@SHA256_X86_64@/$SHA_X86_64/g" \
+            packaging/homebrew/oxishell-cask.rb.in > tap/Casks/oxishell.rb
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/oxishell.rb
+          git add Formula/oxishell.rb Casks/oxishell.rb
           if git diff --cached --quiet; then
-            echo "Formula already at $VERSION"
+            echo "Formula and cask already at $VERSION"
             exit 0
           fi
           git commit -m "oxishell $VERSION"
