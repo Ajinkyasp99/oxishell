@@ -1,5 +1,18 @@
 # Release notes
 
+## 0.4.0 — 2026-11-19
+
+- **Command history no longer misses commands:** oxishell used to rebuild each command from the keys you
+  pressed, and gave up on any line built with Tab completion, the arrow keys (including ↑ recall), Ctrl+R,
+  Ctrl+A/E/W or a paste, so those commands never reached the history popup or the inline suggestions. The
+  shell itself now reports every command it runs (bash, zsh, and fish with the `oxi shell-integration fish`
+  line), so history is exact whatever keys built the line, and commands from one pane show up in the other
+  panes straight away. Lines the shell does not keep (a leading space with `HISTCONTROL=ignorespace`, empty
+  Enter) are not added, and multi-line commands are still left out. Shells without the integration (a
+  `PROMPT_COMMAND` your own config replaces, other shells) keep the old key-following behaviour.
+  Checked on Linux (bash and zsh by tests, the GUI suites, and by hand); the fish hook is untested, and
+  macOS is only compile-checked by CI, not yet tried on a Mac.
+
 ## 0.3.1 — 2026-11-19
 
 - **Lighter in the background:** listening ports and git status are checked less often while nothing
