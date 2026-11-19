@@ -123,6 +123,7 @@ if [[ -n "$OXISHELL_ENV_FILE" ]]; then
     builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV:t}" "$CONDA_DEFAULT_ENV" "$s" >| "$OXISHELL_ENV_FILE" 2>/dev/null
     [[ "$OXISHELL_COMPACT_PROMPT" == 1 ]] && PROMPT='%(?.%F{green}.%F{red})%B❯%b%f ' && RPROMPT=''
     [[ "$OXISHELL_COMPACT_PROMPT" == 1 && "$OXISHELL_BLOCKS" == 1 ]] && PROMPT=$'\n'"$PROMPT"
+    return 0
   }
   autoload -Uz add-zsh-hook && add-zsh-hook precmd _oxishell_precmd && add-zsh-hook preexec _oxishell_preexec
   # Typed command in bold cyan (zsh draws the input line itself).
@@ -307,6 +308,9 @@ mod tests {
             .env("HOME", &home)
             .env("ZDOTDIR", &ours)
             .env_remove("OXISHELL_ORIG_ZDOTDIR")
+            .env_remove("OXISHELL_COMPACT_PROMPT")
+            .env_remove("OXISHELL_BLOCKS")
+            .env_remove("OXISHELL_HIGHLIGHT_CMD")
             .env("OXISHELL_ENV_FILE", &file)
             .env("VIRTUAL_ENV", "/x/venv")
             .output()
@@ -324,6 +328,9 @@ mod tests {
             .env("HOME", &home)
             .env("ZDOTDIR", &ours)
             .env_remove("OXISHELL_ORIG_ZDOTDIR")
+            .env_remove("OXISHELL_COMPACT_PROMPT")
+            .env_remove("OXISHELL_BLOCKS")
+            .env_remove("OXISHELL_HIGHLIGHT_CMD")
             .env("OXISHELL_ENV_FILE", &file)
             .status()
             .unwrap()
@@ -502,6 +509,9 @@ mod tests {
             .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
             .env("HISTFILE", dir.join("old_history"))
             .env("HISTCONTROL", "ignorespace")
+            .env_remove("OXISHELL_COMPACT_PROMPT")
+            .env_remove("OXISHELL_BLOCKS")
+            .env_remove("OXISHELL_HIGHLIGHT_CMD")
             .env("OXISHELL_ENV_FILE", dir.join("p.env"))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
