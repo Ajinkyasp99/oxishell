@@ -9,6 +9,7 @@ pub mod editor;
 pub mod history;
 pub mod ipc;
 pub mod meta;
+pub mod meta_schedule;
 pub mod model;
 pub mod notify;
 pub mod paths;

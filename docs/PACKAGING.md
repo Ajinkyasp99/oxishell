@@ -16,13 +16,23 @@
 ## macOS app and disk image (implemented)
 
 `scripts/build-macos.sh` builds `dist/Oxishell.app` and `dist/oxishell_<version>_macos_<arch>.dmg` on a
-Mac with Homebrew:
+Mac with Homebrew (GTK 4, libadwaita, librsvg, `dylibbundler`, `meson`, `ninja`):
 - The version comes from Cargo.toml into `Info.plist` (template `data/macos/Info.plist.in`), like the .deb.
 - `dylibbundler` copies every non-system library (GTK 4, libadwaita, VTE, GLib, Pango, …) into
   `Contents/Frameworks` and rewrites load paths; the script fails if anything still points into Homebrew.
 - `Contents/Resources` holds the GTK runtime data: compiled GSettings schemas, the Adwaita and hicolor
   icon themes, gdk-pixbuf loaders (librsvg for SVG icons) with a cache template whose paths are filled
   in at startup (`platform::macos::setup_bundle_env`), and the fontconfig configuration.
+- **VTE without ICU:** by default (`VTE_SOURCE=1`) the script builds VTE 0.84.1 from source (GTK 4 only, no
+  ICU, which Homebrew's `vte3` links and which adds about 30 MiB of libraries to the bundle) into
+  `target/vte-noicu/<version>-<arch>` and reuses it on later runs; CI caches that directory. It needs Xcode
+  16.3 or newer (Apple clang 1700+), `meson` and `ninja`. `VTE_SOURCE=0` bundles Homebrew's `vte3` instead.
+  The script fails if any `libicu*` ends up in the bundle with `VTE_SOURCE=1`. Without ICU VTE cannot
+  convert legacy (non-UTF-8) charsets; UTF-8 is unaffected.
+- **Size trimming:** `oxi` is linked with `-dead_strip_dylibs` (`build.rs`, macOS only) so it does not load
+  GTK, libadwaita or VTE, and the script checks that; the unused Adwaita cursor theme is removed from
+  `Contents/Resources`. The script prints `size:` lines (removed cursors, the app, `Frameworks`, the DMG, ICU
+  avoided). The DMG size against 0.3.0 (38.95 MiB, arm64) is not yet measured.
 - Signed ad hoc (required on Apple silicon). Developer ID signing and notarization are sketched in the
   script for when an Apple Developer account exists.
 - Homebrew's libraries target the macOS release they were built on, so `LSMinimumSystemVersion` is the

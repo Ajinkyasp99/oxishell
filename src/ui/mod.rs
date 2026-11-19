@@ -40,7 +40,7 @@ use gtk4::{gdk, gio, glib, Orientation};
 use libadwaita as adw;
 use pane::Pane;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use vte4::prelude::*;
@@ -68,6 +68,10 @@ pub struct App {
     /// Tab bar of each workspace, rebuilt with its layout.
     tab_bars: RefCell<HashMap<WorkspaceId, tabs::TabBar>>,
     pub usage_footer: usage_footer::Footer,
+    /// CPU / memory strip in the status bar; paused while the window is hidden.
+    system_status: system_status::SystemStatus,
+    /// The main window is minimized or suspended (see `window_hidden`).
+    hidden: Cell<bool>,
     pub split: gtk4::Paned,
     pub status: gtk4::Label,
     pub toasts: adw::ToastOverlay,
@@ -106,6 +110,14 @@ pub fn primary_mask() -> gdk::ModifierType {
     } else {
         gdk::ModifierType::CONTROL_MASK
     }
+}
+
+/// The window is suspended (GTK >= 4.12) or its toplevel surface is minimized.
+fn window_hidden(w: &gtk4::Window) -> bool {
+    w.is_suspended()
+        || w.surface()
+            .and_then(|s| s.downcast::<gdk::Toplevel>().ok())
+            .is_some_and(|t| t.state().contains(gdk::ToplevelState::MINIMIZED))
 }
 
 /// Below this window width the sidebar is hidden automatically.
@@ -284,7 +296,7 @@ impl App {
         let status_bar = gtk4::Box::new(Orientation::Horizontal, 12);
         status_bar.add_css_class("statusbar");
         status_bar.append(&status);
-        status_bar.append(&system_status);
+        status_bar.append(&system_status.root);
 
         let root = gtk4::Box::new(Orientation::Vertical, 0);
         root.add_css_class("oxishell-root");
@@ -324,6 +336,8 @@ impl App {
             sidebar_rows: RefCell::new(HashMap::new()),
             tab_bars: RefCell::new(HashMap::new()),
             usage_footer,
+            system_status,
+            hidden: Cell::new(false),
             split,
             status,
             toasts,
@@ -446,6 +460,29 @@ impl App {
             });
         }
         {
+            // Hidden-window mode: minimized (toplevel state) or suspended (GTK >= 4.12).
+            // macOS: whether GDK's macOS backend reports either signal for a window
+            // minimized to the Dock is unverified; if neither fires, this is inert there.
+            let w = Rc::downgrade(&app);
+            app.window.connect_suspended_notify(move |win| {
+                if let Some(a) = w.upgrade() {
+                    a.set_hidden(window_hidden(win.upcast_ref()));
+                }
+            });
+            let w = Rc::downgrade(&app);
+            app.window.connect_realize(move |win| {
+                let Some(toplevel) = win.surface().and_then(|s| s.downcast::<gdk::Toplevel>().ok()) else {
+                    return;
+                };
+                let (w, win) = (w.clone(), win.downgrade());
+                toplevel.connect_state_notify(move |_| {
+                    if let (Some(a), Some(win)) = (w.upgrade(), win.upgrade()) {
+                        a.set_hidden(window_hidden(win.upcast_ref()));
+                    }
+                });
+            });
+        }
+        {
             let w = Rc::downgrade(&app);
             app.window.connect_is_active_notify(move |win| {
                 if win.is_active() {
@@ -533,7 +570,8 @@ impl App {
             self.focus_pane(p);
         }
         self.refresh();
-        self.request_meta(true);
+        // Forced ports: the sidebar is fresh when the user looks at it.
+        self.request_meta(true, true);
     }
 
     pub fn rename_workspace(self: &Rc<Self>, wid: WorkspaceId, name: &str) -> Result<(), String> {
@@ -989,7 +1027,7 @@ impl App {
         self.mark_read(pane);
         if changed {
             self.refresh();
-            self.request_meta(true);
+            self.request_meta(true, false);
         }
     }
 
@@ -1573,6 +1611,8 @@ impl App {
             let n = &i.config.notifications;
             (n.command_finished, n.command_min_seconds)
         };
+        // Git status (and ports) right away, not on the next tick.
+        self.request_pane_meta(pane);
         if !enabled
             || cmd.is_empty()
             || took < std::time::Duration::from_secs(min)
@@ -1914,8 +1954,9 @@ impl App {
 
     // ---- metadata -----------------------------------------------------------
 
-    /// Ask the worker for fresh metadata. `active_only` limits it to the visible workspace.
-    pub fn request_meta(&self, active_only: bool) {
+    /// Ask the worker for fresh metadata. `active_only` limits it to the visible
+    /// workspace; `force_ports` checks their ports now instead of when due.
+    pub fn request_meta(&self, active_only: bool, force_ports: bool) {
         let jobs: Vec<(PaneId, bool)> = {
             let i = self.inner.borrow();
             let active = i.state.active;
@@ -1928,9 +1969,61 @@ impl App {
                 .collect()
         };
         for (pid, ports) in jobs {
-            if let Some(job) = self.meta_job(pid, ports) {
+            if let Some(mut job) = self.meta_job(pid, ports) {
+                job.force_ports = force_ports;
                 let _ = self.meta_tx.send(job);
             }
+        }
+    }
+
+    /// The main window is minimized or suspended.
+    pub fn is_hidden(&self) -> bool {
+        self.hidden.get()
+    }
+
+    /// Enter or leave hidden-window mode: the status strip pauses, and the 3 s
+    /// tick only refreshes running Compose stacks (see `request_hidden_meta`).
+    /// Becoming visible refreshes the visible workspace at once, ports included.
+    pub fn set_hidden(self: &Rc<Self>, hidden: bool) {
+        if self.hidden.replace(hidden) == hidden {
+            return;
+        }
+        self.system_status.set_hidden(hidden);
+        if !hidden {
+            self.request_meta(true, true);
+        }
+    }
+
+    /// The 3 s tick while hidden: only panes of the visible workspace that run a
+    /// Compose stack, for its state and crash notifications (no ports, no git).
+    pub fn request_hidden_meta(&self) {
+        let pids = {
+            let i = self.inner.borrow();
+            let with_stack: HashSet<PaneId> = i
+                .panes
+                .iter()
+                .filter(|(_, p)| p.compose.stack.is_some())
+                .map(|(&id, _)| id)
+                .collect();
+            meta_worker::hidden_jobs(&i.state, &with_stack)
+        };
+        for pid in pids {
+            if let Some(mut job) = self.meta_job(pid, false) {
+                job.compose_only = true;
+                let _ = self.meta_tx.send(job);
+            }
+        }
+    }
+
+    /// Ask the worker for fresh metadata of one pane (ports when it is in the
+    /// visible workspace, as on the 3 s pass).
+    pub fn request_pane_meta(&self, pane: PaneId) {
+        let ports = {
+            let i = self.inner.borrow();
+            i.state.active.is_some() && i.state.workspace_of(pane) == i.state.active
+        };
+        if let Some(job) = self.meta_job(pane, ports) {
+            let _ = self.meta_tx.send(job);
         }
     }
 
@@ -1947,6 +2040,8 @@ impl App {
             shell_pid: child,
             pty_fd: p.pty_fd(),
             ports,
+            force_ports: false,
+            compose_only: false,
             env_file: crate::shellint::env_file(pid),
             compose_cmd: compose.enabled.then(|| compose.command.clone()),
             rescan,

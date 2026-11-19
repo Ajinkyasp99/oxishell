@@ -61,8 +61,12 @@ cargo build --release
 ./target/release/oxishell
 ```
 
-To build the app and disk image yourself: `brew install dylibbundler`, then `scripts/build-macos.sh`
-(writes `dist/Oxishell.app` and `dist/oxishell_<version>_macos_<arch>.dmg`).
+To build the app and disk image yourself: `brew install dylibbundler meson ninja`, then
+`scripts/build-macos.sh` (writes `dist/Oxishell.app` and `dist/oxishell_<version>_macos_<arch>.dmg`). By
+default the script builds VTE 0.84.1 from source without ICU, which needs Xcode 16.3 or newer (Apple clang
+1700+) and takes a few minutes the first time (the result is cached under `target/vte-noicu`). If your
+Xcode is older, run `VTE_SOURCE=0 scripts/build-macos.sh` to bundle Homebrew's `vte3` instead (a larger
+app, as VTE then pulls in ICU).
 
 Settings live in `~/.config/oxishell` and `~/.local/state/oxishell` as on Linux; the control socket is in
 your private `$TMPDIR`. Started from Finder or the Dock, oxishell takes the `PATH` your login shell sets

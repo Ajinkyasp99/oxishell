@@ -414,7 +414,8 @@ impl App {
         actions.set_valign(gtk4::Align::Start);
         actions.append(&handle);
         actions.append(&close_btn);
-        // Compose launcher: button before the drag handle, bars under the terminal.
+        // Compose launcher: button before the drag handle; under the terminal, the
+        // clips its bars go into once a stack or `logs` first shows in this pane.
         let compose = super::compose_ui::PaneCompose::new(self, id, &actions);
         super::compose_ui::watch_input(self, id, &term);
         body.append(&compose.logs_clip);
@@ -645,7 +646,7 @@ impl App {
                             glib::ControlFlow::Continue
                         });
                         if let Some(a) = w.upgrade() {
-                            a.request_meta(true);
+                            a.request_meta(true, false);
                         }
                     }
                     Err(e) => {

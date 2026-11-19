@@ -39,11 +39,58 @@ Reading the table:
 
 ## Metadata refresh policy
 
-- Every 3 s: cwd/foreground process for panes of the visible workspace (`/proc` reads, worker thread).
-- Every 15 s: all panes, including listening ports for background workspaces.
-- `git status` only when a pane's directory changed or the cached result is older than 5 s, with
-  `GIT_OPTIONAL_LOCKS=0` so it never contends with your own git commands.
-- Nothing runs on the GTK thread; jobs for the same pane are coalesced.
+Nothing here runs on the GTK thread; jobs for the same pane are coalesced, and each batch reads the
+process table once and looks up listening ports for all its panes in one call (`/proc` on Linux, one
+`lsof` on macOS).
+
+- **Tick:** every 3 s for panes of the visible workspace (cwd, foreground process); every 15 s for all panes.
+- **Listening ports:** checked per pane every 9 s, then 18 s, then 30 s (the cap) while the result stays
+  the same. A change of the pane's process tree is checked immediately, with two follow-up checks about
+  3 s and 6 s later; after a process starts or exits, ports are checked at once and on the next two ticks, and the back-off then restarts at 9 s. Switching workspace forces a check.
+- **Git status:** cached per directory with a TTL of 5 s, then 10, 20 and 30 s (the cap) while the result
+  is unchanged. The TTL resets when the shell reports its prompt (the shell-integration env file's mtime
+  changes, in any pane, which also caps every cached directory's TTL at 5 s), and a finished command sends an immediate refresh. Panes without shell integration keep a
+  fixed 5 s TTL. `git` runs with `GIT_OPTIONAL_LOCKS=0` so it never contends with your own git commands.
+- **Docker Compose:** command detection is cached 10 min, the repo root 5 min, and the compose-file scan
+  30 s, doubling to 5 min while unchanged. An automatic scan whose root is exactly your home directory or
+  `/` looks one level deep only, until you rescan from the launcher (it then stays deep). The `ps` of a
+  running stack is unchanged.
+- **Hidden window** (minimized or suspended): the CPU/RAM strip pauses, the 3 s visible-workspace tick only
+  serves panes with a running Compose stack, and the 15 s full pass continues. On restore it samples
+  once and refreshes everything. Verified on Linux only; macOS behaviour is unverified.
+
+## Changes in this round (2026-11-19) and their numbers
+
+Measured on Linux (same host as the baseline in `docs/superpowers/plans/2026-11-18-baseline-bench.txt`,
+Xvfb, one run each, so small differences are noise). Nothing in this section was measured on macOS.
+
+| Metric | Baseline (2026-11-18) | Now (2026-11-19) |
+|---|---|---|
+| Startup to control socket, median of 5 | 251 ms | 231 ms |
+| Idle CPU, 1 pane | 1.60 % | 1.30 % |
+| Idle CPU, 10 panes | 1.60 % | 1.20 % |
+| Idle CPU, 20 panes | 1.70 % | 1.70 % |
+| App RSS (private anon), 1 pane | 253 MB (112 MB) | 251 MB (111 MB) |
+| App RSS (private anon), 10 panes | 263 MB (121 MB) | 259 MB (118 MB) |
+| App RSS (private anon), 20 panes | 272 MB (130 MB) | 265 MB (124 MB) |
+| `seq 1 1000000` in a visible pane | 627 ms | 646 ms |
+| `oxi ping` round trip | 3.4 ms | 3.3 ms |
+| Child processes started per minute, 1 idle pane in a git repo | 14 (git 11, docker 3) | 3 (git 3) |
+| Child processes started per minute, 4 idle panes in a git repo | 31 (git 25, docker 6) | 3 (git 3) |
+
+Idle CPU, startup and RSS differences are within run-to-run noise on this host; the clear gain is the
+number of helper processes, which dropped by 79 % and 90 %.
+
+- **Child processes** are the helper programs the app starts while idle in a git repo (git, docker
+  compose probes), counted over 60 s with `strace -f` on `execve`.
+- **History import** (`src/history.rs`) is now linear in the number of entries: 20,000 entries went from
+  about 400 ms to about 16 ms (measured with the unit test `import_is_fast`, release build,
+  20,000 unique entries, on this machine).
+- **Compose stack and logs bars** are built the first time a stack or logs view shows, not for every pane:
+  about 0.1 MB less private memory per pane, which is near the measurement noise.
+- **macOS package size:** `oxi` is linked with `-dead_strip_dylibs`, the unused cursor theme is dropped
+  from the bundle, and VTE is built from source without ICU. `scripts/build-macos.sh` prints `size:` lines;
+  the resulting DMG size is not yet measured (needs a Mac or the CI `macos` job).
 
 ## Not measured
 

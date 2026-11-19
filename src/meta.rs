@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Command;
 
 #[cfg(target_os = "macos")]
-pub use crate::platform::macos::{cmdline, comm, cwd_of, listening_ports, ppid_table};
+pub use crate::platform::macos::{cmdline, comm, cwd_of, listening_ports_by_pid, ppid_table};
 
 #[cfg(not(target_os = "macos"))]
 pub fn cwd_of(pid: i32) -> Option<std::path::PathBuf> {
@@ -150,35 +150,43 @@ pub fn parse_proc_net_tcp(text: &str) -> HashMap<u64, u16> {
     map
 }
 
-/// TCP ports in LISTEN state owned by any of `pids` (only our own processes are readable).
+/// TCP ports in LISTEN state per owning pid (only our own processes are
+/// readable). `/proc/net/tcp{,6}` is read once for all pids.
 #[cfg(not(target_os = "macos"))]
-pub fn listening_ports(pids: &[i32]) -> Vec<u16> {
+pub fn listening_ports_by_pid(pids: &[i32]) -> HashMap<i32, Vec<u16>> {
+    let mut out = HashMap::new();
     let inodes = listening_inodes();
     if inodes.is_empty() {
-        return vec![];
+        return out;
     }
-    let mut ports = std::collections::HashSet::new();
-    for pid in pids {
+    for &pid in pids {
         let Ok(rd) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
             continue;
         };
-        for e in rd.flatten() {
-            if let Ok(link) = std::fs::read_link(e.path()) {
+        let mut ports: Vec<u16> = rd
+            .flatten()
+            .filter_map(|e| std::fs::read_link(e.path()).ok())
+            .filter_map(|link| {
                 let l = link.to_string_lossy();
-                if let Some(ino) = l
-                    .strip_prefix("socket:[")
-                    .and_then(|s| s.strip_suffix(']'))
-                    .and_then(|s| s.parse::<u64>().ok())
-                {
-                    if let Some(p) = inodes.get(&ino) {
-                        ports.insert(*p);
-                    }
-                }
-            }
+                let ino = l.strip_prefix("socket:[")?.strip_suffix(']')?.parse::<u64>().ok()?;
+                inodes.get(&ino).copied()
+            })
+            .collect();
+        if !ports.is_empty() {
+            ports.sort_unstable();
+            ports.dedup();
+            out.insert(pid, ports);
         }
     }
-    let mut v: Vec<u16> = ports.into_iter().collect();
+    out
+}
+
+/// TCP ports in LISTEN state owned by any of `pids`: the sorted, deduplicated
+/// union of [`listening_ports_by_pid`].
+pub fn listening_ports(pids: &[i32]) -> Vec<u16> {
+    let mut v: Vec<u16> = listening_ports_by_pid(pids).into_values().flatten().collect();
     v.sort_unstable();
+    v.dedup();
     v
 }
 
@@ -299,6 +307,16 @@ mod tests {
         let port = l.local_addr().unwrap().port();
         let me = std::process::id() as i32;
         assert!(listening_ports(&[me]).contains(&port));
+    }
+
+    #[test]
+    fn listening_ports_by_pid_attributes_to_owner() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let me = std::process::id() as i32;
+        let m = listening_ports_by_pid(&[me, 1]);
+        assert!(m.get(&me).is_some_and(|v| v.contains(&port)));
+        assert!(m.get(&1).is_none_or(|v| !v.contains(&port)));
     }
 
     #[test]

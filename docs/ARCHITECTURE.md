@@ -46,8 +46,10 @@
   `RefCell` is borrowed.
 - **Process lifecycle:** close = SIGHUP to the process group, SIGKILL after 3 s if still alive; a shell
   that exits removes its pane; SIGTERM/SIGINT/SIGHUP to the app save the session first.
-- **Metadata off the main thread:** one worker thread, jobs coalesced per pane, one `/proc` scan per
-  batch, git results cached 5 s per directory.
+- **Metadata off the main thread:** one worker thread, jobs coalesced per pane, one process-table read
+  and one batched listening-ports lookup per batch (`/proc` on Linux, `lsof` on macOS). Per-pane back-off
+  schedules (`src/meta_schedule.rs`) slow ports and git checks while nothing changes; Compose scans are
+  cached. Details in PERFORMANCE.md.
 - **Security:** socket and state files are owner-only; IPC methods are allow-listed and typed; text
   injection is opt-in; notification and scrollback text is sanitized; restore never executes commands;
   agent session ids are validated before being placed in a resume command, which is typed but not run.

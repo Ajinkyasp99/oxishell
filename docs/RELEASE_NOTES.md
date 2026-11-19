@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Lighter in the background:** listening ports and git status are checked less often while nothing
+  changes (ports every 9 s, backing off to 30 s; git every 5 s, backing off to 30 s), and a change in the
+  pane (a command starting or finishing, a new prompt, switching workspace) is picked up on the next 3 s tick, plus two quick follow-ups. Docker
+  Compose detection and file scans are cached. While the window is minimized the CPU/RAM readout pauses and
+  the 3 s tick only serves panes running a Compose stack, while the 15 s pass keeps running for all panes. A window the compositor marks as suspended (for example on another virtual desktop on some systems) counts as hidden too, not only a minimized one. On Linux an idle repo pane starts about 3 helper
+  processes a minute instead of 14 (3 instead of 31 with four panes).
+- **Faster history import** (20,000 entries: about 16 ms instead of 400 ms) and slightly less memory per pane.
+- **Smaller macOS app:** the disk image drops the unused cursor theme and ICU (VTE is now built without it).
+  The new size and UTF-8 text, cursors and minimize behaviour on macOS are not yet checked on a Mac.
 - **Homebrew installs the app:** `brew install Ajinkyasp99/oxishell/oxishell` now installs the cask, i.e.
   `Oxishell.app` in Applications (Launchpad, Spotlight) with `oxi` linked. In 0.3.0 that command picked the
   same-named formula, which only builds command-line binaries, so no app appeared. The CLI-only formula is

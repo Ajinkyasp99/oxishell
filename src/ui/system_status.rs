@@ -3,7 +3,7 @@
 use crate::sysstat::{Sample, Sampler};
 use gtk4::prelude::*;
 use gtk4::{cairo, glib, Orientation};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -19,19 +19,64 @@ struct Strip {
     history: Rc<RefCell<VecDeque<Option<f64>>>>,
 }
 
-pub(super) fn new() -> gtk4::Box {
+/// The status-bar strip. While the window is hidden (minimized or suspended)
+/// its timer neither samples nor redraws; see [`SystemStatus::set_hidden`].
+pub(super) struct SystemStatus {
+    pub root: gtk4::Box,
+    shared: Rc<Shared>,
+}
+
+struct Shared {
+    strip: Strip,
+    sampler: RefCell<Sampler>,
+    hidden: Cell<bool>,
+}
+
+impl Shared {
+    fn sample(&self) {
+        let sample = self.sampler.borrow_mut().sample_values();
+        self.strip.update(sample);
+    }
+
+    /// One timer tick: a fresh sample, or while hidden only a gap in the CPU
+    /// history (no sampling, no redraw).
+    fn tick(&self) {
+        if self.hidden.get() {
+            self.strip.push_cpu(None);
+        } else {
+            self.sample();
+        }
+    }
+}
+
+pub(super) fn new() -> SystemStatus {
     let (root, strip) = Strip::new();
-    let mut sampler = Sampler::default();
-    strip.update(sampler.sample_values());
+    let shared = Rc::new(Shared {
+        strip,
+        sampler: RefCell::new(Sampler::default()),
+        hidden: Cell::new(false),
+    });
+    shared.sample();
     let weak = root.downgrade();
+    let timer = shared.clone();
     glib::timeout_add_seconds_local(INTERVAL, move || {
         let Some(_root) = weak.upgrade() else {
             return glib::ControlFlow::Break;
         };
-        strip.update(sampler.sample_values());
+        timer.tick();
         glib::ControlFlow::Continue
     });
-    root
+    SystemStatus { root, shared }
+}
+
+impl SystemStatus {
+    /// Pause (`true`) or resume (`false`) sampling. Resuming samples and
+    /// redraws at once instead of waiting for the next tick.
+    pub fn set_hidden(&self, hidden: bool) {
+        if self.shared.hidden.replace(hidden) && !hidden {
+            self.shared.sample();
+        }
+    }
 }
 
 impl Strip {
@@ -86,16 +131,19 @@ impl Strip {
         )
     }
 
+    /// Append one CPU reading (`None` is a gap) without redrawing.
+    fn push_cpu(&self, cpu: Option<f64>) {
+        let mut history = self.history.borrow_mut();
+        if history.len() == HISTORY_LEN {
+            history.pop_front();
+        }
+        history.push_back(cpu);
+    }
+
     fn update(&self, sample: Sample) {
         let cpu = sample.cpu.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 100.0));
         self.cpu.set_label(&cpu.map_or_else(|| "—".into(), |v| format!("{v:.0}%")));
-        {
-            let mut history = self.history.borrow_mut();
-            if history.len() == HISTORY_LEN {
-                history.pop_front();
-            }
-            history.push_back(cpu);
-        }
+        self.push_cpu(cpu);
         self.chart.queue_draw();
         let fraction = sample.memory_fraction();
         self.ram
@@ -197,10 +245,38 @@ mod tests {
             return;
         }
         gtk4::test_synced(|| {
-            let root = new();
-            let weak = root.downgrade();
-            drop(root);
+            let status = new();
+            let weak = status.root.downgrade();
+            drop(status);
             assert!(weak.upgrade().is_none());
+        });
+    }
+
+    #[test]
+    fn system_status_pauses_while_hidden_and_samples_on_return() {
+        if !has_display() {
+            return;
+        }
+        gtk4::test_synced(|| {
+            let status = new();
+            let strip = &status.shared.strip;
+            let len = || strip.history.borrow().len();
+            assert_eq!(len(), 1, "the strip samples once when built");
+            strip.cpu.set_label("marker");
+            status.set_hidden(true);
+            status.shared.tick();
+            assert_eq!(len(), 2);
+            assert_eq!(strip.history.borrow().back(), Some(&None), "hidden time is a gap");
+            assert_eq!(strip.cpu.text(), "marker", "no sample while hidden");
+            status.set_hidden(true);
+            assert_eq!(len(), 2, "unchanged state does nothing");
+            status.set_hidden(false);
+            assert_eq!(len(), 3, "a fresh sample at once on return");
+            assert_ne!(strip.cpu.text(), "marker");
+            status.set_hidden(false);
+            assert_eq!(len(), 3);
+            status.shared.tick();
+            assert_eq!(len(), 4);
         });
     }
 

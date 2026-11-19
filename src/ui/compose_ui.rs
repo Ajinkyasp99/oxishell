@@ -9,7 +9,7 @@ use crate::config::Config;
 use crate::model::PaneId;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib, Orientation};
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Weak;
 use std::time::{Duration, Instant};
@@ -27,12 +27,10 @@ const STACK_GRACE: Duration = Duration::from_secs(5);
 pub struct PaneCompose {
     /// The pane button; hidden unless the repo has compose files.
     pub button: gtk4::Button,
-    /// Bar under the terminal while a stack started here runs.
-    pub stack_bar: gtk4::Box,
-    /// Line above the stack bar while `logs -f` runs in the pane.
-    pub logs_bar: gtk4::Box,
-    /// The two bars, each clipped so a long chip row or status line cannot
-    /// raise the pane's minimum width (that would block resizing the pane).
+    /// Where the logs bar and the stack bar go under the terminal. Each clip
+    /// stays empty and hidden until the pane first needs its bars (see
+    /// [`PaneCompose::bars`]), and then keeps a long chip row or status line
+    /// from raising the pane's minimum width (that would block resizing it).
     pub logs_clip: Clip,
     pub stack_clip: Clip,
     /// Compose files of the pane's repo and the compose program, from the meta worker.
@@ -50,25 +48,74 @@ pub struct PaneCompose {
     /// next one opens: removing a popover right after it closes, while the
     /// pointer is still over it, crashes GTK (`gdk_surface_request_motion`).
     picker: RefCell<Option<gtk4::Popover>>,
+    /// The stack bar and logs bar, built the first time a stack or `logs`
+    /// shows in this pane; most panes never need them.
+    bars: RefCell<Option<Bars>>,
+    app: Weak<App>,
+    id: PaneId,
+}
+
+/// The widgets under the terminal: the stack bar and the logs bar.
+pub struct Bars {
+    /// Bar under the terminal while a stack started here runs.
+    pub stack_bar: gtk4::Box,
+    /// Line above the stack bar while `logs -f` runs in the pane.
+    pub logs_bar: gtk4::Box,
     /// Status glyph, coloured by the stack's [`compose::Tone`].
     dot: gtk4::Label,
     status: gtk4::Label,
     chips: gtk4::FlowBox,
     /// Services the chips were last drawn for.
     chips_key: RefCell<String>,
-    pub rebuild_btn: gtk4::Button,
     bar_buttons: Vec<gtk4::Button>,
     logs_label: gtk4::Label,
-    app: Weak<App>,
-    id: PaneId,
 }
 
 impl PaneCompose {
     /// The button (prepended to `actions`, before the drag handle) and the two
-    /// bars, which the caller places under the terminal.
+    /// empty clips, which the caller places under the terminal.
     pub fn new(app: &AppRc, id: PaneId, actions: &gtk4::Box) -> Self {
-        let button = attach_button(app, id, actions);
+        Self {
+            button: attach_button(app, id, actions),
+            logs_clip: Clip::new(),
+            stack_clip: Clip::new(),
+            scan: None,
+            stack: None,
+            logs: None,
+            rescan: false,
+            pending: None,
+            picker: RefCell::new(None),
+            bars: RefCell::new(None),
+            app: app.weak(),
+            id,
+        }
+    }
 
+    /// The pane's bars, built and put into their clips on the first call.
+    pub fn bars(&self) -> Ref<'_, Bars> {
+        if self.bars.borrow().is_none() {
+            let b = Bars::new(&self.app, self.id);
+            fill_clip(&self.logs_clip, &b.logs_bar);
+            fill_clip(&self.stack_clip, &b.stack_bar);
+            *self.bars.borrow_mut() = Some(b);
+        }
+        Ref::map(self.bars.borrow(), |b| b.as_ref().expect("bars were just built"))
+    }
+
+    /// Path of `file` as shown in the bars: relative to the repo root.
+    pub fn display(&self, file: &Path) -> String {
+        self.scan
+            .as_ref()
+            .and_then(|s| file.strip_prefix(&s.root).ok())
+            .unwrap_or(file)
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+impl Bars {
+    /// Both bars, hidden; their buttons act on pane `id`.
+    fn new(app: &Weak<App>, id: PaneId) -> Self {
         let stack_bar = gtk4::Box::new(Orientation::Vertical, 2);
         stack_bar.add_css_class("compose-stack");
         stack_bar.set_visible(false);
@@ -91,7 +138,7 @@ impl PaneCompose {
             top.append(b);
         }
         {
-            let w = app.weak();
+            let w = app.clone();
             rebuild_btn.connect_clicked(move |_| {
                 if let Some(a) = w.upgrade() {
                     rebuild(&a, id);
@@ -99,7 +146,7 @@ impl PaneCompose {
             });
         }
         for (b, action) in [(&restart_btn, Action::Restart), (&stop_btn, Action::Stop)] {
-            let w = app.weak();
+            let w = app.clone();
             b.connect_clicked(move |_| {
                 if let Some(a) = w.upgrade() {
                     run_background(&a, id, action.clone());
@@ -130,7 +177,7 @@ impl PaneCompose {
         );
         stop_logs_btn.add_css_class("compose-stop");
         {
-            let w = app.weak();
+            let w = app.clone();
             stop_logs_btn.connect_clicked(move |_| {
                 if let Some(a) = w.upgrade() {
                     stop_logs(&a, id);
@@ -139,40 +186,16 @@ impl PaneCompose {
         }
         logs_bar.append(&stop_logs_btn);
 
-        let logs_clip = clip(&logs_bar);
-        let stack_clip = clip(&stack_bar);
         Self {
-            button,
             stack_bar,
             logs_bar,
-            logs_clip,
-            stack_clip,
-            scan: None,
-            stack: None,
-            logs: None,
-            rescan: false,
-            pending: None,
-            picker: RefCell::new(None),
             dot,
             status,
             chips,
             chips_key: RefCell::new(String::new()),
-            rebuild_btn: rebuild_btn.clone(),
             bar_buttons: vec![rebuild_btn, restart_btn, stop_btn],
             logs_label,
-            app: app.weak(),
-            id,
         }
-    }
-
-    /// Path of `file` as shown in the bars: relative to the repo root.
-    pub fn display(&self, file: &Path) -> String {
-        self.scan
-            .as_ref()
-            .and_then(|s| file.strip_prefix(&s.root).ok())
-            .unwrap_or(file)
-            .to_string_lossy()
-            .into_owned()
     }
 }
 
@@ -280,19 +303,24 @@ pub fn sync(p: &Pane, cfg: &Config) {
     }
 
     let logs = c.logs.as_ref().filter(|_| on && p.busy);
-    set_visible(&c.logs_bar, logs.is_some());
+    let stack = c.stack.as_ref().filter(|_| on);
+    // Nothing to show and nothing shown: leave the bars unbuilt.
+    if logs.is_none() && stack.is_none() && c.bars.borrow().is_none() {
+        return;
+    }
+    let bars = c.bars();
+    set_visible(&bars.logs_bar, logs.is_some());
     if let Some(file) = logs {
-        set_label(&c.logs_label, &format!("≡ logs -f  {} │ following", c.display(file)));
+        set_label(&bars.logs_label, &format!("≡ logs -f  {} │ following", c.display(file)));
     }
 
-    let stack = c.stack.as_ref().filter(|_| on);
-    set_visible(&c.stack_bar, stack.is_some());
+    set_visible(&bars.stack_bar, stack.is_some());
     let Some(stack) = stack else { return };
     let tone = compose::stack_tone(&stack.services, stack.stopping);
-    set_label(&c.dot, &format!("{} ", tone_glyph(tone)));
-    set_tone(&c.dot, tone);
-    set_label(&c.status, &status_text(c, stack));
-    for b in &c.bar_buttons {
+    set_label(&bars.dot, &format!("{} ", tone_glyph(tone)));
+    set_tone(&bars.dot, tone);
+    set_label(&bars.status, &status_text(c, stack));
+    for b in &bars.bar_buttons {
         if b.is_sensitive() == stack.working {
             b.set_sensitive(!stack.working);
         }
@@ -304,9 +332,9 @@ pub fn sync(p: &Pane, cfg: &Config) {
         .collect::<String>()
         + if stack.working { "w" } else { "" }
         + if stack.stopping { "s" } else { "" };
-    if *c.chips_key.borrow() != key {
-        draw_chips(c, stack);
-        *c.chips_key.borrow_mut() = key;
+    if *bars.chips_key.borrow() != key {
+        draw_chips(c, &bars.chips, stack);
+        *bars.chips_key.borrow_mut() = key;
     }
     ensure_clock(&c.app);
 }
@@ -380,8 +408,8 @@ fn status_text(c: &PaneCompose, s: &Stack) -> String {
     format!("{}  {detail}", c.display(&s.file))
 }
 
-fn draw_chips(c: &PaneCompose, s: &Stack) {
-    c.chips.remove_all();
+fn draw_chips(c: &PaneCompose, chips: &gtk4::FlowBox, s: &Stack) {
+    chips.remove_all();
     for svc in &s.services {
         let ports: String = svc.ports.iter().map(|p| format!(" :{p}")).collect();
         let b = gtk4::Button::with_label(&format!("{} {}{ports}", glyph(svc), svc.service));
@@ -402,7 +430,7 @@ fn draw_chips(c: &PaneCompose, s: &Stack) {
                 run_background(&a, id, Action::RestartService(name.clone()));
             }
         });
-        c.chips.append(&b);
+        chips.append(&b);
     }
 }
 
@@ -424,8 +452,10 @@ fn ensure_clock(app: &Weak<App>) {
         let i = a.inner.borrow();
         let mut any = false;
         for p in i.panes.values() {
-            if let (Some(s), true) = (&p.compose.stack, p.compose.stack_bar.get_visible()) {
-                set_label(&p.compose.status, &status_text(&p.compose, s));
+            let c = &p.compose;
+            let bars = c.bars.borrow();
+            if let (Some(s), Some(b)) = (&c.stack, bars.as_ref().filter(|b| b.stack_bar.get_visible())) {
+                set_label(&b.status, &status_text(c, s));
                 any = true;
             }
         }
@@ -1130,12 +1160,11 @@ fn key_button(key: &str, word: &str, tip: &str) -> gtk4::Button {
     b
 }
 
-/// Wrap a bar so its width is clipped to the pane instead of setting the
-/// pane's minimum width; it shows and hides with the bar.
-fn clip(bar: &gtk4::Box) -> Clip {
-    let c = Clip::new(bar);
-    bar.bind_property("visible", &c, "visible").sync_create().build();
-    c
+/// Put a bar into its clip, so its width is clipped to the pane instead of
+/// setting the pane's minimum width; the clip shows and hides with the bar.
+fn fill_clip(c: &Clip, bar: &gtk4::Box) {
+    c.set_child(bar.upcast_ref());
+    bar.bind_property("visible", c, "visible").sync_create().build();
 }
 
 mod imp {
@@ -1202,11 +1231,20 @@ glib::wrapper! {
 }
 
 impl Clip {
-    fn new(child: &impl IsA<gtk4::Widget>) -> Self {
+    /// An empty, hidden clip; [`Clip::set_child`] gives it its bar.
+    fn new() -> Self {
         let c: Self = glib::Object::new();
         c.set_overflow(gtk4::Overflow::Hidden);
-        child.set_parent(&c);
+        c.set_visible(false);
         c
+    }
+
+    /// Make `child` the clip's only child.
+    pub fn set_child(&self, child: &gtk4::Widget) {
+        while let Some(old) = self.first_child() {
+            old.unparent();
+        }
+        child.set_parent(self);
     }
 }
 

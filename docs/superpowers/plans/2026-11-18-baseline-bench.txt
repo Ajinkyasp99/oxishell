@@ -1,0 +1,11 @@
+# oxishell benchmark — 2026-11-18T10:44Z
+host: 7.0.0-43-generic, 16 CPUs, display: x11 :100, GSK_RENDERER=default
+startup to control-socket ready (ms), 5 runs: 251 251 271 240 257  median=251
+idle CPU, 1 pane, 10 s: 1.60%
+RSS, 1 pane: app 253364 kB (anon 111676 kB), app+shells 264716 kB
+panes=10: RSS app 262844 kB (anon 120896 kB), app+shells 376456 kB, idle CPU 1.60%
+panes=20: RSS app 271700 kB (anon 129784 kB), app+shells 498920 kB, idle CPU 1.70%
+1,000,000 lines (seq) in a visible pane: 627 ms
+control-socket round trip: 3427 µs avg (incl. CLI process start)
+child processes started per minute, 1 idle panes in a git repo: 14  [git: 11, docker-compose: 2, docker: 1]  (method: strace -f execve)
+child processes started per minute, 4 idle panes in a git repo: 31  [git: 25, docker-compose: 4, docker: 2]  (method: strace -f execve)
