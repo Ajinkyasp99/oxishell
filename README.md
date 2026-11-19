@@ -10,7 +10,7 @@ Workspaces in a sidebar · split panes · agent notifications · 41 Warp themes 
 
 [![CI](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml/badge.svg)](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Ajinkyasp99/oxishell?display_name=tag)](https://github.com/Ajinkyasp99/oxishell/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/Ajinkyasp99/oxishell/total)](https://github.com/Ajinkyasp99/oxishell/releases)
+[![Package downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fajinkyasp99.github.io%2Foxishell%2Fdownloads.json)](https://github.com/Ajinkyasp99/oxishell/releases)
 [![Stars](https://img.shields.io/github/stars/Ajinkyasp99/oxishell?style=flat)](https://github.com/Ajinkyasp99/oxishell/stargazers)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 ![Platform: Linux and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-informational)

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 
 const script = readFileSync(new URL("../marketing-website/site.js", import.meta.url), "utf8");
@@ -10,6 +12,43 @@ test("links to the Medium article and identifies release-dependent features", ()
   assert.match(page, /href="https:\/\/medium\.com\/@ajinkya_Patil\/linux-terminal-for-claude-code-codex-gemini-221546a50632"/);
   assert.match(page, /availability in downloadable packages depends on the release/);
   assert.match(page, /docs\/RELEASE_NOTES\.md/);
+});
+
+function downloadBadge(...pages) {
+  const filter = fileURLToPath(new URL("../scripts/package-downloads.jq", import.meta.url));
+  return JSON.parse(execFileSync("jq", ["--slurp", "--from-file", filter], {
+    input: pages.map((page) => JSON.stringify(page)).join("\n"),
+    encoding: "utf8",
+  }));
+}
+
+test("counts package downloads across release pages and excludes checksums and drafts", () => {
+  const badge = downloadBadge([{
+    draft: false,
+    assets: [
+      { name: "oxishell_amd64.deb", download_count: 1001 },
+      { name: "oxishell_macos_arm64.dmg", download_count: 25 },
+      { name: "SHA256SUMS", download_count: 200 },
+      { name: "oxishell_macos_arm64.dmg.sha256", download_count: 100 },
+    ],
+  }], [{
+    draft: false,
+    assets: [{ name: "cmux-linux_0.1.0_amd64.deb", download_count: 9 }],
+  }, {
+    draft: true,
+    assets: [{ name: "oxishell_amd64.deb", download_count: 50 }],
+  }]);
+
+  assert.deepEqual(badge, {
+    schemaVersion: 1,
+    label: "package downloads",
+    message: "1035",
+    color: "blue",
+  });
+});
+
+test("shows zero when there are no published packages", () => {
+  assert.equal(downloadBadge([]).message, "0");
 });
 
 function loadCopyControl(clipboard) {
