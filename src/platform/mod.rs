@@ -49,17 +49,26 @@ pub fn parse_procargs2(buf: &[u8]) -> Option<ProcArgs> {
     Some((argv, env))
 }
 
-/// Ports from `lsof -F n` output for TCP sockets in LISTEN state: name lines
-/// look like `n*:8080`, `n127.0.0.1:3000` or `n[::1]:5173`.
-pub fn parse_lsof_listen(out: &str) -> Vec<u16> {
-    let mut ports: Vec<u16> = out
-        .lines()
-        .filter_map(|l| l.strip_prefix('n'))
-        .filter_map(|n| n.rsplit_once(':')?.1.parse().ok())
-        .collect();
-    ports.sort_unstable();
-    ports.dedup();
-    ports
+/// Listening ports per pid from `lsof -F pn` output: each `n` line belongs to
+/// the most recent `p<pid>` line. Ports are sorted and deduplicated per pid;
+/// pids without a LISTEN socket are absent.
+pub fn parse_lsof_listen_by_pid(out: &str) -> std::collections::HashMap<i32, Vec<u16>> {
+    let mut map: std::collections::HashMap<i32, Vec<u16>> = std::collections::HashMap::new();
+    let mut pid: Option<i32> = None;
+    for line in out.lines() {
+        if let Some(p) = line.strip_prefix('p') {
+            pid = p.parse().ok();
+        } else if let (Some(pid), Some(n)) = (pid, line.strip_prefix('n')) {
+            if let Some(port) = n.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok()) {
+                map.entry(pid).or_default().push(port);
+            }
+        }
+    }
+    for ports in map.values_mut() {
+        ports.sort_unstable();
+        ports.dedup();
+    }
+    map
 }
 
 /// The non-empty text between the last pair of `mark`s in `out`.
@@ -111,9 +120,16 @@ mod tests {
     }
 
     #[test]
-    fn lsof_listen_ports() {
-        let out = "p123\nf5\nn*:8080\nf6\nn127.0.0.1:3000\nf7\nn[::1]:5173\np456\nf3\nn*:8080\n";
-        assert_eq!(parse_lsof_listen(out), vec![3000, 5173, 8080]);
-        assert!(parse_lsof_listen("").is_empty());
+    fn lsof_listen_ports_by_pid() {
+        let out = "p100\nf5\nn*:3000\nf6\nn[::1]:3000\np200\nf7\nn127.0.0.1:5173\np300\n";
+        let m = parse_lsof_listen_by_pid(out);
+        assert_eq!(m.get(&100), Some(&vec![3000]));
+        assert_eq!(m.get(&200), Some(&vec![5173]));
+        assert!(!m.contains_key(&300));
+        // Name lines look like `n*:8080`, `n127.0.0.1:3000` or `n[::1]:5173`;
+        // ports are sorted and deduplicated per pid.
+        let m = parse_lsof_listen_by_pid("p123\nf5\nn*:8080\nf6\nn127.0.0.1:3000\nf7\nn[::1]:5173\nf8\nn*:8080\n");
+        assert_eq!(m.get(&123), Some(&vec![3000, 5173, 8080]));
+        assert!(parse_lsof_listen_by_pid("").is_empty());
     }
 }

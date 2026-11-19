@@ -117,19 +117,19 @@ pub fn ppid_table() -> HashMap<i32, i32> {
     map
 }
 
-/// TCP ports in LISTEN state owned by any of `pids`, via the system `lsof`
-/// (libc has no bindings for the socket fdinfo structs).
-pub fn listening_ports(pids: &[i32]) -> Vec<u16> {
+/// TCP ports in LISTEN state per owning pid, via one system `lsof` for all
+/// `pids` (libc has no bindings for the socket fdinfo structs).
+pub fn listening_ports_by_pid(pids: &[i32]) -> std::collections::HashMap<i32, Vec<u16>> {
     if pids.is_empty() {
-        return vec![];
+        return Default::default();
     }
     let list = pids.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
     Command::new("/usr/sbin/lsof")
-        .args(["-nP", "-w", "-a", "-iTCP", "-sTCP:LISTEN", "-p", &list, "-Fn"])
+        .args(["-nP", "-w", "-a", "-iTCP", "-sTCP:LISTEN", "-p", &list, "-Fpn"])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
-        .map(|o| crate::platform::parse_lsof_listen(&String::from_utf8_lossy(&o.stdout)))
+        .map(|o| crate::platform::parse_lsof_listen_by_pid(&String::from_utf8_lossy(&o.stdout)))
         .unwrap_or_default()
 }
 

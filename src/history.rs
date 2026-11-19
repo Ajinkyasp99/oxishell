@@ -1,7 +1,7 @@
 //! Command history for suggestions: reads bash, zsh and fish history files,
 //! newest first, de-duplicated; plus commands typed in oxishell this session.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub const MAX_ENTRIES: usize = 20_000;
@@ -143,11 +143,23 @@ impl History {
         History::from_oldest_timed(lists.into_iter().map(|l| l.into_iter().map(|c| (c, None)).collect()).collect())
     }
 
+    /// Walks newest first, so the newest occurrence of a command decides its
+    /// time and the cap keeps the newest `MAX_ENTRIES`. Linear in the input.
     pub fn from_oldest_timed(lists: Vec<Vec<Timed>>) -> History {
         let mut h = History::default();
-        for list in lists {
-            for (c, t) in list {
-                h.push_at(&c, t);
+        let mut seen: HashSet<String> = HashSet::new();
+        for list in lists.iter().rev() {
+            for (cmd, t) in list.iter().rev() {
+                let Some(c) = clean(cmd) else { continue };
+                if seen.insert(c.clone()) {
+                    h.entries.push(c.clone());
+                    if let Some(t) = t {
+                        h.times.insert(c, *t);
+                    }
+                    if h.entries.len() == MAX_ENTRIES {
+                        return h;
+                    }
+                }
             }
         }
         h
@@ -460,5 +472,82 @@ mod tests {
         assert_eq!(h.len(), 3);
         assert_eq!(h.suggest("ma"), Some("make test"));
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    fn oracle(lists: Vec<Vec<Timed>>) -> History {
+        let mut h = History::default();
+        for list in lists {
+            for (c, t) in list {
+                h.push_at(&c, t);
+            }
+        }
+        h
+    }
+
+    fn assert_same(lists: Vec<Vec<Timed>>) {
+        let want = oracle(lists.clone());
+        let got = History::from_oldest_timed(lists);
+        assert_eq!(got.entries, want.entries);
+        for e in &want.entries {
+            assert_eq!(got.time_of(e), want.time_of(e), "time of {e}");
+        }
+        assert_eq!(got.times.len(), want.times.len());
+    }
+
+    fn t(c: &str, ts: Option<i64>) -> Timed {
+        (c.to_string(), ts)
+    }
+
+    #[test]
+    fn matches_oracle_with_duplicates_across_and_within_files() {
+        assert_same(vec![
+            vec![t("a", Some(1)), t("b", Some(2)), t("a", Some(3)), t("c", None)],
+            vec![t("b", Some(10)), t("d", Some(11)), t("b", Some(12)), t("a", None)],
+            vec![t("c", Some(20)), t("e", None), t("d", Some(21))],
+        ]);
+    }
+
+    #[test]
+    fn matches_oracle_timed_then_untimed_and_untimed_then_timed() {
+        assert_same(vec![vec![t("ls", Some(1)), t("ls", None)]]);
+        assert_same(vec![vec![t("ls", None), t("ls", Some(1))]]);
+        assert_same(vec![vec![t("ls", Some(1))], vec![t("ls", None)]]);
+        assert_same(vec![vec![t("ls", None)], vec![t("ls", Some(1))]]);
+    }
+
+    #[test]
+    fn matches_oracle_with_rejected_entries() {
+        assert_same(vec![
+            vec![t("", Some(1)), t("   ", None), t("ls", Some(2)), t("\t", Some(3))],
+            vec![t("  ", Some(4)), t("ls", None), t("", None)],
+        ]);
+    }
+
+    #[test]
+    fn matches_oracle_beyond_max_entries() {
+        let n = MAX_ENTRIES + 500;
+        let mut list: Vec<Timed> = (0..n).map(|i| (format!("cmd {i}"), Some(i as i64))).collect();
+        for i in 0..10 {
+            list.push((format!("cmd {i}"), if i % 2 == 0 { Some(900_000) } else { None }));
+        }
+        assert_same(vec![list.clone()]);
+        let (a, b) = list.split_at(n / 2);
+        assert_same(vec![a.to_vec(), b.to_vec()]);
+    }
+
+    #[test]
+    #[ignore]
+    fn import_is_fast() {
+        for n in [20_000usize, 50_000] {
+            let lists: Vec<Vec<Timed>> = (0..2)
+                .map(|k| (0..n / 2).map(|i| (format!("cmd {}", k * (n / 2) + i), Some(i as i64))).collect())
+                .collect();
+            let start = std::time::Instant::now();
+            let h = History::from_oldest_timed(lists);
+            let el = start.elapsed();
+            println!("import of {n} unique entries: {el:?}");
+            assert_eq!(h.len(), n.min(MAX_ENTRIES));
+            assert!(el < std::time::Duration::from_millis(50), "{n} entries took {el:?}");
+        }
     }
 }

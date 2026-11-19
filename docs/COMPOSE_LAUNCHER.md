@@ -205,8 +205,12 @@ non-zero exit code, or when its health turns `unhealthy`. A clean exit with code
   parse still appears, without a service list.
 - Cap the list at 50 files, and stop after reading 5,000 folders so a pane in `$HOME` or `/` stays quick.
   Symlinked folders are not followed.
+- The automatic scan looks one level deep only when its root is exactly `$HOME` or `/`. The **r rescan**
+  key then scans deep (the full 4 levels), and the pane stays deep from then on.
 - Run on the meta worker thread. The worker already notices when a pane's folder changes; scan again only
   when the git root changes, and cache the result per root. The **r rescan** key scans on demand.
+- Cache times: the detected compose command is kept 10 min, the repo root 5 min, and the file list 30 s,
+  doubling up to 5 min while it stays unchanged. A rescan bypasses all of them.
 
 ## Code
 

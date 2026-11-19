@@ -1835,10 +1835,10 @@ fn compose_picker_opens_from_the_shortcut_action_and_works_from_the_keyboard() {
     gtk4::test_synced(|| {
         let h = Harness::new("compose-picker");
         let (_, record, _) = fake_docker(&h);
-        std::fs::write(h.root.join("home/docker-compose.yml"), "services:\n  api: {}\n  web: {}\n").unwrap();
-        std::fs::create_dir_all(h.root.join("home/services/pay")).unwrap();
-        std::fs::write(h.root.join("home/services/pay/compose.yaml"), "services:\n  pay: {}\n").unwrap();
-        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        std::fs::create_dir_all(h.root.join("home/proj/services/pay")).unwrap();
+        std::fs::write(h.root.join("home/proj/docker-compose.yml"), "services:\n  api: {}\n  web: {}\n").unwrap();
+        std::fs::write(h.root.join("home/proj/services/pay/compose.yaml"), "services:\n  pay: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home/proj"))).unwrap();
         wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
         let button = h.app.inner.borrow().panes[&pane].compose.button.clone();
 
@@ -2129,7 +2129,7 @@ fn stack_bar_follows_ps_and_stop_runs_in_the_background() {
         let h = Harness::new("compose-bar");
         let (_, record, ps) = fake_docker(&h);
         let (pane, file) = compose_workspace(&h, "shop");
-        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        let bar = h.app.inner.borrow().panes[&pane].compose.bars().stack_bar.clone();
         assert!(!bar.is_visible());
 
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Up);
@@ -2165,7 +2165,7 @@ fn stop_logs_sends_ctrl_c_and_hides_the_logs_line() {
         let h = Harness::new("compose-logs");
         let (_, record, _) = fake_docker(&h);
         let (pane, file) = compose_workspace(&h, "shop");
-        let logs_bar = h.app.inner.borrow().panes[&pane].compose.logs_bar.clone();
+        let logs_bar = h.app.inner.borrow().panes[&pane].compose.bars().logs_bar.clone();
 
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Logs);
         wait_for(8_000, || logs_bar.is_visible());
@@ -2220,6 +2220,48 @@ fn a_crashing_service_is_reported_once() {
         std::fs::write(&ps, exited).unwrap();
         pump(7_000);
         assert_eq!(crashed(), 1, "notify_on_crash = false sends nothing");
+    });
+}
+
+#[test]
+fn compose_bars_are_built_only_when_a_stack_starts() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-lazy-bars");
+        let (_, _, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        let clips = || {
+            let i = h.app.inner.borrow();
+            let c = &i.panes[&pane].compose;
+            (c.stack_clip.clone(), c.logs_clip.clone())
+        };
+        let (stack_clip, logs_clip) = clips();
+        assert!(stack_clip.first_child().is_none(), "a fresh pane builds no stack bar");
+        assert!(logs_clip.first_child().is_none(), "a fresh pane builds no logs bar");
+        assert!(!stack_clip.is_visible() && !logs_clip.is_visible());
+
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::Up);
+        std::fs::write(&ps, PS_API_RUNNING).unwrap();
+        wait_for(8_000, || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.seen_running)
+        });
+        wait_for(8_000, || stack_clip.first_child().is_some_and(|b| b.is_visible()));
+        assert!(stack_clip.is_visible(), "the clip shows with its bar");
+        assert!(
+            stack_clip.first_child().unwrap().has_css_class("compose-stack"),
+            "the stack clip holds the stack bar"
+        );
+        assert!(
+            logs_clip.first_child().is_some_and(|b| b.has_css_class("compose-logs")),
+            "the logs bar is built with the stack bar"
+        );
+        assert!(!logs_clip.is_visible(), "no logs are followed, so the logs bar stays hidden");
     });
 }
 
@@ -2295,7 +2337,8 @@ fn turning_the_launcher_off_hides_everything_and_stops_nothing() {
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
         let (button, bar) = {
             let i = h.app.inner.borrow();
-            (i.panes[&pane].compose.button.clone(), i.panes[&pane].compose.stack_bar.clone())
+            let bar = i.panes[&pane].compose.bars().stack_bar.clone();
+            (i.panes[&pane].compose.button.clone(), bar)
         };
         wait_for(8_000, || bar.is_visible() && button.is_sensitive());
 
@@ -2342,7 +2385,8 @@ fn compose_bars_do_not_widen_the_pane() {
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
         let (bar, logs_bar) = {
             let i = h.app.inner.borrow();
-            (i.panes[&pane].compose.stack_bar.clone(), i.panes[&pane].compose.logs_bar.clone())
+            let bars = i.panes[&pane].compose.bars();
+            (bars.stack_bar.clone(), bars.logs_bar.clone())
         };
         wait_for(8_000, || {
             h.app.inner.borrow().panes[&pane]
@@ -2397,7 +2441,8 @@ fn compose_stack_bar_wraps_its_chips_and_keeps_its_buttons_in_view_in_a_narrow_p
         let (clip, frame, bar) = {
             let i = h.app.inner.borrow();
             let c = &i.panes[&pane].compose;
-            (c.stack_clip.clone(), i.panes[&pane].frame.clone(), c.stack_bar.clone())
+            let bar = c.bars().stack_bar.clone();
+            (c.stack_clip.clone(), i.panes[&pane].frame.clone(), bar)
         };
         pump(800);
         screenshot(&h.app.window, "compose-stack-bar-narrow");
@@ -2445,10 +2490,10 @@ fn typing_a_filter_in_the_compose_picker_narrows_the_list() {
     gtk4::test_synced(|| {
         let h = Harness::new("compose-filter-typed");
         let (_, record, _) = fake_docker(&h);
-        std::fs::write(h.root.join("home/docker-compose.yml"), "services:\n  api: {}\n").unwrap();
-        std::fs::create_dir_all(h.root.join("home/services/pay")).unwrap();
-        std::fs::write(h.root.join("home/services/pay/compose.yaml"), "services:\n  pay: {}\n").unwrap();
-        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+        std::fs::create_dir_all(h.root.join("home/proj/services/pay")).unwrap();
+        std::fs::write(h.root.join("home/proj/docker-compose.yml"), "services:\n  api: {}\n").unwrap();
+        std::fs::write(h.root.join("home/proj/services/pay/compose.yaml"), "services:\n  pay: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home/proj"))).unwrap();
         wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
         let button = h.app.inner.borrow().panes[&pane].compose.button.clone();
         h.app.run_action("compose-files");
@@ -2561,7 +2606,7 @@ fn a_single_service_crash_keeps_its_red_chip_and_clicking_it_restarts_the_servic
         let (pane, file) = compose_workspace(&h, "shop");
         std::fs::write(&ps, PS_API_RUNNING).unwrap();
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
-        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        let bar = h.app.inner.borrow().panes[&pane].compose.bars().stack_bar.clone();
         wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
         assert!(
             button_with(&bar, "compose-chip", "api").unwrap().has_css_class("compose-up"),
@@ -2601,7 +2646,7 @@ fn the_stack_bar_shows_only_the_services_its_file_declares() {
         let postgres = r#"{"Service":"postgres","State":"exited","Health":"","ExitCode":0,"Publishers":[]}"#;
         std::fs::write(&ps, format!("{PS_API_RUNNING}\n{postgres}\n")).unwrap();
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
-        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        let bar = h.app.inner.borrow().panes[&pane].compose.bars().stack_bar.clone();
         wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
         pump(500);
         assert!(
@@ -2623,7 +2668,7 @@ fn clicking_stop_sends_no_crash_alert_for_killed_containers_and_removes_the_bar(
         let (pane, file) = compose_workspace(&h, "shop");
         std::fs::write(&ps, PS_API_RUNNING).unwrap();
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
-        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        let bar = h.app.inner.borrow().panes[&pane].compose.bars().stack_bar.clone();
         wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
         pump(5_500); // past the start-up grace period
 
@@ -2664,7 +2709,8 @@ fn with_run_immediately_off_pressing_enter_starts_the_stack_bar() {
         std::fs::write(&ps, PS_API_RUNNING).unwrap();
         let (term, bar) = {
             let i = h.app.inner.borrow();
-            (i.panes[&pane].term.clone(), i.panes[&pane].compose.stack_bar.clone())
+            let bar = i.panes[&pane].compose.bars().stack_bar.clone();
+            (i.panes[&pane].term.clone(), bar)
         };
         term.grab_focus();
         pump(200);
@@ -2696,15 +2742,15 @@ fn with_run_immediately_off_pressing_enter_starts_the_stack_bar() {
 // launcher's functions directly. A bug that only shows with real input (focus,
 // key routing, layout) must fail here.
 
-/// A workspace in `home` with the given compose files (relative path, YAML),
+/// A workspace in `home/proj` (a project folder: the automatic scan of `$HOME` itself is shallow) with the given compose files (relative path, YAML),
 /// once its launcher button shows. Returns the pane and the button.
 fn ui_launcher_setup(h: &Harness, files: &[(&str, &str)]) -> (oxishell::model::PaneId, gtk4::Button) {
     for (rel, yaml) in files {
-        let p = h.root.join("home").join(rel);
+        let p = h.root.join("home/proj").join(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, yaml).unwrap();
     }
-    let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home"))).unwrap();
+    let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home/proj"))).unwrap();
     wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
     let (button, term) = {
         let i = h.app.inner.borrow();
@@ -2933,7 +2979,7 @@ fn ui_launcher_stack_bar_buttons_and_chips_work_with_the_mouse() {
         press(&h, "d");
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains("compose -f docker-compose.yml up -d"));
-        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        let bar = h.app.inner.borrow().panes[&pane].compose.bars().stack_bar.clone();
         wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
         screenshot(&h.app.window, "ui-launcher-stack-bar");
 
@@ -2975,7 +3021,7 @@ fn ui_launcher_logs_line_stop_logs_clicked_with_the_mouse() {
         press(&h, "l");
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains(" logs -f"));
-        let logs_bar = h.app.inner.borrow().panes[&pane].compose.logs_bar.clone();
+        let logs_bar = h.app.inner.borrow().panes[&pane].compose.bars().logs_bar.clone();
         wait_for(8_000, || logs_bar.is_visible());
         let stop_logs = button_with(&logs_bar, "compose-bar-btn", "[stop logs]").unwrap();
         click_widget(&h, &stop_logs);
@@ -3010,7 +3056,8 @@ fn ui_launcher_dragging_the_divider_narrows_a_pane_that_shows_the_stack_bar() {
         std::fs::write(started, declare_services(10)).unwrap();
         let (bar, frame) = {
             let i = h.app.inner.borrow();
-            (i.panes[&pane].compose.stack_bar.clone(), i.panes[&pane].frame.clone())
+            let bar = i.panes[&pane].compose.bars().stack_bar.clone();
+            (bar, i.panes[&pane].frame.clone())
         };
         wait_for(8_000, || {
             bar.is_visible() && button_with(&bar, "compose-chip", "service-number-9").is_some()
@@ -3067,7 +3114,7 @@ fn ui_launcher_stop_clicked_during_the_first_pull_interrupts_the_up() {
         press(&h, "Return");
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains("compose -f docker-compose.yml up"));
-        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        let bar = h.app.inner.borrow().panes[&pane].compose.bars().stack_bar.clone();
         wait_for(8_000, || bar.is_visible());
         pump(1_000);
         assert!(h.app.inner.borrow().panes[&pane].busy, "up is still running");
@@ -3098,7 +3145,7 @@ fn ui_launcher_stop_on_running_containers_uses_docker_compose_stop_not_ctrl_c() 
         press(&h, "Return");
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains("compose -f docker-compose.yml up"));
-        let bar = h.app.inner.borrow().panes[&pane].compose.stack_bar.clone();
+        let bar = h.app.inner.borrow().panes[&pane].compose.bars().stack_bar.clone();
         wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
 
         let stop = button_with(&bar, "compose-bar-btn", "[stop]").expect("[stop]");

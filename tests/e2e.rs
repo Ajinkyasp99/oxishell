@@ -344,6 +344,90 @@ fn terminal_workspaces_splits_notifications_and_restore() {
     }
     e.ok("pane.send", json!({"pane": p4, "text": "\u{3}"})); // Ctrl+C
 
+    // The checks below are about the visible workspace (3 s cadence); background
+    // workspaces are refreshed on the 15 s pass. Which workspace is shown here
+    // depends on the notification jump above, so pick p4's explicitly.
+    e.ok("workspace.select", json!({"workspace": w2}));
+    e.ok("pane.send", json!({"pane": p4, "text": "echo FG-SERVER-GONE\r"}));
+    e.wait_text(p4, "\nFG-SERVER-GONE");
+    let pane_info = |key: &str| e.panes().into_iter().find(|p| p["id"] == p4).unwrap()[key].clone();
+    // A server started in the background from an idle prompt shows up quickly.
+    e.ok(
+        "pane.send",
+        json!({"pane": p4, "text": "python3 -m http.server 38420 --bind 127.0.0.1 &\r"}),
+    );
+    let t = Instant::now();
+    loop {
+        let ports = pane_info("ports");
+        if ports.as_array().is_some_and(|a| a.contains(&json!(38420))) {
+            break;
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(8),
+            "background server port not detected in 8 s: {ports}"
+        );
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    e.ok("pane.send", json!({"pane": p4, "text": "kill %1\r"}));
+
+    // Git status does not lag after a command, even after a long idle stretch
+    // (the cached result's lifetime has grown to its cap by then).
+    let repo = e.root.join("home/gitrepo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let st = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(st.success(), "git {args:?} failed");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(repo.join("README"), "e2e\n").unwrap();
+    git(&["add", "README"]);
+    git(&[
+        "-c",
+        "user.name=e2e",
+        "-c",
+        "user.email=e2e@example.com",
+        "commit",
+        "-q",
+        "-m",
+        "init",
+    ]);
+    e.ok("pane.send", json!({"pane": p4, "text": format!("cd {}\r", repo.display())}));
+    let t = Instant::now();
+    while pane_info("git")["changes"] != json!(0) {
+        assert!(t.elapsed() < Duration::from_secs(10), "clean repo not seen: {}", pane_info("git"));
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    // With 3 s ticks the lookups back off at about 0, 6, 18 and 39 s; from
+    // there the 30 s cap holds until about 69 s. (35 s would still be inside
+    // the 20 s step, whose expiry at 39 s would hide a missed prompt signal.)
+    std::thread::sleep(Duration::from_secs(45));
+    e.ok("pane.send", json!({"pane": p4, "text": "touch newfile\r"}));
+    let t = Instant::now();
+    while pane_info("git")["changes"] != json!(1) {
+        assert!(
+            t.elapsed() < Duration::from_secs(4),
+            "git change not shown within 4 s: {}",
+            pane_info("git")
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Back to /tmp, as the restore check below expects.
+    e.ok("pane.send", json!({"pane": p4, "text": "cd /tmp\r"}));
+    let t = Instant::now();
+    while !pane_info("git").is_null() {
+        assert!(t.elapsed() < Duration::from_secs(10), "pane stayed in the repo");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+
     // --- Phase 10: SIGTERM saves; restart restores layout, names, scrollback, agent session.
     e.ok("pane.send", json!({"pane": p1, "text": "echo SAVED-MARKER\r"}));
     e.wait_text(p1, "\nSAVED-MARKER");
