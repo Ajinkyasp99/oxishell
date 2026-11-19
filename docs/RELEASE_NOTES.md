@@ -16,6 +16,9 @@
   same-named formula, which only builds command-line binaries, so no app appeared. The CLI-only formula is
   now `oxishell-cli`. If you installed the 0.3.0 formula: `brew uninstall --formula oxishell && brew install
   --cask Ajinkyasp99/oxishell/oxishell`.
+- **Website:** the marketing site now covers workspace tabs, agent sessions in the sidebar, history search and
+  inline suggestions, context chips and the CPU/memory readout. It links to the Medium article about oxishell
+  and notes that what a downloaded package includes depends on its release, with a link to these notes.
 
 ## 0.3.0 — 2026-11-18
 
