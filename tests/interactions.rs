@@ -1536,6 +1536,56 @@ fn command_block_headers_stay_put_when_a_running_program_clears_the_scrollback()
     });
 }
 
+/// A block header scrolled partly above the terminal was drawn over the chip
+/// row above it (the overlay is not clipped by GTK).
+#[test]
+fn command_block_header_scrolled_above_the_terminal_is_not_drawn_outside_it() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("blocks-overflow");
+        let pane = h.app.focused_pane().unwrap();
+        let (term, blocks) = {
+            let i = h.app.inner.borrow();
+            (i.panes[&pane].term.clone(), i.panes[&pane].blocks.clone())
+        };
+        pump(2500);
+        h.point(&term);
+        xdo(&["click", "1"]);
+        pump(200);
+        for cmd in ["echo one", "echo two", "seq 1 200"] {
+            xdo(&["type", "--delay", "15", cmd]);
+            xdo(&["key", "Return"]);
+            pump(1500);
+        }
+        let adj = term.vadjustment().unwrap();
+        let ch = term.char_height() as f64;
+        adj.set_value(adj.lower());
+        pump(300);
+        let top = blocks
+            .visible_headers()
+            .into_iter()
+            .map(|(y, _)| y)
+            .find(|y| *y > 0.0)
+            .expect("a header below the top of the scrollback");
+        // Scroll so that header sits half a row above the terminal.
+        adj.set_value(adj.lower() + top + ch / 2.0);
+        pump(300);
+        let headers = blocks.visible_headers();
+        assert!(
+            headers.iter().any(|(y, _)| *y < 0.0 && *y > -ch),
+            "a header partly above the terminal: {headers:?}"
+        );
+        let bounds = blocks.drawn_bounds().expect("headers drawn");
+        assert!(
+            bounds.y() >= 0.0 && bounds.y() + bounds.height() <= blocks.area.height() as f32,
+            "drawing stays inside the terminal ({} px high): {bounds:?}",
+            blocks.area.height()
+        );
+    });
+}
+
 #[test]
 fn hidden_input_and_program_input_never_reach_the_command_history() {
     if !have_input() {

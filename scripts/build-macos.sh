@@ -115,6 +115,12 @@ if [[ $VTE_SOURCE == 1 ]]; then
         echo "VTE $VTE_VERSION without ICU: built into $VTE_PREFIX"
     fi
     export PKG_CONFIG_PATH="$VTE_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    # pkg-config alone is not enough to pick this VTE. vte4-sys hard-codes
+    # #[link(name = "vte-2.91-gtk4")], and ld resolves that against the -L dirs
+    # in order: every -sys crate adds its Homebrew dirs, gtk4-sys & co. come
+    # before vte4-sys, and one of them also holds Homebrew's libvte. A -L from
+    # RUSTFLAGS goes ahead of all build-script dirs, so this prefix wins.
+    export RUSTFLAGS="$RUSTFLAGS -L native=$VTE_PREFIX/lib"
 fi
 
 cargo build --release --locked

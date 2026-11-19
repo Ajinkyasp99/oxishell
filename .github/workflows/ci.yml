@@ -20,7 +20,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         # A stalled mirror or package step must fail fast, not hold the job for hours.
-        timeout-minutes: 10
+        # scripts/ci-apt-install.sh gives each mirror up to 5 min before trying the next.
+        timeout-minutes: 15
         run: |
           scripts/ci-apt-install.sh \
             build-essential pkg-config libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \

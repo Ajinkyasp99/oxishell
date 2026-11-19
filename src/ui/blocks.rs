@@ -386,6 +386,13 @@ impl Blocks {
             .collect()
     }
 
+    /// Bounds of what the overlay draws now, in its own coordinates (for tests).
+    pub fn drawn_bounds(&self) -> Option<graphene::Rect> {
+        let snap = gtk4::Snapshot::new();
+        self.draw(&self.area, &snap);
+        snap.to_node().map(|n| n.bounds())
+    }
+
     /// Where each block on screen is drawn, in pixels from the top.
     fn placed(&self, term: &vte4::Terminal, height: f64) -> Vec<Placed> {
         let Some(adj) = term.vadjustment() else {
@@ -445,6 +452,9 @@ impl Blocks {
         let with_alpha = |c: gdk::RGBA, a: f32| gdk::RGBA::new(c.red(), c.green(), c.blue(), a);
         let (red, green) = (self.red.get(), self.green.get());
         let list = self.list.borrow();
+        // A block scrolled partly above the terminal has a negative `top`: keep
+        // its header inside the terminal instead of drawing it over the chip row.
+        snap.push_clip(&graphene::Rect::new(0.0, 0.0, width, area.height() as f32));
         for &Placed { index, top, end } in &placed {
             let b = &list[index];
             let failed = matches!(b.result, Some((s, _)) if s != 0);
@@ -479,6 +489,7 @@ impl Blocks {
                 text(&status_text(status, took), width - 18.0, true, color);
             }
         }
+        snap.pop();
     }
 }
 
