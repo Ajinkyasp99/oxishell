@@ -58,6 +58,11 @@
     <category>TerminalEmulator</category>
   </categories>
   <releases>
+    <release version="0.3.1" date="2026-11-19">
+      <description>
+        <p>Lighter background checks, faster history import, a smaller macOS app and a Homebrew install that adds Oxishell.app.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-11-18">
       <description>
         <p>macOS support: .dmg for Apple silicon and Intel, Homebrew, Cmd shortcuts</p>

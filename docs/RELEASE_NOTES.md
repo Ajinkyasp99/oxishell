@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.3.1 — 2026-11-19
 
 - **Lighter in the background:** listening ports and git status are checked less often while nothing
   changes (ports every 9 s, backing off to 30 s; git every 5 s, backing off to 30 s), and a change in the
