@@ -4,6 +4,13 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 const script = readFileSync(new URL("../marketing-website/site.js", import.meta.url), "utf8");
+const page = readFileSync(new URL("../marketing-website/index.html", import.meta.url), "utf8");
+
+test("links to the Medium article and identifies release-dependent features", () => {
+  assert.match(page, /href="https:\/\/medium\.com\/@ajinkya_Patil\/linux-terminal-for-claude-code-codex-gemini-221546a50632"/);
+  assert.match(page, /availability in downloadable packages depends on the release/);
+  assert.match(page, /docs\/RELEASE_NOTES\.md/);
+});
 
 function loadCopyControl(clipboard) {
   const listeners = new Map();
