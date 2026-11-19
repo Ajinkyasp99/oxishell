@@ -77,7 +77,9 @@ pub fn read_new_commands(path: &Path, offset: &mut u64) -> Vec<String> {
     parse_hist_log(&String::from_utf8_lossy(&buf[..=end]))
 }
 
-/// bash: run at every prompt (shell builtins only, no extra process).
+/// bash: run at every prompt (shell builtins only, no extra process on bash 5+;
+/// bash 4 and older, such as macOS's `/bin/bash` 3.2, fork one subshell to read
+/// the history, see below).
 ///
 /// It remembers the last exit status, reports the active Python/conda env for
 /// the chips (`${var##*/}` keeps the venv's folder name) and, with
@@ -92,12 +94,20 @@ pub fn read_new_commands(path: &Path, offset: &mut u64) -> Vec<String> {
 /// tells oxishell when a command finished, and the status how.
 pub const BASH_PROMPT_COMMAND: &str = concat!(
     r#"__oxishell_status=$?; "#,
-    // Every command bash adds to its history is appended to the pane's log
-    // (`fc` and the tests are builtins: no extra process). The first prompt
-    // only records the history number, so the previous session's last command
-    // is not logged again; Enter on an empty line and lines bash does not keep
-    // (HISTCONTROL) leave HISTCMD unchanged and log nothing.
-    r#"if [ -n "$OXISHELL_ENV_FILE" ] && [ "${__oxishell_hn-}" != "$HISTCMD" ]; then [ -n "${__oxishell_hn+x}" ] && builtin fc -l -1 >> "${OXISHELL_ENV_FILE%.env}.hist" 2>/dev/null; __oxishell_hn=$HISTCMD; fi; "#,
+    // Every command bash adds to its history is appended to the pane's log.
+    // The first prompt only records the history number, so the previous
+    // session's last command is not logged again; Enter on an empty line and
+    // lines bash does not keep (HISTCONTROL) leave the number unchanged and log
+    // nothing.
+    // bash 5+: `$HISTCMD` and `fc -l -1` (builtins: no extra process).
+    // bash 4 and older (macOS's /bin/bash 3.2): inside PROMPT_COMMAND `$HISTCMD`
+    // is always 1 and `fc -l -1` is often one entry behind, so the last entry
+    // comes from `history 1` (`<number><marker> <command>`; HISTTIMEFORMAT
+    // cleared so no timestamp precedes the command), at the cost of one
+    // subshell (fork, no exec) per prompt.
+    r#"if [ -n "$OXISHELL_ENV_FILE" ]; then "#,
+    r#"if (( BASH_VERSINFO[0] >= 5 )); then __oxishell_n=$HISTCMD; else __oxishell_h=$(HISTTIMEFORMAT= builtin history 1); __oxishell_h=${__oxishell_h#"${__oxishell_h%%[! ]*}"}; __oxishell_n=${__oxishell_h%%[!0-9]*}; fi; "#,
+    r#"if [ "${__oxishell_hn-}" != "$__oxishell_n" ]; then if [ -n "${__oxishell_hn+x}" ]; then if (( BASH_VERSINFO[0] >= 5 )); then builtin fc -l -1; else builtin printf '%s\t %s\n' "$__oxishell_n" "${__oxishell_h#"$__oxishell_n"??}"; fi >> "${OXISHELL_ENV_FILE%.env}.hist" 2>/dev/null; fi; __oxishell_hn=$__oxishell_n; fi; fi; "#,
     r#"[ -n "$OXISHELL_ENV_FILE" ] && builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV##*/}" "$CONDA_DEFAULT_ENV" "$__oxishell_status" >| "$OXISHELL_ENV_FILE" 2>/dev/null; "#,
     r#"if [ "$OXISHELL_COMPACT_PROMPT" = 1 ]; then if [ "$__oxishell_status" = 0 ]; then PS1='\[\e[1;32m\]❯\[\e[0m\] '; else PS1='\[\e[1;31m\]❯\[\e[0m\] '; fi; "#,
     r#"if [ "$OXISHELL_BLOCKS" = 1 ]; then PS1='\n'"$PS1"; fi; "#,
