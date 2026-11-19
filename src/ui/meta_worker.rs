@@ -63,6 +63,8 @@ pub struct Update {
     fg_agent: Option<&'static str>,
     fg_program: Option<String>,
     python_env: Option<String>,
+    /// Commands the shell ran since the last update (from its history log).
+    commands: Vec<String>,
     busy: bool,
     compose: Option<ComposeScan>,
     ps: Option<Result<Vec<ServiceStatus>, String>>,
@@ -323,6 +325,8 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
             let mut ports_sched = PortSchedule::default();
             let mut prompt_watch = PromptWatch::default();
             let mut compose_cache = ComposeCache::default();
+            // How much of each pane's history log has been read.
+            let mut hist_offsets: HashMap<PaneId, u64> = HashMap::new();
             while let Ok(first) = rx.recv() {
                 // Coalesce queued jobs per pane.
                 let mut jobs: HashMap<PaneId, Job> = HashMap::new();
@@ -341,6 +345,7 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
                         if !alive {
                             ports_sched.forget(job.pane);
                             prompt_watch.forget(job.pane);
+                            hist_offsets.remove(&job.pane);
                         }
                         alive
                     })
@@ -407,6 +412,10 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
                         }
                     };
                     let ports = due.remove(&job.pane);
+                    let commands = crate::shellint::read_new_commands(
+                        &crate::shellint::hist_file(job.pane),
+                        hist_offsets.entry(job.pane).or_default(),
+                    );
                     if utx
                         .send_blocking(Update {
                             pane: job.pane,
@@ -416,6 +425,7 @@ pub fn spawn() -> (std::sync::mpsc::Sender<Job>, async_channel::Receiver<Update>
                             fg_agent,
                             fg_program,
                             python_env: crate::shellint::read_env(&job.env_file),
+                            commands,
                             busy,
                             compose: compose_scan,
                             ps,
@@ -448,6 +458,12 @@ pub fn attach(app: &AppRc, rx: async_channel::Receiver<Update>) {
             let Some(a) = w.upgrade() else { return };
             let changed = {
                 let mut i = a.inner.borrow_mut();
+                if !u.commands.is_empty() && i.panes.contains_key(&u.pane) {
+                    // What the shell itself ran: exact, whatever keys built the line.
+                    for cmd in &u.commands {
+                        i.history.push(cmd);
+                    }
+                }
                 let Some(p) = i.panes.get_mut(&u.pane) else { continue };
                 let mut changed = false;
                 if u.cwd.is_some() && p.cwd != u.cwd {

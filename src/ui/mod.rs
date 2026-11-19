@@ -939,6 +939,7 @@ impl App {
         let p = self.inner.borrow_mut().panes.remove(&pane);
         self.inner.borrow_mut().notes.forget_pane(pane);
         let _ = std::fs::remove_file(crate::shellint::env_file(pane));
+        let _ = std::fs::remove_file(crate::shellint::hist_file(pane));
         if let Some(p) = p {
             pane::detach(&p.frame);
             if kill {

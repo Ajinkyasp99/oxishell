@@ -20,7 +20,66 @@ pub fn env_file(pane: crate::model::PaneId) -> PathBuf {
     crate::paths::runtime_dir().join("panes").join(format!("{pane}.env"))
 }
 
-/// bash: run at every prompt (shell builtins only, no extra process).
+/// Where the shell appends every command it runs (`<seq>\t <command>` lines,
+/// the format of `fc -l`).
+/// The shell knows the command exactly, whatever the user did to build it
+/// (Tab, arrows, Ctrl+R, paste); oxishell's own view of the keystrokes cannot.
+pub fn hist_file(pane: crate::model::PaneId) -> PathBuf {
+    env_file(pane).with_extension("hist")
+}
+
+/// Commands in the text of a history log: `<seq>\t<command>` lines. A line
+/// without a sequence number continues the previous command (multi-line
+/// commands, which are not kept as suggestions).
+pub fn parse_hist_log(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for l in text.lines() {
+        let head = l.trim_start();
+        let digits = head.bytes().take_while(u8::is_ascii_digit).count();
+        match head[digits..].strip_prefix('\t') {
+            // `fc -l` puts a marker column (space, or `*` for an edited entry) first.
+            Some(cmd) if digits > 0 => out.push(cmd.strip_prefix([' ', '*']).unwrap_or(cmd).to_string()),
+            _ => {
+                if let Some(last) = out.last_mut() {
+                    last.push('\n');
+                    last.push_str(l);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The complete lines appended to `path` since `*offset`, as commands. A
+/// half-written last line waits for the next call; a file that shrank (the
+/// pane was restarted) is read from its start.
+pub fn read_new_commands(path: &Path, offset: &mut u64) -> Vec<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        *offset = 0;
+        return Vec::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if len < *offset {
+        *offset = 0;
+    }
+    if len == *offset || f.seek(SeekFrom::Start(*offset)).is_err() {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    if f.take(len - *offset).read_to_end(&mut buf).is_err() {
+        return Vec::new();
+    }
+    let Some(end) = buf.iter().rposition(|b| *b == b'\n') else {
+        return Vec::new();
+    };
+    *offset += end as u64 + 1;
+    parse_hist_log(&String::from_utf8_lossy(&buf[..=end]))
+}
+
+/// bash: run at every prompt (shell builtins only, no extra process on bash 5+;
+/// bash 4 and older, such as macOS's `/bin/bash` 3.2, fork one subshell to read
+/// the history, see below).
 ///
 /// It remembers the last exit status, reports the active Python/conda env for
 /// the chips (`${var##*/}` keeps the venv's folder name) and, with
@@ -35,6 +94,20 @@ pub fn env_file(pane: crate::model::PaneId) -> PathBuf {
 /// tells oxishell when a command finished, and the status how.
 pub const BASH_PROMPT_COMMAND: &str = concat!(
     r#"__oxishell_status=$?; "#,
+    // Every command bash adds to its history is appended to the pane's log.
+    // The first prompt only records the history number, so the previous
+    // session's last command is not logged again; Enter on an empty line and
+    // lines bash does not keep (HISTCONTROL) leave the number unchanged and log
+    // nothing.
+    // bash 5+: `$HISTCMD` and `fc -l -1` (builtins: no extra process).
+    // bash 4 and older (macOS's /bin/bash 3.2): inside PROMPT_COMMAND `$HISTCMD`
+    // is always 1 and `fc -l -1` is often one entry behind, so the last entry
+    // comes from `history 1` (`<number><marker> <command>`; HISTTIMEFORMAT
+    // cleared so no timestamp precedes the command), at the cost of one
+    // subshell (fork, no exec) per prompt.
+    r#"if [ -n "$OXISHELL_ENV_FILE" ]; then "#,
+    r#"if (( BASH_VERSINFO[0] >= 5 )); then __oxishell_n=$HISTCMD; else __oxishell_h=$(HISTTIMEFORMAT= builtin history 1); __oxishell_h=${__oxishell_h#"${__oxishell_h%%[! ]*}"}; __oxishell_n=${__oxishell_h%%[!0-9]*}; fi; "#,
+    r#"if [ "${__oxishell_hn-}" != "$__oxishell_n" ]; then if [ -n "${__oxishell_hn+x}" ]; then if (( BASH_VERSINFO[0] >= 5 )); then builtin fc -l -1; else builtin printf '%s\t %s\n' "$__oxishell_n" "${__oxishell_h#"$__oxishell_n"??}"; fi >> "${OXISHELL_ENV_FILE%.env}.hist" 2>/dev/null; fi; __oxishell_hn=$__oxishell_n; fi; fi; "#,
     r#"[ -n "$OXISHELL_ENV_FILE" ] && builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV##*/}" "$CONDA_DEFAULT_ENV" "$__oxishell_status" >| "$OXISHELL_ENV_FILE" 2>/dev/null; "#,
     r#"if [ "$OXISHELL_COMPACT_PROMPT" = 1 ]; then if [ "$__oxishell_status" = 0 ]; then PS1='\[\e[1;32m\]❯\[\e[0m\] '; else PS1='\[\e[1;31m\]❯\[\e[0m\] '; fi; "#,
     r#"if [ "$OXISHELL_BLOCKS" = 1 ]; then PS1='\n'"$PS1"; fi; "#,
@@ -49,13 +122,20 @@ pub fn snippet(shell: &str) -> Option<String> {
         ),
         "zsh" => r#"# oxishell context chips and compact prompt — add to ~/.zshrc
 if [[ -n "$OXISHELL_ENV_FILE" ]]; then
+  # Every command line zsh runs is appended to the pane's history log.
+  _oxishell_preexec() { __oxishell_cmd=$1 }
   _oxishell_precmd() {
     local s=$?
+    if [[ -n "$__oxishell_cmd" && "$__oxishell_cmd" != *$'\n'* ]]; then
+      builtin print -r -- "$HISTCMD"$'\t '"$__oxishell_cmd" >>|"${OXISHELL_ENV_FILE%.env}.hist" 2>/dev/null
+    fi
+    __oxishell_cmd=
     builtin printf '%s\n%s\n%s\n' "${VIRTUAL_ENV:t}" "$CONDA_DEFAULT_ENV" "$s" >| "$OXISHELL_ENV_FILE" 2>/dev/null
     [[ "$OXISHELL_COMPACT_PROMPT" == 1 ]] && PROMPT='%(?.%F{green}.%F{red})%B❯%b%f ' && RPROMPT=''
     [[ "$OXISHELL_COMPACT_PROMPT" == 1 && "$OXISHELL_BLOCKS" == 1 ]] && PROMPT=$'\n'"$PROMPT"
+    return 0
   }
-  autoload -Uz add-zsh-hook && add-zsh-hook precmd _oxishell_precmd
+  autoload -Uz add-zsh-hook && add-zsh-hook precmd _oxishell_precmd && add-zsh-hook preexec _oxishell_preexec
   # Typed command in bold cyan (zsh draws the input line itself).
   [[ "$OXISHELL_COMPACT_PROMPT" == 1 && "$OXISHELL_HIGHLIGHT_CMD" == 1 ]] && zle_highlight=(default:fg=cyan,bold)
 fi
@@ -63,8 +143,18 @@ fi
         .to_string(),
         "fish" => r#"# oxishell context chips and compact prompt — add to ~/.config/fish/config.fish
 if set -q OXISHELL_ENV_FILE
+    # Every command fish runs is appended to the pane's history log.
+    function _oxishell_postexec --on-event fish_postexec
+        set -g __oxishell_cmd $argv[1]
+    end
     function _oxishell_report_env --on-event fish_prompt
         set -l s $status
+        if set -q __oxishell_cmd; and not string match -q -- "*"\n"*" $__oxishell_cmd
+            set -q __oxishell_seq; or set -g __oxishell_seq 0
+            set -g __oxishell_seq (math $__oxishell_seq + 1)
+            printf '%s\t %s\n' $__oxishell_seq $__oxishell_cmd >> (string replace -r '\.env$' .hist -- $OXISHELL_ENV_FILE) 2>/dev/null
+        end
+        set -e __oxishell_cmd
         set -l venv ''
         set -q VIRTUAL_ENV; and set venv (path basename $VIRTUAL_ENV)
         printf '%s\n%s\n%s\n' "$venv" "$CONDA_DEFAULT_ENV" $s > $OXISHELL_ENV_FILE 2>/dev/null
@@ -228,6 +318,9 @@ mod tests {
             .env("HOME", &home)
             .env("ZDOTDIR", &ours)
             .env_remove("OXISHELL_ORIG_ZDOTDIR")
+            .env_remove("OXISHELL_COMPACT_PROMPT")
+            .env_remove("OXISHELL_BLOCKS")
+            .env_remove("OXISHELL_HIGHLIGHT_CMD")
             .env("OXISHELL_ENV_FILE", &file)
             .env("VIRTUAL_ENV", "/x/venv")
             .output()
@@ -237,6 +330,27 @@ mod tests {
         let report = std::fs::read_to_string(&file).unwrap();
         assert_eq!(parse_env_file(&report), Some("venv".into()));
         assert_eq!(parse_status(&report), Some(4));
+        // Every command line zsh ran is logged (even with `setopt noclobber`);
+        // an empty Enter runs no preexec and logs nothing.
+        let script = "setopt noclobber; for c in 'git status' 'echo a b'; do for f in $preexec_functions; do $f $c; done; for f in $precmd_functions; do $f; done; done; for f in $precmd_functions; do $f; done";
+        let ok = std::process::Command::new("zsh")
+            .args(["-i", "-c", script])
+            .env("HOME", &home)
+            .env("ZDOTDIR", &ours)
+            .env_remove("OXISHELL_ORIG_ZDOTDIR")
+            .env_remove("OXISHELL_COMPACT_PROMPT")
+            .env_remove("OXISHELL_BLOCKS")
+            .env_remove("OXISHELL_HIGHLIGHT_CMD")
+            .env("OXISHELL_ENV_FILE", &file)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        let mut off = 0;
+        assert_eq!(
+            read_new_commands(&file.with_extension("hist"), &mut off),
+            vec!["git status", "echo a b"]
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -361,6 +475,73 @@ mod tests {
             .output()
             .unwrap();
         assert_eq!(String::from_utf8(out.stdout).unwrap(), "mine$ ");
+    }
+
+    #[test]
+    fn parses_history_log() {
+        assert_eq!(parse_hist_log("  5\t git status\n6\t*ls -la\n"), vec!["git status", "ls -la"]);
+        // A tab inside the command stays; a line without a number continues the previous one.
+        assert_eq!(
+            parse_hist_log("7\t printf 'a\tb'\n8\t for i in 1\ndo :\n"),
+            vec!["printf 'a\tb'", "for i in 1\ndo :"]
+        );
+        assert!(parse_hist_log("garbage\n").is_empty());
+    }
+
+    #[test]
+    fn reads_only_new_complete_lines() {
+        let dir = std::env::temp_dir().join(format!("oxishell-histlog-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("p.hist");
+        let mut off = 0;
+        assert!(read_new_commands(&f, &mut off).is_empty(), "no file yet");
+        std::fs::write(&f, "1\t one\n2\t tw").unwrap();
+        assert_eq!(read_new_commands(&f, &mut off), vec!["one"], "half-written line waits");
+        std::fs::write(&f, "1\t one\n2\t two\n3\t three\n").unwrap();
+        assert_eq!(read_new_commands(&f, &mut off), vec!["two", "three"]);
+        assert!(read_new_commands(&f, &mut off).is_empty());
+        std::fs::write(&f, "1\t fresh\n").unwrap();
+        assert_eq!(read_new_commands(&f, &mut off), vec!["fresh"], "restarted pane");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Commands built with Tab, arrows, Ctrl+R or paste reach the log too: the
+    /// shell reports what it ran, not what was typed.
+    #[test]
+    fn bash_hook_logs_every_command_it_keeps() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("oxishell-bashlog-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("old_history"), "echo from-an-old-session\n").unwrap();
+        // An interactive bash on a pipe runs the real hook before every prompt.
+        let mut bash = std::process::Command::new("bash")
+            .args(["--norc", "--noprofile", "-i"])
+            .env("PROMPT_COMMAND", BASH_PROMPT_COMMAND)
+            .env("HISTFILE", dir.join("old_history"))
+            .env("HISTCONTROL", "ignorespace")
+            .env_remove("OXISHELL_COMPACT_PROMPT")
+            .env_remove("OXISHELL_BLOCKS")
+            .env_remove("OXISHELL_HIGHLIGHT_CMD")
+            .env("OXISHELL_ENV_FILE", dir.join("p.env"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        // An empty line and a leading-space line are not kept by bash.
+        bash.stdin
+            .take()
+            .unwrap()
+            .write_all(b"echo one\n\n echo hidden\nfalse\necho two\n")
+            .unwrap();
+        bash.wait().unwrap();
+        let mut off = 0;
+        assert_eq!(
+            read_new_commands(&dir.join("p.hist"), &mut off),
+            vec!["echo one", "false", "echo two"],
+            "the old session's last command is not logged at the first prompt"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

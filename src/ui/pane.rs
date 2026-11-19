@@ -565,6 +565,7 @@ impl App {
             let _ = crate::paths::ensure_private_dir(dir);
         }
         let _ = std::fs::remove_file(&env_file);
+        let _ = std::fs::remove_file(crate::shellint::hist_file(id));
         env.push(format!("OXISHELL_ENV_FILE={}", env_file.display()));
         if self.inner.borrow().config.terminal.compact_prompt {
             env.push("OXISHELL_COMPACT_PROMPT=1".to_string());
