@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
@@ -10,8 +10,30 @@ const page = readFileSync(new URL("../marketing-website/index.html", import.meta
 
 test("links to the Medium article and identifies release-dependent features", () => {
   assert.match(page, /href="https:\/\/medium\.com\/@ajinkya_Patil\/linux-terminal-for-claude-code-codex-gemini-221546a50632"/);
-  assert.match(page, /availability in downloadable packages depends on the release/);
+  assert.match(page, /for availability in downloadable packages/);
   assert.match(page, /docs\/RELEASE_NOTES\.md/);
+});
+
+test("preserves published anchors and installer links", () => {
+  const ids = new Set(Array.from(page.matchAll(/\bid="([^"]+)"/g), ([, id]) => id));
+  for (const id of ["top", "main", "features", "quick-start", "download", "docs"]) {
+    assert.ok(ids.has(id), `missing published anchor ${id}`);
+  }
+  for (const [, anchor] of page.matchAll(/href="#([^"]+)"/g)) {
+    assert.ok(ids.has(anchor), `missing anchor ${anchor}`);
+  }
+  for (const name of ["oxishell_amd64.deb", "oxishell_macos_arm64.dmg", "oxishell_macos_x86_64.dmg"]) {
+    assert.ok(page.includes(`href="https://github.com/Ajinkyasp99/oxishell/releases/latest/download/${name}"`));
+  }
+});
+
+test("ships local assets under the Pages path", () => {
+  const root = new URL("../marketing-website/", import.meta.url);
+  const files = new Set(Array.from(page.matchAll(/(?:\.\/|https:\/\/ajinkyasp99\.github\.io\/oxishell\/)(assets\/[^"\s,]+)/g), ([, file]) => file));
+  for (const file of files) {
+    assert.ok(existsSync(new URL(file, root)), `missing ${file}`);
+  }
+  assert.ok(files.has("assets/social-preview.jpg"));
 });
 
 function downloadBadge(...pages) {
@@ -66,7 +88,8 @@ function loadCopyControl(clipboard) {
   runInNewContext(script, {
     navigator: { clipboard },
     document: {
-      querySelectorAll: () => [button],
+      querySelector: () => null,
+      querySelectorAll: (selector) => selector === "[data-copy]" ? [button] : [],
       getElementById: (id) => ({ "linux-command": command, "copy-status": status })[id],
     },
     window: {
@@ -109,4 +132,54 @@ test("selects the command for manual copying when clipboard access fails", async
   assert.equal(selected(), command);
   assert.equal(button.textContent, "Copy");
   assert.match(status.textContent, /selected for manual copying/);
+});
+
+test("only the selected preview is visible and arrow keys move selection and focus", () => {
+  let focused;
+  function element(id, dataset = {}) {
+    const attributes = new Map();
+    const listeners = new Map();
+    return {
+      id,
+      dataset,
+      hidden: false,
+      attributes,
+      listeners,
+      setAttribute: (key, value) => attributes.set(key, value),
+      addEventListener: (event, callback) => listeners.set(event, callback),
+      focus: () => { focused = id; },
+    };
+  }
+  const panels = [element("workspaces"), element("alerts")];
+  const tabs = panels.map(({ id }) => element(`tab-${id}`, { panel: id }));
+  const list = element("tabs", { tabList: "Feature previews" });
+  list.hidden = true;
+  list.querySelectorAll = () => tabs;
+  const group = element("showcase");
+  group.querySelector = () => list;
+
+  runInNewContext(script, {
+    navigator: {},
+    document: {
+      querySelector: () => null,
+      querySelectorAll: () => [group],
+      getElementById: (id) => panels.find((panel) => panel.id === id),
+    },
+  });
+
+  assert.equal(list.hidden, false);
+  assert.equal(list.attributes.get("role"), "tablist");
+  assert.deepEqual(panels.map((panel) => panel.hidden), [false, true]);
+  assert.deepEqual(tabs.map((tab) => tab.tabIndex), [0, -1]);
+  assert.equal(panels[1].attributes.get("aria-labelledby"), tabs[1].id);
+
+  let defaultPrevented = false;
+  tabs[0].listeners.get("keydown")({ key: "ArrowLeft", preventDefault: () => { defaultPrevented = true; } });
+  assert.equal(defaultPrevented, true);
+  assert.equal(focused, tabs[1].id);
+  assert.deepEqual(panels.map((panel) => panel.hidden), [true, false]);
+  assert.deepEqual(tabs.map((tab) => tab.attributes.get("aria-selected")), ["false", "true"]);
+
+  tabs[0].listeners.get("click")();
+  assert.deepEqual(panels.map((panel) => panel.hidden), [false, true]);
 });
