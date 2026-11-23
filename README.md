@@ -1,511 +1,272 @@
 <div align="center">
-
-<img src="data/icons/dev.oxishell.Oxishell.svg" width="96" alt="oxishell icon">
-
-# oxishell
-
-**The terminal for AI coding agents on Linux and macOS. Run Claude Code, Codex and Gemini CLI side by side, and get notified the moment one needs you.**
-
-Workspaces in a sidebar · split panes · agent notifications · 41 Warp themes · Ubuntu, Debian (X11 and Wayland) and macOS
-
-[![CI](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml/badge.svg)](https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Ajinkyasp99/oxishell?display_name=tag)](https://github.com/Ajinkyasp99/oxishell/releases/latest)
-[![Package downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fajinkyasp99.github.io%2Foxishell%2Fdownloads.json)](https://github.com/Ajinkyasp99/oxishell/releases)
-[![Stars](https://img.shields.io/github/stars/Ajinkyasp99/oxishell?style=flat)](https://github.com/Ajinkyasp99/oxishell/stargazers)
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
-![Platform: Linux and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-informational)
-
-<img src="docs/assets/hero.png" alt="oxishell terminal on Ubuntu Linux: three workspaces in the sidebar with git branch and ports, split panes, a Claude Code 'needs input' notification badge, and Codex and Claude usage limits at the bottom of the sidebar" width="900">
-
+  <img src="data/icons/dev.oxishell.Oxishell.svg" width="88" alt="OxiShell logo">
+  <h1>OxiShell</h1>
+  <p><strong>One terminal for your projects and coding agents.</strong></p>
+  <p>A free, open-source terminal for Linux and macOS. Run shells, dev servers, and AI coding agents in
+  split panes, and jump straight to the agent that needs your input.</p>
+  <p>
+    <a href="#quick-start"><strong>Download</strong></a> ·
+    <a href="https://ajinkyasp99.github.io/oxishell/">Website</a> ·
+    <a href="#documentation">Documentation</a> ·
+    <a href="https://github.com/Ajinkyasp99/oxishell/releases">GitHub Releases</a> ·
+    <a href="#docker-compose-launcher">Docker Compose</a>
+  </p>
+  <p>
+    <a href="https://github.com/Ajinkyasp99/oxishell/releases/latest"><img src="https://img.shields.io/github/v/release/Ajinkyasp99/oxishell?display_name=tag" alt="Latest GitHub release"></a>
+    <a href="https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml"><img src="https://github.com/Ajinkyasp99/oxishell/actions/workflows/ci.yml/badge.svg" alt="CI build and test status"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License GPL-3.0-or-later"></a>
+  </p>
+  <a href="docs/assets/hero.png"><img src="docs/assets/hero.png" width="840" alt="OxiShell on Ubuntu with project workspaces, split panes for tests and a dev server, and a Claude Code pane requesting input"></a>
 </div>
 
-**oxishell** is a free, open-source terminal app for Ubuntu, Debian and other Linux desktops, made for
-developers who run several AI coding agents and dev servers at once. It is a **cmux alternative for Linux**:
-it brings the workflow of [cmux](https://github.com/manaflow-ai/cmux) (macOS only) to Linux as a real native
-app, written in **Rust + GTK4/libadwaita**, with terminals rendered by **VTE**, the engine behind GNOME
-Terminal. No Electron, no browser, no web terminal.
+## Why OxiShell?
 
-Install on Ubuntu 24.04 / Debian 13 in one line ([details](#install-on-ubuntu-and-debian)):
+Keep each project in its own workspace. Leave the API server and test watcher running, move to another
+project, and use the workspace badge or desktop notification to return when Claude Code or Codex needs a
+decision. Each pane runs a regular shell, so you can keep using the command-line tools you already know.
 
-```bash
-wget -qO /tmp/oxishell.deb https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_amd64.deb && sudo apt install /tmp/oxishell.deb
-```
-
-## Why oxishell
-
-When you run Claude Code, Codex or Gemini in several terminals, you keep checking each one to see whether it
-finished or is waiting for you. oxishell keeps every project in its own **workspace**, shows each one's git
-branch, open ports and agent status in a **sidebar**, and **lights up the pane** the moment an agent needs
-input.
+OxiShell is a native desktop terminal emulator and an independent cmux alternative for Linux with a
+macOS build as well. It pairs VTE terminal rendering with desktop notifications and a sidebar that shows
+which agent is active and, when supported by its hooks, whether it is running, waiting, or done.
 
 ## Features
 
-| | |
-|---|---|
-| 🗂 **Workspaces** | Vertical sidebar with each workspace's folder and unread badge, plus **one line per AI agent tab** under it: a coloured state dot (running, needs input, done), the agent, what it is working on (or the tab's name), its model and how long ago it last did something. Click a line to show that tab. (Git branch and ports are in each pane's chips and the status bar.) Background workspaces keep running. Drag to reorder, double-click to rename, ✕ to close (asks first). Right-click → Colour / Icon to mark a workspace (say, red for production). |
-| ⊞ **Split panes** | Split right or down, nest them, drag dividers (or the point where two meet, to resize both ways at once), move focus with <kbd>Alt</kbd>+arrows. Drag a pane's ✥ move handle (next to its ✕) onto another pane of the same tab to swap their places. Each pane is an independent shell. |
-| 📑 **Tabs** | Each workspace has its own tab bar, and each tab has its own split layout. Tabs show the agent and its task (or the running program, or the folder), a state dot and an unread dot, and are listed under the workspace in the sidebar. <kbd>+</kbd> or a double-click on the bar opens a tab in the workspace's folder; double-click a tab (or right-click → Rename…) to name it; ✕ or middle-click closes one (asks first if a program runs); drag tabs to reorder them. Background tabs keep running, and tabs come back after a restart. |
-| 🔔 **Agent notifications** | Hooks for **Claude Code, Codex, Gemini CLI, Qoder, OpenCode**. A blue ring on the pane, a badge on the workspace, a system notification with sound (stays on screen while an agent waits for input; click it to jump to the pane), and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> jumps to it. Long shell commands notify when they finish in a pane you are not watching. |
-| 📊 **Agent limits** | Open Codex and Claude Code sessions show **5-hour and weekly** usage percentages, progress bars and local reset dates/times in AM/PM format at the bottom of the sidebar. Uses local CLI data. |
-| 🎨 **Warp themes** | 41 built-in themes from [Warp](https://github.com/warpdotdev/themes), including gradients. They colour the whole window, not just the text. Drop any Warp `.yaml` theme in to add your own. Background opacity lets windows behind show through while text stays solid. |
-| 💡 **Command suggestions** | As you type, the newest matching command from your bash/zsh/fish history appears dimmed after the cursor. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> searches your whole history. |
-| 🏷 **Context chips** | Warp-style chips above each terminal: active Python venv/conda env, folder, git branch and changes. The prompt becomes a clean `❯` (red after a failed command). |
-| 🧱 **Command blocks** | Warp-style: every command gets a header with its folder, git branch, ✓/✗ exit status and run time. Failed commands get a red edge. Commands you type are highlighted so they stand out from output. |
-| 🔗 **Clickable links** | URLs in any output (agents, builds, logs) are clickable. A click opens a small popup with **Open Link** and **Copy Link**; <kbd>Ctrl</kbd>+click opens the link straight away. File positions such as `src/main.rs:42:7` open in your editor at that line. |
-| ▮ **Cursor** | Block, vertical line or horizontal line, blinking or steady. |
-| 🐳 **Docker Compose launcher** | A button next to a pane's ✥ handle lists the repo's compose files. Pick one (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>) and it runs `docker compose -f <file> up` in the pane. While the stack runs, a bar under the terminal shows each service and its port with rebuild / restart / stop, and a crashed service raises a notification. Optional, on by default; turn it off in Settings → Workflow. |
-| ⌘ **Command palette** | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>: every action, workspace, theme and your own project commands, with fuzzy search. |
-| 🤖 **Scriptable** | The `oxi` CLI controls the running app over a private local socket: create workspaces, split, read output, send notifications. |
-| 💾 **Sessions** | Workspaces, layouts, directories and agent sessions come back after a restart, each terminal clean at the top. Commands are never re-run. |
-| 🐧 **Native** | GTK4, X11 and Wayland, light/dark aware, ~180 ms startup, ~1 % idle CPU with 20 panes ([measured](docs/PERFORMANCE.md)). |
-
-## Install on Ubuntu and Debian
-
-### Requirements
-
-| | Minimum | Ubuntu 24.04 package (installed automatically by the .deb) |
-|---|---|---|
-| OS | Ubuntu 24.04+ or Debian 13+, X11 or Wayland | — |
-| GTK | 4.12 | `libgtk-4-1` |
-| libadwaita | 1.5 | `libadwaita-1-0` |
-| VTE for GTK 4 | 0.76 | `libvte-2.91-gtk4-0` |
-| git *(optional)* | any | `git` (branch and changes in the sidebar) |
-
-Check what your system offers before installing (each version must be at least the minimum above):
-
-```bash
-lsb_release -ds                     # e.g. Ubuntu 24.04.1 LTS
-for p in libgtk-4-1 libadwaita-1-0 libvte-2.91-gtk4-0; do
-  printf '%-20s %s\n' "$p" "$(apt-cache policy "$p" | awk '/Candidate/ {print $2}')"
-done
-```
-
-On Ubuntu 24.04 this prints GTK `4.14`, libadwaita `1.5` and VTE `0.76`. If a line shows `(none)`, run
-`sudo apt update` first; if it is still missing, your release is too old.
-
-### Ubuntu / Debian .deb package (recommended)
-
-On a fresh Ubuntu install:
-
-```bash
-sudo apt update
-sudo apt install -y wget ca-certificates git
-wget https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_amd64.deb
-sudo apt install ./oxishell_amd64.deb     # pulls in GTK 4, libadwaita and VTE automatically
-```
-
-Then open **oxishell** from your app menu, or run `oxishell`. The `oxi` command-line tool is installed too.
-
-> apt may print `N: Download is performed unsandboxed as root…` when the file is in your home folder.
-> That note is harmless.
-
-**Notification sounds** use the system sound theme (`sound-theme-freedesktop`, preinstalled on Ubuntu).
-On desktops whose notification server cannot play sounds itself (not GNOME or KDE), also install
-`sudo apt install gnome-session-canberra` so oxishell can play them.
-
-### Build from source (Ubuntu, Fedora, Arch)
-
-On a fresh Ubuntu 24.04:
-
-```bash
-# 1. Build tools and development headers
-sudo apt update
-sudo apt install -y build-essential pkg-config git curl \
-    libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev
-
-# 2. Rust 1.87 or newer. Ubuntu's own rustc (1.75) is too old, so use rustup:
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-. "$HOME/.cargo/env"
-rustc --version                    # must print 1.87 or newer
-
-# 3. Build and run
-git clone https://github.com/Ajinkyasp99/oxishell.git
-cd oxishell
-cargo build --release
-./target/release/oxishell
-```
-
-To install your build system-wide (app menu entry, `oxi` on PATH), turn it into a package:
-
-```bash
-sudo apt install -y dpkg-dev
-scripts/build-deb.sh                                     # writes dist/oxishell_<version>_<arch>.deb
-sudo apt install --reinstall ./dist/oxishell_*.deb
-```
-
-On Fedora (`gtk4-devel libadwaita-devel vte291-gtk4-devel`) or Arch (`gtk4 libadwaita vte4`), install the
-equivalent packages. These distros haven't been tested yet; reports are welcome.
-Full guide, including uninstalling: [docs/INSTALL.md](docs/INSTALL.md).
-
-### Update
-
-Your settings, themes, workspaces and agent hooks are kept across updates. Close oxishell first (or restart it
-afterwards); workspaces come back on the next start.
-
-**Installed from the .deb:** download the latest release and install it over the old one.
-
-```bash
-oxi --version                       # the version you have now
-wget -O oxishell_amd64.deb https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_amd64.deb
-sudo apt install ./oxishell_amd64.deb
-oxi --version                       # the new version
-```
-
-**Built from source:**
-
-```bash
-cd oxishell
-git pull
-cargo build --release                                    # run ./target/release/oxishell, or:
-scripts/build-deb.sh && sudo apt install --reinstall ./dist/oxishell_*.deb
-```
-
-`--reinstall` matters here: a local build keeps the version number, and without it apt says
-*already the newest version* and skips the install.
-
-**macOS, installed with Homebrew (app):**
-
-```bash
-oxi --version                          # the version you have now
-brew update
-brew upgrade --cask oxishell           # replaces /Applications/Oxishell.app
-oxi --version                          # the new version
-```
-
-Quit Oxishell (<kbd>⌘</kbd>+<kbd>Q</kbd>) first, or restart it afterwards. The app is not notarized, so if macOS
-refuses to open the new version, allow it in System Settings → Privacy & Security ("Open Anyway") or run
-`xattr -dr com.apple.quarantine /Applications/Oxishell.app`. Homebrew formula (CLI only):
-`brew upgrade oxishell-cli`.
-
-**macOS, installed from the .dmg:** quit Oxishell, download the new image for your Mac and replace the app
-(by hand: open the .dmg and drag **Oxishell** onto Applications → Replace), or from a terminal:
-
-```bash
-curl -fLo ~/Downloads/oxishell.dmg \
-  "https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_macos_$(uname -m).dmg"   # arm64 or x86_64
-hdiutil attach ~/Downloads/oxishell.dmg -nobrowse -mountpoint /Volumes/oxishell-update
-rm -rf /Applications/Oxishell.app
-cp -R /Volumes/oxishell-update/Oxishell.app /Applications/
-hdiutil detach /Volumes/oxishell-update
-xattr -dr com.apple.quarantine /Applications/Oxishell.app
-oxi --version
-```
-
-The `oxi` link in `/usr/local/bin` points into the app, so it uses the new version automatically.
-
-**macOS, built from source:** `git pull`, then `scripts/build-macos.sh` and install `dist/oxishell_*_macos_*.dmg`
-as above (or run `./target/release/oxishell` after `cargo build --release`).
-
-With Settings → Notifications → Check for updates on, oxishell shows "oxishell X is out" on both Linux and
-macOS when a new release appears; use the commands above for your install method.
-
-## Install on macOS
-
-macOS support is new: please [report](https://github.com/Ajinkyasp99/oxishell/issues) anything that
-behaves differently from Linux. Each release has the same version for every platform.
-
-**App (.dmg).** Download the image for your Mac from the
-[latest release](https://github.com/Ajinkyasp99/oxishell/releases/latest): `oxishell_macos_arm64.dmg`
-(Apple silicon, M1 and newer) or `oxishell_macos_x86_64.dmg` (Intel). Open it and drag **Oxishell** to
-Applications. GTK and every other library are inside the app; nothing else to install. The app is not
-notarized by Apple yet, so the first time, right-click it in Applications and choose **Open** (or run
-`xattr -dr com.apple.quarantine /Applications/Oxishell.app`). The `oxi` CLI is inside the app:
-
-```bash
-sudo ln -sf /Applications/Oxishell.app/Contents/MacOS/oxi /usr/local/bin/oxi
-```
-
-**Homebrew** installs the same app into Applications (so it is in Launchpad and Spotlight) and links the
-`oxi` CLI:
-
-```bash
-brew install Ajinkyasp99/oxishell/oxishell      # same as: brew install --cask Ajinkyasp99/oxishell/oxishell
-```
-
-`brew install Ajinkyasp99/oxishell/oxishell-cli` instead builds only the `oxishell` and `oxi` binaries
-from source; they do not show up in Applications or Launchpad. If you installed 0.3.0 with
-`brew install Ajinkyasp99/oxishell/oxishell` and have no app, switch:
-`brew uninstall --formula oxishell && brew install --cask Ajinkyasp99/oxishell/oxishell`.
-
-On macOS, shortcuts use <kbd>⌘</kbd> (see [Keyboard shortcuts](#keyboard-shortcuts)), panes start your
-login shell, and notifications appear in Notification Center.
+- **Workspaces and split panes.** Group projects in a sidebar, open tabs with independent split layouts,
+  and move focus by keyboard. Background tabs and workspaces keep running while you switch between them.
+  On restart, OxiShell restores layouts and directories. Previous output is optional, and you can
+  explicitly resume agent sessions that reported an ID. See [session setup](docs/AGENTS.md#session-resume).
+- **Agent awareness.** See recognized agents in the sidebar. Supported hooks add state updates, pane
+  highlights, workspace badges, and desktop notifications. Codex and Claude Code can also show local
+  usage limits. See [supported agents](#supported-ai-coding-agents).
+- **Terminal workflow.** Search command history and scrollback, accept inline suggestions, inspect command
+  blocks with exit status and duration, and open URLs or `file:line` locations. Context chips show the
+  active directory, Git branch, and Python environment when available.
+- **Appearance and navigation.** Pick from 41 bundled Warp themes, import a theme, adjust the font or
+  cursor, and remap shortcuts. The command palette searches actions, workspaces, themes, and custom commands.
+- **Local developer tools.** Start a Compose stack from the [launcher](#docker-compose-launcher), inspect
+  listening ports and CPU and memory usage in the status bar, or drive the running app with the `oxi` CLI.
 
 ## Quick start
 
-1. **Open a workspace per project:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>, then rename it with a double-click.
-2. **Split:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> (right) and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> (down). Start your dev server in one pane and an agent in another.
-3. **Turn on agent notifications** (one time): <kbd>Ctrl</kbd>+<kbd>,</kbd> → Notifications → Agent Hooks, and switch on
-   your agents. Or from a terminal:
-   ```bash
-   oxi hooks install --all     # sets up every supported agent found on your PATH
-   ```
-4. **Pick a theme:** <kbd>Ctrl</kbd>+<kbd>,</kbd> → Appearance (→ *Browse all themes* for the full list with search), or
-   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> and type `theme`.
+### Install on Ubuntu and Debian
 
-When an agent finishes or asks for permission, its workspace gets a badge. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> to jump straight to it.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/palette.png" alt="Command palette searching themes"><br><sub><b>Command palette:</b> actions, workspaces, themes, custom commands</sub></td>
-<td width="50%"><img src="docs/assets/notifications.png" alt="Notifications panel with a Claude Code permission request"><br><sub><b>Notifications:</b> which agent needs you, and where</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/assets/agent-hooks.png" alt="Settings, Notifications page: Agent Hooks with Claude Code and Codex switched on"><br><sub><b>Agent hooks:</b> one switch per agent in Settings → Notifications</sub></td>
-<td width="50%"><img src="docs/assets/resume.png" alt="Command palette listing Resume Codex session and Resume Claude Code session after a restart"><br><sub><b>Sessions:</b> after a restart, resume agent sessions from the palette or pane menu</sub></td>
-</tr>
-</table>
-
-## Suggestions and context chips
-
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/suggest.png" alt="Inline suggestion: typing git ch shows eckout -b feature/chips dimmed; chips show CommonVenv, ~/projects/proj, main"><br><sub>Type <code>git ch</code> → the rest comes from your history; press <kbd>→</kbd> to accept</sub></td>
-<td width="50%"><img src="docs/assets/history.png" alt="Command history search popup"><br><sub><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>: search history. Enter puts it on the prompt, Ctrl+Enter runs it</sub></td>
-</tr>
-</table>
-
-Suggestions only appear when you're at a shell prompt (never inside vim, Python and so on), and only while
-oxishell can follow your typing exactly (after <kbd>Tab</kbd>, arrow keys or paste they pause until the
-next line). The **environment chip** works automatically in bash and zsh; for fish add one line:
-`oxi shell-integration fish >> ~/.config/fish/config.fish`. Both features can be turned off in Settings.
-
-Because the chips already show where you are, panes use a compact **`❯` prompt** (green, red after a
-failed command) instead of `user@host:~/path$`. This only applies inside oxishell; your `~/.bashrc`,
-other terminals and SSH sessions keep their own prompt. Turn it off in Settings → Compact prompt.
-
-## Command blocks and clickable links
-
-<table>
-<tr>
-<td width="50%"><img src="docs/assets/cli.png" alt="Command blocks: each oxi command has a header with folder, branch, exit status and duration; a refused oxi pane close shows a red block with exit 1"><br><sub><b>Command blocks:</b> folder, branch, ✓/✗ and run time for every command. Shown here with the <code>oxi</code> CLI</sub></td>
-<td width="50%"><img src="docs/assets/links.png" alt="Clicking a pull request URL in agent output opens a popup with Open Link and Copy Link"><br><sub><b>Links:</b> click any URL for Open / Copy; <kbd>Ctrl</kbd>+click opens it directly</sub></td>
-</tr>
-</table>
-
-Each command you run at the prompt becomes a **block**: a thin separator, then a header with the folder and git
-branch it ran in and, once it ends, ✓ or ✗ with the exit code and how long it took. Failed blocks get a red
-edge, so a failing build is easy to spot when you scroll back. Turn blocks off in Settings → Terminal →
-Command blocks.
-
-**Links** work in everything that prints a URL: agent replies, test runners, `git push` output, logs.
-Clicking one opens a small popup showing the full address with **Open Link** (default browser) and
-**Copy Link**. <kbd>Ctrl</kbd>+click skips the popup, and right-clicking a link puts the same two actions at
-the top of the context menu. Dragging or double-clicking to select text never opens anything.
-
-**File positions** work the same way. When a compiler, test runner or agent prints `src/main.rs:42` or
-`src/main.rs:42:7` (or Python's `File "app.py", line 12`) and that file exists relative to the pane's folder,
-clicking it offers **Open in Editor** and **Copy Path**, and <kbd>Ctrl</kbd>+click opens your editor at that
-line. The editor is your `$VISUAL`/`$EDITOR` or an installed one (VS Code, Zed, …); set it in Settings →
-Terminal → Editor. Terminal editors such as vim or nano open in a new pane.
-
-## Themes
-
-Every theme colours the whole window (background, sidebar, header, badges, focus rings and the terminal),
-just like in Warp. Gradient themes such as *Cyber Wave* and *Willow Dream* paint behind the terminal too.
-
-<img src="docs/assets/themes.png" alt="Six themes: Warp Dark, Cyber Wave, Willow Dream, Catppuccin, Synthwave 84, GitHub Light" width="900">
-
-Built in: Warp Dark/Light, Cyber Wave, Willow Dream, Dark City, Fancy Dracula, Jellyfish, Koi, Leafy, Marble,
-Pink City, Red Rock, Snowy, Paper Botanical, Dracula, Catppuccin, Nord, Tokyo Night, One Dark, GitHub
-Dark/Light, Gruvbox, Solarized, Monokai Pro, Night Owl, Synthwave 84, Ayu, Everforest, Kanagawa, Material,
-Cobalt 2, Outrun, Shades of Purple, Poimandres, Vitesse, Palenight, and more.
-
-**Add your own:** put any [Warp theme file](https://github.com/warpdotdev/themes) into
-`~/.config/oxishell/themes/`. It shows up in the gallery right away, background images included.
-See [docs/THEMES.md](docs/THEMES.md).
-
-<img src="docs/assets/theme-gallery.png" alt="Theme gallery in Settings" width="420">
-
-## Keyboard shortcuts
-
-| Action | Shortcut |
-|---|---|
-| New / close / rename workspace | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> / <kbd>Q</kbd> / <kbd>R</kbd> |
-| Next / previous workspace | <kbd>Ctrl</kbd>+<kbd>PgDn</kbd> / <kbd>Ctrl</kbd>+<kbd>PgUp</kbd>, or <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> |
-| Split right / down | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> / <kbd>O</kbd> |
-| New tab | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
-| Close pane (a tab's last pane closes the tab) | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> |
-| Next / previous tab | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> |
-| Move focus | <kbd>Alt</kbd>+<kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> |
-| Command palette | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
-| Docker Compose files | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> |
-| New line in a prompt (without sending) | <kbd>Shift</kbd>+<kbd>Enter</kbd> or <kbd>Ctrl</kbd>+<kbd>Enter</kbd> |
-| Copy / paste | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> |
-| Search scrollback | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> |
-| Accept suggestion | <kbd>→</kbd> or <kbd>End</kbd> |
-| Search command history | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> |
-| Jump to latest unread | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> |
-| Notifications panel | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> |
-| Toggle sidebar | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> |
-| Font size | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>0</kbd> |
-| Font zoom alternatives | <kbd>Ctrl</kbd>+<kbd>+</kbd> / keypad <kbd>+</kbd> or <kbd>-</kbd>; hold <kbd>Ctrl</kbd> and scroll up/down over a terminal |
-| Settings | <kbd>Ctrl</kbd>+<kbd>,</kbd> |
-
-**New line in a prompt** works in Claude Code, Codex, Gemini CLI and OpenCode (sent as <kbd>Ctrl</kbd>+<kbd>J</kbd>),
-and at a bash, zsh or fish prompt, where Enter then runs all the lines. Other programs (vim, REPLs) get the
-key unchanged.
-
-**On macOS** the defaults use <kbd>⌘</kbd>, so <kbd>Ctrl</kbd> keys stay with the shell: <kbd>⌘</kbd>+<kbd>T</kbd>
-new workspace, <kbd>⌘</kbd>+<kbd>D</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>D</kbd> split right / down,
-<kbd>⌘</kbd>+<kbd>W</kbd> close pane, <kbd>⌘</kbd>+<kbd>C</kbd> / <kbd>V</kbd> copy / paste, <kbd>⌘</kbd>+<kbd>F</kbd>
-search, <kbd>⌘</kbd>+<kbd>1</kbd>…<kbd>9</kbd> and <kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>[</kbd> / <kbd>]</kbd> workspaces,
-<kbd>⌥</kbd><kbd>⌘</kbd>+arrows move focus, <kbd>⌘</kbd>+<kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd> font size,
-<kbd>⌘</kbd>+<kbd>,</kbd> settings, and <kbd>⌘</kbd>-click opens a link. The rest are <kbd>⇧</kbd><kbd>⌘</kbd> with the
-same letter as on Linux (<kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>P</kbd> palette, <kbd>⇧</kbd><kbd>⌘</kbd>+<kbd>L</kbd> Compose files…).
-
-All shortcuts can be changed in Settings → Shortcuts. Right-click a workspace or a terminal for more actions.
-
-The default terminal typeface is **Hack**, bundled with regular, bold, italic and bold-italic faces from
-Warp's font assets. Existing `Monospace 11` defaults switch to `Hack 11`; other configured fonts are preserved.
-Zoom applies to all panes, and <kbd>Ctrl</kbd>+<kbd>0</kbd> returns to the configured font size.
-
-## Command line
+**Ubuntu 24.04+ or Debian 13+ on x86-64 (AMD64)**, with an X11 or Wayland desktop. Download
+[oxishell_amd64.deb](https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_amd64.deb),
+then run this from the download directory.
 
 ```bash
-oxi workspace new --name api --cwd ~/src/api   # new workspace
-oxi pane split --direction down                # split the current pane
-oxi notify -t "Deploy done" -b "prod is green" # ring this pane
-oxi workspace list                             # see everything
-oxi pane read --lines 50                       # last 50 lines of output
+sudo apt install ./oxishell_amd64.deb
 ```
 
-Use it from scripts, git hooks or your own agent tooling. Reference: [docs/CLI.md](docs/CLI.md).
+APT installs GTK4, libadwaita, VTE, and the SVG loader as package dependencies. Git is recommended for
+branch information and Compose discovery from the repository root. Launch **OxiShell** from the
+application menu or run `oxishell`. The package also provides `oxi`.
 
-## Supported AI coding agents
+### Install on macOS
+
+**macOS 15+ on Apple silicon or Intel.** Install the app and its linked `oxi` command with Homebrew.
+
+```bash
+brew install --cask Ajinkyasp99/oxishell/oxishell
+```
+
+For a manual install, download the disk image for your Mac and drag **OxiShell** to **Applications**.
+[Apple silicon (.dmg)](https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_macos_arm64.dmg) ·
+[Intel (.dmg)](https://github.com/Ajinkyasp99/oxishell/releases/latest/download/oxishell_macos_x86_64.dmg)
+
+Open **OxiShell** from **Applications**. The app uses ad hoc signing, so macOS may require manual
+approval on the first launch. If Gatekeeper blocks it, verify your download before using
+**System Settings → Privacy & Security → Open Anyway**. [Apple's first-launch instructions](https://support.apple.com/en-us/102445)
+
+For the standalone disk image, see how to put the [bundled `oxi` command on your PATH](docs/INSTALL.md#macos).
+
+### Update
+
+Use the same distribution channel to update. Quit the app before replacing it or restart it after the
+update. Your settings, themes, saved layouts, and hooks are kept. See
+[update instructions](docs/INSTALL.md#update), [checksum verification](docs/INSTALL.md#from-the-deb-ubuntu-2404-and-newer),
+and [source builds](docs/INSTALL.md#from-source).
+
+After launch, [set up your first workspace](#getting-started-with-ai-agents).
+
+## Getting started with AI agents
+
+1. **Open a workspace.** Launch OxiShell, create a workspace with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>
+   on Linux or <kbd>⌘</kbd>+<kbd>T</kbd> on macOS, then `cd` to your project.
+2. **Split the workspace.** Use the [split-right shortcut](#keyboard-shortcuts) to keep tests or a dev server
+   visible beside your agent. Each pane has its own shell.
+3. **Set up hooks.** Install your agent CLIs separately and make them available on `PATH`. Enable their
+   switches in **Settings → Notifications → Agent Hooks**. The CLI offers the same setup.
+
+   ```bash
+   oxi hooks list
+   oxi hooks install --all
+   ```
+
+   `--all` configures the supported CLIs it finds on `PATH`. You can also install a single agent with
+   `oxi hooks install claude`. The [hook guide](docs/AGENTS.md#hooks) lists the settings files and backup behavior.
+4. **Start the agents inside OxiShell.** Run `claude` or `codex` in a pane and use the adjacent shell for
+   tests. Restart already-running agents after changing hooks. In Codex, open `/hooks` to review and trust
+   the OxiShell hooks.
+5. **Respond from any workspace.** Click the desktop alert or use **Jump to latest unread** in the
+   [shortcut table](#keyboard-shortcuts) to focus the pane.
+
+### Supported AI coding agents
 
 | Agent | Running | Needs input | Finished |
-|---|:-:|:-:|:-:|
-| Claude Code | ✓ | ✓ | ✓ |
-| Gemini CLI | ✓ | — | ✓ |
-| OpenCode¹ | ✓ | ✓ | ✓ |
-| Codex CLI² | ✓ | ✓ | ✓ |
-| Qoder CLI | — | — | ✓ |
-| Anything else | `oxi agent-event` / `oxi notify` from your own scripts | | |
+| --- | :---: | :---: | :---: |
+| Claude Code | Yes | Yes | Yes |
+| OpenAI Codex CLI with lifecycle hooks | Yes | Yes | Yes |
+| Gemini CLI | Yes | — | Yes |
+| Qoder CLI | — | — | Yes |
+| OpenCode plugin | Yes | Yes | Yes |
 
-¹ OpenCode support is implemented as a plugin but has not yet been tested against a live OpenCode.
-² Codex requires a CLI with lifecycle hooks: run `oxi hooks install codex`, restart Codex, then review
-and trust the oxi hooks in `/hooks`. Needs input covers approval requests and `request_user_input`
-questions. Older Codex versions can still use the completion-only `notify` integration; see [agent setup](docs/AGENTS.md).
+The table lists events the integrations can report. OpenCode's plugin is implemented and live agent
+validation remains open. Older Codex releases can use completion-only notifications. Other tools can
+post alerts with `oxi notify` or report state with `oxi agent-event`. If desktop alerts are unavailable,
+you can follow events through in-app badges and the Notifications panel.
+[Agent setup and limitations](docs/AGENTS.md) · [Notification troubleshooting](docs/TROUBLESHOOTING.md)
 
-After a restart, sessions whose hooks reported a session id (Claude Code, Gemini, Qoder, and Codex when it
-sends a thread id) can be resumed from the pane menu or the palette.
+## Workflow demos
 
-oxishell only shows states that the agent's own hooks report; it never guesses. Hooks are silent no-ops
-outside oxishell, so installing them never breaks your agents. Details: [docs/AGENTS.md](docs/AGENTS.md).
+### Follow agent notifications
+
+Use the Notifications panel to find which agent is waiting and open its pane. For example, keep one
+workspace on API tests and another on a Codex task, then jump back when Codex asks for approval.
+
+<details>
+<summary>Notifications panel screenshot</summary>
+<p><a href="docs/assets/notifications.png"><img src="docs/assets/notifications.png" width="720" alt="OxiShell Notifications panel with a Claude Code request for input and a completed build"></a></p>
+</details>
+
+### Docker Compose launcher
+
+1. Make a Compose CLI available on OxiShell's `PATH`. It detects `docker compose`, `docker-compose`, or
+   `podman compose` in that order. For Docker, check with `docker compose version` and start your Docker engine.
+2. Open a pane in your project. The **Compose** icon appears just left of the pane's move handle when
+   the app finds a Compose command and a matching YAML file. The scan starts at the Git repository
+   root or, outside Git, the pane's current directory.
+3. Click the icon or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> on Linux or
+   <kbd>⇧</kbd>+<kbd>⌘</kbd>+<kbd>L</kbd> on macOS. Filter by path with <kbd>/</kbd>, select a file, and
+   press <kbd>Enter</kbd> to run `up` by default. Row buttons offer `up -d`, `logs -f`, and `down`.
+
+<a href="docs/assets/compose-picker.png"><img src="docs/assets/compose-picker.png" width="568" alt="Compose picker grouping project files by folder, with a path filter and actions to start detached, bring down a stack, or follow logs"></a>
+
+The bar below the terminal shows service states and published ports. Use **Rebuild**, **Restart**, or
+**Stop**, or click a service chip to restart just that service. Crash and health alerts are configurable.
+If the launcher is missing or dimmed, check **Settings → Workflow → Docker Compose**, the Compose CLI,
+and the pane's working directory and foreground command. Turn off **Run the command right away** to
+review generated commands before pressing Enter. [Compose launcher guide](docs/COMPOSE_LAUNCHER.md)
 
 ### Codex and Claude usage limits
 
-When either agent is open in any workspace, a compact row appears below the workspace list, for example
-`Codex  5h 21%  Wk 4%`. Both values show **percentage used** over horizontal usage fills. Small AM/PM reset
-times appear directly below each value, with the weekly date (and the 5-hour date when it is on another day).
-Hover for full reset details, or click the row to open usage bars and setup details. Unavailable limits show `—`.
-Rows disappear when the sessions close.
-You also get one notification when a limit passes **80%** and another at **95%** (for example *Claude Code
-usage at 80% · 81% of the 5-hour limit used · Resets in 1h 30m*), plus a short note when that window resets.
-Each threshold is announced once per window, also across restarts. Turn it off in Settings → Notifications →
-Usage limit alerts. Limits are account-wide snapshots, refreshed from data
-reported after agent responses; usage from other devices can lag until the CLI reports again.
+The sidebar shows 5-hour and weekly usage with reset times when local data is available. OxiShell reads
+Codex's local session logs. For live Claude Code updates, run `oxi hooks install claude` and restart
+the agent to use the status-line bridge. The bridge preserves the output of an existing status-line
+command. Usage alerts are configurable in **Settings → Notifications**.
+[Agent setup](docs/AGENTS.md#hooks) · [Usage screenshot](docs/assets/usage.png)
 
-<img src="docs/assets/usage.png" alt="Sidebar usage section with Codex and Claude rows; the Codex row is open, showing 5-hour and weekly limit bars with reset dates" width="900">
+### Suggestions and context chips
 
-Codex works automatically from local session logs (`CODEX_HOME` is respected). For Claude, run
-`oxi hooks install claude` once with the updated `oxi` binary, then restart Claude. This also installs
-a status-line bridge to forward Claude's quota data to oxishell. Any existing status-line command keeps
-its input, output and settings, and is restored by `oxi hooks uninstall claude`. A project-level
-`statusLine` override can take precedence over this user-level bridge.
+At the shell prompt, start a familiar command and press <kbd>→</kbd> or <kbd>End</kbd> to accept a
+history suggestion. Bash and Zsh integration is automatic. Fish users can append the snippet printed
+by `oxi shell-integration fish` to `~/.config/fish/config.fish`. Select a theme in **Settings → Appearance**
+or search for one from the command palette.
+[History screenshot](docs/assets/history.png) · [Theme gallery](docs/assets/theme-gallery.png) · [Theme guide](docs/THEMES.md)
 
-Missing limits remain unavailable (including API-key sessions that do not report subscription quotas).
-Expired snapshots wait for updated data instead of assuming the allowance was replenished. No API keys,
-credentials or network requests are used by oxishell for this feature.
+### Command line
 
-## Comparison with cmux, tmux, Warp and GNOME Terminal
+Run `oxi` in a pane to work with the current OxiShell instance. These commands create and list workspaces
+from a project directory.
 
-oxishell isn't trying to replace your favourite terminal. It's built for one job: keeping track of many
-agent and shell sessions on a Linux desktop.
-
-- **cmux:** oxishell is modelled on cmux's workflow. cmux is macOS only; oxishell is the Linux version
-  (an independent implementation, no shared code).
-- **tmux / Zellij:** great for SSH and multiplexing inside one terminal. oxishell adds a GUI sidebar,
-  desktop notifications and per-pane rings driven by the agents' own hooks. You can still run tmux inside a pane.
-- **GNOME Terminal, Ptyxis, Tilix, Terminator:** these use the same VTE engine as oxishell, so rendering and
-  compatibility are the same. oxishell adds workspaces with git branch, ports and agent status, plus agent
-  notifications and usage limits.
-- **Warp:** oxishell uses Warp's open-source themes and has Warp-style context chips and history suggestions.
-  It is GPL free software that works fully offline, with no account and no telemetry.
-- **Kitty, Alacritty, WezTerm, Ghostty:** fast, highly configurable terminals. oxishell focuses on
-  organising agent sessions rather than on rendering speed or configuration depth.
-
-## FAQ
-
-**Is there a cmux for Linux?**
-Yes, that's what oxishell is: workspaces, split panes and agent notifications, as a native GTK4 app for Ubuntu,
-Debian and other Linux distributions.
-
-**How do I get a notification when Claude Code finishes or needs input on Linux?**
-Run Claude Code inside oxishell and run `oxi hooks install claude` once. When Claude finishes or asks for
-permission, you get a desktop notification, a ring on the pane and a badge on the workspace. Codex, Gemini CLI,
-Qoder and OpenCode work the same way.
-
-**Does it work on Wayland?** Yes, on both Wayland and X11.
-
-**Does it run on macOS?** Yes, on Apple silicon and Intel Macs: a `.dmg` app or Homebrew, see
-[Install on macOS](#install-on-macos).
-
-**Can I use Warp themes on Linux?** Yes. 41 are built in, and any Warp `.yaml` theme you drop into
-`~/.config/oxishell/themes/` shows up right away.
-
-**Does it send my data anywhere?** No. See [Privacy & security](#privacy--security).
-
-## Configuration
-
-Everything is in Settings (<kbd>Ctrl</kbd>+<kbd>,</kbd>), saved to `~/.config/oxishell/config.toml`:
-
-```toml
-[appearance]
-theme = "cyber_wave"
-font = "JetBrains Mono 12"
-
-[[commands]]                 # appear in the command palette as "Run: …"
-name = "Tests"
-command = "cargo test"
+```bash
+oxi workspace new --name api --cwd "$PWD"
+oxi workspace list
 ```
 
-All options: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+The CLI also supports splitting and focusing panes, reading recent output, and posting notifications.
+[CLI reference](docs/CLI.md)
 
-## Privacy & security
+## Keyboard shortcuts
 
-- Everything stays on your machine. No accounts, telemetry, cloud or network listeners.
-- The control socket is private to your user (mode 0600, peer-uid checked).
-- Typing into panes from the CLI (`oxi pane send`) is **off by default**.
-- The update check (Settings → Notifications → Check for updates) is **off by default**. When on, it asks
-  GitHub's public releases API at most once a day and only shows a notice; nothing is downloaded or installed.
-  oxishell makes no other network requests.
-- Restoring a session never re-runs commands; saved output is shown as plain text.
+| Action | Linux | macOS |
+| --- | --- | --- |
+| New workspace | Ctrl+Shift+N | ⌘T |
+| New tab | Ctrl+Shift+T | ⇧⌘T |
+| Split right / down | Ctrl+Shift+E / Ctrl+Shift+O | ⌘D / ⇧⌘D |
+| Focus adjacent pane | Alt+Arrow | ⌥⌘+Arrow |
+| Switch to workspace 1–9 | Alt+1–9 | ⌘1–9 |
+| Command palette | Ctrl+Shift+P | ⇧⌘P |
+| Search command history | Ctrl+Shift+H | ⇧⌘H |
+| Docker Compose files | Ctrl+Shift+L | ⇧⌘L |
+| Notifications panel | Ctrl+Shift+I | ⇧⌘I |
+| Jump to latest unread | Ctrl+Shift+U | ⇧⌘U |
+| Settings | Ctrl+, | ⌘, |
 
-Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
+See **Settings → Shortcuts** for the full list of remappable actions and your current bindings.
+[Complete Linux and macOS defaults](src/config.rs) · [Shortcut configuration](docs/CONFIGURATION.md)
+
+## Technology and architecture
+
+**Rust** implements the workspace model, session storage, and local command API. **GTK4 and libadwaita**
+provide the desktop interface. **VTE** renders each terminal and manages its pseudo-terminal (PTY).
+A background worker handles Git, process, port, and Compose metadata so these checks can run separately
+from the UI. Source builds use Rust 1.87+ and require GTK 4.14+ development headers.
+[Architecture](docs/ARCHITECTURE.md) · [Technology choices](docs/TECH_STACK.md) · [Packaging](docs/PACKAGING.md)
 
 ## Documentation
 
-| | |
-|---|---|
-| [INSTALL](docs/INSTALL.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | installing, removing, fixing problems |
-| [CLI](docs/CLI.md) · [CONFIGURATION](docs/CONFIGURATION.md) · [AGENTS](docs/AGENTS.md) · [THEMES](docs/THEMES.md) | using it |
-| [ARCHITECTURE](docs/ARCHITECTURE.md) · [TECH_STACK](docs/TECH_STACK.md) · [PERFORMANCE](docs/PERFORMANCE.md) | how it works |
-| [ROADMAP](docs/ROADMAP.md) · [RELEASE_NOTES](docs/RELEASE_NOTES.md) · [PHASE_PROGRESS](docs/PHASE_PROGRESS.md) | where it's going |
+| I want to… | Read |
+| --- | --- |
+| Install, update, build, or uninstall | [Installation guide](docs/INSTALL.md) |
+| Configure the terminal and workspace behavior | [Configuration](docs/CONFIGURATION.md) · [Keyboard shortcuts](#keyboard-shortcuts) |
+| Integrate agents and automate tasks | [Agent hooks and resume](docs/AGENTS.md) · [CLI reference](docs/CLI.md) · [Compose launcher](docs/COMPOSE_LAUNCHER.md) |
+| Change the appearance | [Themes](docs/THEMES.md) |
+| Diagnose a problem or check a release | [Troubleshooting](docs/TROUBLESHOOTING.md) · [Release notes](docs/RELEASE_NOTES.md) |
+| Contribute or report a vulnerability | [Contributing guide](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Privacy](#privacy--security) |
+
+### Privacy & security
+
+OxiShell has no account system, telemetry, or network listener. The `oxi` CLI uses an owner-only Unix
+socket. Sending keystrokes through `oxi pane send` is disabled by default. Session restoration displays
+optional saved output as plain text and starts fresh shells. Resume commands wait for you to press Enter.
+The optional update check contacts GitHub to show a release notice. [Security policy](SECURITY.md)
+
+## Roadmap
+
+- **Released.** Workspace tabs, split panes, agent hooks, Compose, and installable Linux and macOS builds
+  are documented in the [release notes](docs/RELEASE_NOTES.md).
+- **Open validation.** Live OpenCode plugin testing and physical-display checks remain open. The release
+  notes track macOS runtime coverage. [Project tracker](docs/PHASE_PROGRESS.md) · [Release notes](docs/RELEASE_NOTES.md)
+- **Future ideas.** Flatpak packaging and per-project command files are proposals in the
+  [roadmap](docs/ROADMAP.md#next-features).
 
 ## Contributing
 
-Bug reports, theme fixes and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup,
-tests and guidelines.
+Bug reports, feature requests, documentation, theme fixes, and code are welcome. For a bug, include your
+OS, OxiShell version (`oxi --version`), and steps to reproduce. To submit a change, fork the repository,
+follow the development setup, run the relevant checks, and open a pull request.
+[Open an issue](https://github.com/Ajinkyasp99/oxishell/issues/new/choose) · [Contributing guide](CONTRIBUTING.md)
 
-## Credits & license
+## Community and support
 
-- Inspired by [cmux](https://github.com/manaflow-ai/cmux) by Manaflow. This is an independent Linux
-  implementation and contains no cmux source code.
-- Themes from [warpdotdev/themes](https://github.com/warpdotdev/themes) (Apache-2.0), with credit to Warp and
-  the original theme authors ([NOTICE](data/themes/NOTICE.md)).
-- Hack font assets from Warp, by Source Foundry and Bitstream ([license](data/fonts/LICENSE.md), [source and checksums](data/fonts/NOTICE.md)).
-- Built on [GTK](https://gtk.org), [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/) and
-  [VTE](https://gitlab.gnome.org/GNOME/vte).
+Use Issues for actionable reports, Discussions for questions or ideas, and the private advisory form
+for vulnerabilities.
+[Issues](https://github.com/Ajinkyasp99/oxishell/issues) ·
+[Discussions](https://github.com/Ajinkyasp99/oxishell/discussions) ·
+[Releases](https://github.com/Ajinkyasp99/oxishell/releases) ·
+[Website](https://ajinkyasp99.github.io/oxishell/) ·
+[Private security advisory](https://github.com/Ajinkyasp99/oxishell/security/advisories/new)
 
-oxishell is free software under the **GNU GPL v3.0 or later**. See [LICENSE](LICENSE).
+## Project ownership and credits
+
+**Created and maintained by Ajinkya Patil.** [Maintainer profile](https://github.com/Ajinkyasp99)
+
+OxiShell is an independent open-source project inspired by [Manaflow's cmux](https://github.com/manaflow-ai/cmux).
+Bundled themes come from Warp and their original authors under Apache 2.0. The bundled Hack font is
+credited to Source Foundry and Bitstream under the licenses included with the fonts.
+[Warp theme attribution](data/themes/NOTICE.md) · [Hack font attribution](data/fonts/NOTICE.md)
+
+## License
+
+OxiShell is licensed under the **GNU General Public License v3.0 or later**. [License text](LICENSE)
