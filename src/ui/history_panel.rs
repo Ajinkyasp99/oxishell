@@ -12,7 +12,7 @@ use crate::history::{now_secs, relative_time, Event};
 use crate::model::PaneId;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 use vte4::prelude::*;
 
@@ -36,13 +36,14 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal) {
     let keys = gtk4::EventControllerKey::new();
     keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
     let w = app.weak();
+    let panel = OnceCell::new();
     keys.connect_key_pressed(move |_, key, _, state| {
         let plain = (state & gtk4::accelerator_get_default_mod_mask()).is_empty();
         if !plain || !matches!(key, gdk::Key::Up | gdk::Key::KP_Up) {
             return glib::Propagation::Proceed;
         }
         match w.upgrade() {
-            Some(a) if open(&a, pane) => glib::Propagation::Stop,
+            Some(a) if open(&a, pane, &panel) => glib::Propagation::Stop,
             _ => glib::Propagation::Proceed,
         }
     });
@@ -51,7 +52,7 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal) {
 
 /// Open the panel for `pane` if the shell is idle at its prompt and there is
 /// matching history. Returns false to let ↑ reach the shell instead.
-fn open(app: &AppRc, pane: PaneId) -> bool {
+fn open(app: &AppRc, pane: PaneId, panel: &OnceCell<Rc<Panel>>) -> bool {
     let (term, query, row) = {
         let Ok(i) = app.inner.try_borrow() else { return false };
         if !i.config.terminal.history_panel {
@@ -75,8 +76,21 @@ fn open(app: &AppRc, pane: PaneId) -> bool {
         (p.term.clone(), tracker.line.clone(), row)
     };
 
-    let panel = Rc::new(build(&term));
-    fill(app, &panel, &query);
+    let panel = panel.get_or_init(|| build_panel(app, pane, &term));
+    fill(app, panel, &query);
+
+    // Span the terminal's width, right under the prompt line (GTK flips it
+    // above the line when there is no room below).
+    let ch = term.char_height() as i32;
+    let width = term.width();
+    panel.pop.set_size_request((width - 16).max(320), -1);
+    panel.pop.set_pointing_to(Some(&gdk::Rectangle::new(0, row as i32 * ch, width, ch)));
+    panel.pop.popup();
+    true
+}
+
+fn build_panel(app: &AppRc, pane: PaneId, term: &vte4::Terminal) -> Rc<Panel> {
+    let panel = Rc::new(build(term));
 
     // Keys while open. Typing goes to the shell (so the prompt stays in sync)
     // and narrows the list.
@@ -84,9 +98,11 @@ fn open(app: &AppRc, pane: PaneId) -> bool {
     keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
     {
         let w = app.weak();
-        let panel = panel.clone();
+        let panel = Rc::downgrade(&panel);
         keys.connect_key_pressed(move |_, key, _, state| {
-            let Some(a) = w.upgrade() else { return glib::Propagation::Proceed };
+            let (Some(a), Some(panel)) = (w.upgrade(), panel.upgrade()) else {
+                return glib::Propagation::Proceed;
+            };
             let mods = state & gtk4::accelerator_get_default_mod_mask();
             let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
             match key {
@@ -136,29 +152,16 @@ fn open(app: &AppRc, pane: PaneId) -> bool {
             }
         });
     }
-    {
-        let t = term.clone();
-        let keep = RefCell::new(Some(panel.clone()));
-        panel.pop.connect_closed(move |pop| {
-            t.grab_focus();
-            let pop = pop.clone();
-            let keep = keep.take();
-            // Unparent after the close animation/signal has finished.
-            glib::idle_add_local_once(move || {
-                pop.unparent();
-                drop(keep);
-            });
-        });
-    }
-
-    // Span the terminal's width, right under the prompt line (GTK flips it
-    // above the line when there is no room below).
-    let ch = term.char_height() as i32;
-    let width = term.width();
-    panel.pop.set_size_request((width - 16).max(320), -1);
-    panel.pop.set_pointing_to(Some(&gdk::Rectangle::new(0, row as i32 * ch, width, ch)));
-    panel.pop.popup();
-    true
+    // GTK 4.14 can still target the popup surface during window layout after
+    // dismissal (GTK #6817). Keep it parented and reuse it until the pane dies.
+    panel.pop.connect_closed(|pop| {
+        if let Some(term) = pop.parent().filter(|term| term.is_mapped()) {
+            term.grab_focus();
+        }
+    });
+    let pop = panel.pop.clone();
+    term.connect_destroy(move |_| pop.unparent());
+    panel
 }
 
 fn build(term: &vte4::Terminal) -> Panel {

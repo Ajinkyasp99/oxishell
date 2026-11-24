@@ -18,7 +18,12 @@ Each tab running an AI agent gets one line under its workspace in the sidebar (u
 tab bar. A tab is described by its focused pane if an agent runs there, else its first pane with an
 agent. A tab you renamed shows its name instead of the summary (the summary is in the tooltip).
 
-- **Dot**: blue running, amber needs input, green done, grey detected without hooks.
+- **State glyph** (monospace, same on Linux and macOS): a blue braille spinner while running, an amber
+  blinking block cursor `▌` when it needs input, a green `✓` when done, a grey `·` when detected without
+  hooks. The animation pauses while the window is not focused. The workspace name carries the same glyph
+  for its most urgent agent (needs input, then running, then done).
+- **Logo**: a small one-colour mark of the agent (Claude, Codex, Gemini; a terminal mark for the others)
+  instead of its name. Hover the line for the name. The workspace's folder path is not shown.
 - **Summary**: the terminal title the agent sets (Claude Code sets a short task title), with spinner
   glyphs removed. A title that was already there when the agent started is the shell's own and is never
   used, nor is one that only names the agent. Without a title, the first line of the last prompt you

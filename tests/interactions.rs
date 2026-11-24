@@ -676,6 +676,48 @@ fn history_panel_shows_the_newest_command_in_full() {
     });
 }
 
+#[test]
+fn history_panel_survives_dismissal_under_the_pointer() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::with_history("history-dismiss", &["echo first", "echo second"]);
+        let pane = h.app.focused_pane().unwrap();
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        pump(2500);
+        h.point(&term);
+        xdo(&["click", "1", "key", "Up"]);
+        pump(300);
+
+        let pop = find_by_class(term.upcast_ref(), "history-panel")
+            .and_downcast::<gtk4::Popover>()
+            .expect("Up opens the history panel");
+        assert!(pop.is_mapped());
+        let (x, y) = window_point(&h, pop.upcast_ref());
+        xdo(&["mousemove", "--window", &h.window, &x.to_string(), &y.to_string()]);
+        pump(100);
+        let pointer = pop.display().default_seat().unwrap().pointer().unwrap();
+        assert_eq!(pointer.surface_at_position().0, pop.surface(), "pointer is over the popup surface");
+        xdo(&["key", "Escape"]);
+        h.app.window.queue_allocate();
+        pump(200);
+
+        assert!(!pop.is_visible());
+        assert_eq!(pop.parent().as_ref(), Some(term.upcast_ref()));
+        assert!(pop.surface().is_some(), "GTK can still address the last pointer target");
+        assert!(term.has_focus());
+        xdo(&["key", "Up"]);
+        pump(200);
+        assert!(pop.is_mapped(), "Up reopens the same popover");
+        xdo(&["key", "Tab"]);
+        pump(200);
+        assert!(!pop.is_visible());
+        assert!(term.has_focus());
+        assert_eq!(h.app.inner.borrow().panes[&pane].suggest.tracker.borrow().line, "echo second");
+    });
+}
+
 /// Centre of terminal cell (`col`, `row`) in terminal widget coordinates.
 fn cell(term: &vte4::Terminal, col: usize, row: usize) -> (f64, f64) {
     (
@@ -3388,6 +3430,31 @@ fn jump_to_unread_selects_background_tab() {
 }
 
 #[test]
+fn a_running_agent_that_went_quiet_shows_as_done() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        use oxishell::agents::{AgentState, HookInfo};
+        let h = Harness::new("agentstall");
+        let p = h.app.focused_pane().unwrap();
+        h.app.agent_event(p, "claude", AgentState::Running, HookInfo::default()).unwrap();
+        pump(200);
+        assert_eq!(h.app.inner.borrow().panes[&p].agent_state(), Some(AgentState::Running));
+        // An interrupted turn sends no hook: the terminal just stops changing.
+        h.app.inner.borrow().panes[&p]
+            .last_output
+            .set(Instant::now() - Duration::from_secs(60));
+        pump(1500);
+        assert_eq!(h.app.inner.borrow().panes[&p].agent_state(), Some(AgentState::Idle));
+        let sidebar: gtk4::Widget = h.app.sidebar_list.clone().upcast();
+        let mut lines = Vec::new();
+        all_by_class(&sidebar, "ws-session", &mut lines);
+        assert!(widget_text(&lines[0]).contains('✓'), "{}", widget_text(&lines[0]));
+    });
+}
+
+#[test]
 fn sidebar_lists_each_tab_and_click_selects_it() {
     if !have_input() {
         return;
@@ -3418,8 +3485,16 @@ fn sidebar_lists_each_tab_and_click_selects_it() {
         let l = lines();
         assert_eq!(l.len(), 2, "one line per tab");
         let texts: Vec<String> = l.iter().map(widget_text).collect();
-        assert!(texts[0].contains("Claude") && texts[0].contains("Fix A"), "{texts:?}");
-        assert!(texts[1].contains("Codex") && texts[1].contains("Needs input: Fix B"), "{texts:?}");
+        let tips: Vec<String> = l.iter().map(|b| b.tooltip_text().unwrap_or_default().to_string()).collect();
+        assert!(tips[0].contains("Claude") && texts[0].contains("Fix A"), "{tips:?} {texts:?}");
+        assert!(
+            tips[1].contains("Codex") && texts[1].contains("Needs input: Fix B"),
+            "{tips:?} {texts:?}"
+        );
+        assert!(
+            texts[0].chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
+            "running shows a spinner: {texts:?}"
+        );
         assert!(l[0].has_css_class("ws-session-active") && !l[1].has_css_class("ws-session-active"));
         h.point(&l[1]);
         xdo(&["click", "1"]);
@@ -3603,7 +3678,10 @@ fn double_clicking_a_tab_renames_it() {
         let mut lines = Vec::new();
         all_by_class(&sidebar, "ws-session", &mut lines);
         let first = widget_text(&lines[0]);
-        assert!(first.contains("Claude") && first.contains("api server"), "{first}");
+        assert!(
+            lines[0].tooltip_text().unwrap_or_default().contains("Claude") && first.contains("api server"),
+            "{first}"
+        );
         assert_eq!(h.app.focused_pane(), Some(p), "renaming keeps the tab shown");
 
         // Clearing the name brings the automatic label back.
@@ -3658,7 +3736,7 @@ fn switching_back_before_a_new_tab_is_shown_settles() {
 }
 
 #[test]
-fn workspace_rows_show_no_ports_or_git_branch() {
+fn workspace_rows_show_no_ports_git_branch_or_folder() {
     if !have_input() {
         return;
     }
@@ -3683,6 +3761,6 @@ fn workspace_rows_show_no_ports_or_git_branch() {
         assert!(!text.contains("feature/auth") && !text.contains('⎇'), "no git branch: {text}");
         assert!(!text.contains("8020") && !text.contains("ports"), "no ports: {text}");
         let cwd = h.app.inner.borrow().panes[&p].cwd.clone().unwrap();
-        assert!(text.contains(&oxishell::meta::display_path(&cwd)), "the folder stays: {text}");
+        assert!(!text.contains(&oxishell::meta::display_path(&cwd)), "no folder path: {text}");
     });
 }

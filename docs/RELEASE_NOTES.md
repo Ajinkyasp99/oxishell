@@ -1,5 +1,28 @@
 # Release notes
 
+## 0.5.0 — 2026-11-24
+
+- **New usage meters:** the sidebar footer shows each agent's 5-hour and weekly limit as a row of cells: five
+  for the hours of the 5-hour window, seven for the days of the week. Cells fill as you use the limit, a
+  white underline marks the hours and days already gone, and the reset time and date sit under each row
+  (`resets 3:10 PM · 24 Nov`). The row turns amber at 90% used. The footer is taller than before (about
+  220 px with both agents).
+- **Official Claude and Codex logos:** the agent marks in the sidebar are now the real Claude and OpenAI
+  (Codex) marks instead of hand-drawn look-alikes. Gemini keeps a simple star, and other agents get a terminal
+  mark. The marks are one colour and follow the theme.
+- **Agent sessions in the sidebar:** each session line now shows the agent's logo instead of its name, with a
+  state glyph: a blue braille spinner while working, an amber blinking cursor when it needs you, a green check
+  when done. The workspace name carries the glyph of its most urgent agent. An agent that the hooks report as
+  running but whose terminal has been silent for 15 seconds is shown as done, because hooks do not report an
+  interrupted turn (Esc). Spacing is looser and the folder path is no longer shown.
+- **Default theme is now Cyber Wave** for new installs and configs that do not set `theme`. Set
+  `theme = "default"` for plain libadwaita.
+- **History panel** opens at the width of the terminal, right under the prompt line, and is reused instead
+  of rebuilt on every ↑.
+- Checked on Linux (unit tests, the GUI suites under Xvfb, and the usage meters rendered in a test window).
+  macOS: the code is shared and the footer uses no OS-specific calls, but it is only compile-checked by CI
+  and has not been tried on a Mac.
+
 ## 0.4.0 — 2026-11-19
 
 - **Command history no longer misses commands:** oxishell used to rebuild each command from the keys you

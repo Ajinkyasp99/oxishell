@@ -30,18 +30,18 @@
 }
 .usage-footer {
   border-top: 1px solid alpha(currentColor, 0.12);
-  padding: 6px 8px;
+  padding: 4px 8px;
 }
 .usage-heading {
   font-size: 0.68em;
   font-weight: 700;
   letter-spacing: 0.06em;
   opacity: 0.55;
-  margin: 0 4px 2px;
+  margin: 0 4px 0;
 }
 .usage-summary > button {
   color: inherit;
-  padding: 3px 4px;
+  padding: 1px 4px;
   min-height: 0;
   border-radius: 5px;
   background: transparent;
@@ -54,44 +54,39 @@
   font-size: 0.85em;
   font-weight: 600;
 }
-.usage-chip {
-  border-radius: 4px;
-  background-color: alpha(currentColor, 0.06);
-}
-.usage-chip-text {
+/* Segment-clock meters: one cell per hour (5h) or day (week). A cell fills
+   from the bottom as the limit is used; the underline marks time already
+   passed. 80% used or more turns the lane amber. */
+.usage-window {
   font-family: monospace;
   font-size: 0.78em;
-  padding: 1px 4px;
+  opacity: 0.6;
 }
-.usage-chip progressbar,
-.usage-chip progressbar trough,
-.usage-chip progressbar progress {
-  min-width: 0;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
+.usage-percent {
+  font-family: monospace;
+  font-size: 0.78em;
 }
-.usage-chip progressbar trough {
-  min-height: 16px;
-  background: transparent;
-  border: none;
+.usage-cell {
+  background-color: alpha(currentColor, 0.1);
+  border-radius: 2px;
 }
-.usage-chip progressbar progress {
-  min-height: 16px;
-  background-color: alpha(@accent_bg_color, 0.3);
-  border: none;
-  border-radius: 4px;
+.usage-cell-fill {
+  background-color: @accent_bg_color;
 }
-.usage-chip.usage-low {
+.usage-cell-passed {
+  background-color: alpha(currentColor, 0.55);
+}
+.usage-low .usage-cell-fill {
+  background-color: @warning_color;
+}
+.usage-low .usage-percent {
   color: @warning_color;
-  background-color: alpha(@warning_color, 0.12);
-}
-.usage-chip.usage-low progressbar progress {
-  background-color: alpha(@warning_color, 0.3);
 }
 .usage-reset {
-  font-size: 0.66em;
+  font-size: 0.64em;
   opacity: 0.65;
+  margin-left: 25px;
+  margin-top: -1px;
 }
 .usage-details {
   padding: 8px;
@@ -112,8 +107,8 @@
 }
 .ws-list > row {
   border-radius: 8px;
-  margin: 2px 6px;
-  padding: 7px 9px;
+  margin: 3px 6px;
+  padding: 9px 9px;
 }
 .ws-list > row:selected {
   background-color: alpha(@accent_bg_color, 0.18);
@@ -149,14 +144,19 @@
   font-size: 0.82em;
   opacity: 0.7;
 }
-/* One line per tab under its workspace: state dot, agent, summary, model + age. */
+/* One line per tab under its workspace, indented: state glyph, agent logo,
+   summary, model + age. The glyph is a spinner while working, a blinking
+   cursor when it needs input and a check when done. */
+.ws-sessions {
+  margin: 4px 0 2px 14px;
+}
 .ws-session {
   min-height: 0;
-  padding: 1px 4px;
+  padding: 3px 4px;
   margin: 0 -4px;
-  font-size: 0.82em;
+  font-size: 0.85em;
   font-weight: normal;
-  opacity: 0.75;
+  opacity: 0.8;
 }
 .ws-session.ws-session-active {
   opacity: 1;
@@ -168,9 +168,15 @@
 .ws-session-dot.dot-done { color: #2ec27e; }
 .ws-session-dot.dot-detected { color: alpha(currentColor, 0.45); }
 .ws-session-dot.dot-none { color: alpha(currentColor, 0.25); }
-.ws-session-agent { font-weight: 600; }
+.ws-glyph {
+  font-family: monospace;
+  font-size: 1em;
+  font-weight: 700;
+}
+.ws-session-logo { opacity: 0.65; }
 .ws-session-meta, .ws-session-more {
-  font-size: 0.92em;
+  font-family: monospace;
+  font-size: 0.88em;
   opacity: 0.6;
 }
 .ws-session-more { font-size: 0.75em; }

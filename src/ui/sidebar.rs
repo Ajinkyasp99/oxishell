@@ -1,4 +1,4 @@
-//! Workspace sidebar: one row per workspace with its folder, a line per
+//! Workspace sidebar: one row per workspace with a line per
 //! AI-agent tab and an unread badge. Rows support click, drag-to-reorder and a
 //! context menu.
 
@@ -7,6 +7,7 @@ use crate::agents::AgentState;
 use crate::model::{TabId, WorkspaceId};
 use gtk4::prelude::*;
 use gtk4::{gdk, gio, glib, Orientation};
+use std::cell::Cell;
 use std::collections::HashMap;
 
 fn row_id(row: &gtk4::ListBoxRow) -> Option<WorkspaceId> {
@@ -49,6 +50,111 @@ pub fn connect(app: &AppRc) {
         super::dialogs::rename_workspace(&a, id);
     });
     app.sidebar_list.add_controller(dbl);
+
+    // Animate the state glyphs (spinner, blinking cursor). A still window has
+    // nothing to show, so it costs nothing while unfocused.
+    let w = app.weak();
+    let mut stalled: Vec<crate::model::PaneId> = Vec::new();
+    let mut ticks = 0u32;
+    glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+        let Some(a) = w.upgrade() else { return glib::ControlFlow::Break };
+        // Once a second: a running agent that went quiet becomes "done" (and
+        // one that resumed becomes "running" again), so rebuild the rows.
+        ticks = ticks.wrapping_add(1);
+        if ticks.is_multiple_of(10) {
+            let mut now: Vec<_> = a
+                .inner
+                .borrow()
+                .panes
+                .iter()
+                .filter(|(_, p)| p.agent_stalled())
+                .map(|(id, _)| *id)
+                .collect();
+            now.sort_unstable();
+            if now != stalled {
+                stalled = now;
+                a.refresh();
+            }
+        }
+        if a.window.is_active() {
+            let frame = (glib::monotonic_time() / 100_000) as u64;
+            if let Ok(rows) = a.sidebar_rows.try_borrow() {
+                for row in rows.values() {
+                    row.tick(frame);
+                }
+            }
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
+/// What the state glyph of a session line (or a workspace) shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Glyph {
+    /// Working: a braille spinner.
+    Run,
+    /// Needs the user: a blinking block cursor.
+    Wait,
+    /// Finished its turn: a check.
+    Done,
+    /// An agent is there but reports no state yet.
+    Seen,
+    /// Nothing to show.
+    None,
+}
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+impl Glyph {
+    fn of(agent: bool, state: Option<AgentState>) -> Self {
+        match (agent, state) {
+            (false, _) => Self::None,
+            (true, Some(AgentState::Running)) => Self::Run,
+            (true, Some(AgentState::Waiting)) => Self::Wait,
+            (true, Some(AgentState::Idle)) => Self::Done,
+            (true, _) => Self::Seen,
+        }
+    }
+
+    /// Most urgent first: needs input, then working, then done.
+    fn rank(self) -> u8 {
+        match self {
+            Self::Wait => 4,
+            Self::Run => 3,
+            Self::Done => 2,
+            Self::Seen => 1,
+            Self::None => 0,
+        }
+    }
+
+    fn text(self, frame: u64) -> &'static str {
+        match self {
+            Self::Run => SPINNER[(frame % SPINNER.len() as u64) as usize],
+            // 500 ms on, 500 ms off.
+            Self::Wait if (frame / 5).is_multiple_of(2) => "▌",
+            Self::Wait => " ",
+            Self::Done => "✓",
+            Self::Seen => "·",
+            Self::None => "",
+        }
+    }
+
+    /// Show `self` on `label` (colour class and text for `frame`).
+    fn apply(self, label: &gtk4::Label, frame: u64) {
+        for (class, on) in [
+            ("dot-running", self == Self::Run),
+            ("dot-waiting", self == Self::Wait),
+            ("dot-done", self == Self::Done),
+            ("dot-detected", self == Self::Seen),
+        ] {
+            if on {
+                label.add_css_class(class);
+            } else {
+                label.remove_css_class(class);
+            }
+        }
+        set_optional_label(label, self.text(frame));
+    }
 }
 
 /// Keep row and button identity across metadata refreshes so an in-flight
@@ -60,7 +166,9 @@ pub(super) struct Row {
     icon: gtk4::Image,
     name: gtk4::Label,
     badge: gtk4::Label,
-    context: gtk4::Label,
+    /// Most urgent state among the workspace's agents.
+    glyph: gtk4::Label,
+    glyph_state: Cell<Glyph>,
     /// One button per tab running an AI agent.
     sessions: gtk4::Box,
     session_lines: HashMap<TabId, SessionLine>,
@@ -75,8 +183,9 @@ const MAX_SESSION_LINES: usize = 8;
 /// is not dropped by replacing them.
 struct SessionLine {
     button: gtk4::Button,
-    dot: gtk4::Label,
-    agent: gtk4::Label,
+    glyph: gtk4::Label,
+    glyph_state: Cell<Glyph>,
+    logo: gtk4::Image,
     summary: gtk4::Label,
     meta: gtk4::Label,
 }
@@ -98,10 +207,10 @@ pub(super) struct SessionInfo {
 impl SessionLine {
     fn new(app: &AppRc, tab: TabId) -> Self {
         let row = gtk4::Box::new(Orientation::Horizontal, 5);
-        let dot = gtk4::Label::new(Some("●"));
-        dot.add_css_class("ws-session-dot");
-        let agent = gtk4::Label::new(None);
-        agent.add_css_class("ws-session-agent");
+        let glyph = state_glyph();
+        let logo = gtk4::Image::new();
+        logo.add_css_class("ws-session-logo");
+        logo.set_pixel_size(16);
         let summary = gtk4::Label::builder()
             .xalign(0.0)
             .hexpand(true)
@@ -110,8 +219,8 @@ impl SessionLine {
         summary.add_css_class("ws-session-summary");
         let meta = gtk4::Label::new(None);
         meta.add_css_class("ws-session-meta");
-        row.append(&dot);
-        row.append(&agent);
+        row.append(&glyph);
+        row.append(&logo);
         row.append(&summary);
         row.append(&meta);
         let button = gtk4::Button::builder().child(&row).build();
@@ -126,31 +235,23 @@ impl SessionLine {
         });
         Self {
             button,
-            dot,
-            agent,
+            glyph,
+            glyph_state: Cell::new(Glyph::None),
+            logo,
             summary,
             meta,
         }
     }
 
     fn update(&self, s: &SessionInfo) {
-        for (class, on) in [
-            ("dot-running", s.state == Some(AgentState::Running)),
-            ("dot-waiting", s.state == Some(AgentState::Waiting)),
-            ("dot-done", s.state == Some(AgentState::Idle)),
-            ("dot-detected", s.agent.is_some() && s.state.is_none()),
-            ("dot-none", s.agent.is_none()),
-        ] {
-            if on {
-                self.dot.add_css_class(class);
-            } else {
-                self.dot.remove_css_class(class);
-            }
+        let glyph = Glyph::of(s.agent.is_some(), s.state);
+        self.glyph_state.set(glyph);
+        glyph.apply(&self.glyph, glyph_frame());
+        let icon = super::icons::agent(s.agent.as_deref().unwrap_or(""));
+        if self.logo.icon_name().as_deref() != Some(icon) {
+            self.logo.set_icon_name(Some(icon));
         }
-        set_optional_label(
-            &self.agent,
-            &s.agent.as_deref().map(crate::agent_info::short_agent).unwrap_or_default(),
-        );
+        self.logo.set_visible(s.agent.is_some());
         if s.active {
             self.button.add_css_class("ws-session-active");
         } else {
@@ -214,7 +315,29 @@ pub(super) fn session_infos(i: &super::Inner, ws: &crate::model::Workspace) -> V
     infos
 }
 
+/// One-character monospace state glyph, as the sidebar shows it.
+fn state_glyph() -> gtk4::Label {
+    let l = gtk4::Label::builder().width_chars(1).build();
+    l.add_css_class("ws-session-dot");
+    l.add_css_class("ws-glyph");
+    l.set_visible(false);
+    l
+}
+
+/// Animation frame (100 ms steps) shared by every glyph.
+fn glyph_frame() -> u64 {
+    (glib::monotonic_time() / 100_000) as u64
+}
+
 impl Row {
+    /// Advance the animated glyphs of this workspace to `frame`.
+    fn tick(&self, frame: u64) {
+        self.glyph_state.get().apply(&self.glyph, frame);
+        for line in self.session_lines.values() {
+            line.glyph_state.get().apply(&line.glyph, frame);
+        }
+    }
+
     fn new(app: &AppRc, id: WorkspaceId) -> Self {
         let widget = gtk4::ListBoxRow::new();
         widget.set_widget_name(&id.to_string());
@@ -229,6 +352,8 @@ impl Row {
         icon.add_css_class("ws-icon");
         icon.set_visible(false);
         top.append(&icon);
+        let glyph = state_glyph();
+        top.append(&glyph);
         let name = gtk4::Label::builder()
             .xalign(0.0)
             .hexpand(true)
@@ -264,7 +389,6 @@ impl Row {
             v.append(&l);
             l
         };
-        let context = label("ws-sub", gtk4::pango::EllipsizeMode::Middle);
         let sessions = gtk4::Box::new(Orientation::Vertical, 0);
         sessions.add_css_class("ws-sessions");
         v.append(&sessions);
@@ -286,7 +410,8 @@ impl Row {
             icon,
             name,
             badge,
-            context,
+            glyph,
+            glyph_state: Cell::new(Glyph::None),
             sessions,
             session_lines: HashMap::new(),
             more,
@@ -337,7 +462,6 @@ pub fn rebuild(app: &AppRc) {
             }
             list.insert(&row.widget, index as i32);
         }
-        let focused = i.panes.get(&ws.focused());
         set_optional_label(&row.name, &ws.name);
         set_color_class(&row.stripe, ws.color.as_deref());
         row.stripe.set_visible(ws.color.is_some());
@@ -349,14 +473,15 @@ pub fn rebuild(app: &AppRc) {
         row.icon.set_visible(icon.is_some());
         let unread = i.notes.unread_for_workspace(ws.id);
         set_optional_label(&row.badge, &if unread > 0 { unread.to_string() } else { String::new() });
-        // Just the folder: branch and ports are in the pane chips and status bar.
-        let folder = focused
-            .and_then(|p| p.cwd.as_ref())
-            .map(|c| crate::meta::display_path(c))
-            .unwrap_or_default();
-        set_optional_label(&row.context, &folder);
         let infos = session_infos(&i, ws);
         sync_sessions(app, row, &infos);
+        let glyph = infos
+            .iter()
+            .map(|s| Glyph::of(s.agent.is_some(), s.state))
+            .max_by_key(|g| g.rank())
+            .unwrap_or(Glyph::None);
+        row.glyph_state.set(glyph);
+        glyph.apply(&row.glyph, glyph_frame());
         let attention = i
             .notes
             .latest_non_agent_for_workspace(ws.id)
