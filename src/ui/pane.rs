@@ -442,6 +442,7 @@ impl App {
         super::compose_ui::watch_input(self, id, &term);
         body.append(&compose.logs_clip);
         body.append(&compose.stack_clip);
+        body.append(&compose.rerun_clip);
         // Fades in over the pane under the pointer while another pane is
         // dragged (CSS class "active"); invisible and click-through otherwise.
         let drop_hint = gtk4::Box::new(Orientation::Vertical, 0);

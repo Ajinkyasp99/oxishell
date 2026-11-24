@@ -1,5 +1,33 @@
 # Release notes
 
+## 0.6.0 — 2026-11-24
+
+- **Compose picker redesigned:** the file list now works like a command bar. The filter has the keyboard from
+  the moment the picker opens, so you just type; it matches file paths and service names (`redis` finds every
+  file with a redis service and underlines the match), and the services of each file are no longer cut off by
+  buttons. Files stay grouped by folder, and while you filter each folder header shows how many of its files
+  match (`▾ repo root · 3 of 8 match`). The picker is wider (540 px) and no longer grows with the longest line;
+  long lines end in an ellipsis.
+- **Last starts:** under the filter, the last three `up` or `up -d` runs of files in the current repo appear as
+  pills (`↺ 1 local-infra · up -d`) that sit side by side and wrap to the next row when a row is full. Click
+  one, or press Ctrl+1 to Ctrl+3 (⌘1 to ⌘3 on macOS), to run it again. Only starts are remembered, never
+  `down`, `logs` or `restart`, and the list is kept across restarts in `~/.local/state/oxishell/compose-starts.json`.
+- **Actions on the selected file only:** the `d -d`, `x down` and `l logs` buttons that repeated on every row
+  are gone. The selected file shows its actions as chips: `up -d`, `up`, `down`, `logs`, `restart`. Enter runs
+  the default action, Tab and Shift+Tab walk the chips, Esc steps back out of them, and every chip can also
+  be clicked.
+- **New picker chords:** Ctrl+X runs `down`, Ctrl+L follows logs, Ctrl+R rescans. On macOS they are ⌘X, ⌘L and
+  ⌘R, so Ctrl stays with the shell. Because the filter takes typing, the old single keys (`d`, `x`, `l`, `u`,
+  `j`, `k`, `r`, `/`) no longer act as shortcuts. On macOS ⌘X therefore no longer cuts text in the filter box.
+- **Run a stopped Compose stack again:** when a stack started from the launcher stops ([stop], Ctrl+C or
+  `down`), its bar shrinks to one line: `↺ docker-compose.yml  stopped just now · 4 services  [run up] [up -d]
+  [×]`. One click starts the same stack again in the pane. The line stays while you run up to two more
+  commands, then goes away. Same on Linux and macOS.
+- Checked on Linux: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, the compose unit tests and
+  the GUI suites under Xvfb. macOS: the picker code is shared and the chords use ⌘ there, but it is not checked
+  on a Mac yet (the cross-compile check could not build a C dependency on the Linux machine), so the macOS
+  picker is only covered by the CI `macos` job until someone tries it by hand.
+
 ## 0.5.0 — 2026-11-24
 
 - **New usage meters:** the sidebar footer shows each agent's 5-hour and weekly limit as a row of cells: five
@@ -15,6 +43,15 @@
   when done. The workspace name carries the glyph of its most urgent agent. An agent that the hooks report as
   running but whose terminal has been silent for 15 seconds is shown as done, because hooks do not report an
   interrupted turn (Esc). Spacing is looser and the folder path is no longer shown.
+- **Every agent in a split tab is listed:** the sidebar now shows one session line per agent pane, not one
+  per tab, so three agents in a tab split three ways get three lines. Clicking a line focuses that pane.
+- **Needs input no longer blinks:** the sidebar marks an agent that needs you with a steady amber `?`
+  instead of a blinking cursor.
+- **Tab names no longer carry the agent's state:** a tab reads `Claude: Fix login bug` whether the agent is
+  working, needs input or is done. The state is now the sidebar's glyph on the tab's left (spinner, steady
+  `?`, `✓`) instead of a plain dot, for the most urgent agent in the tab.
+- **Tab headers in the sidebar:** when agents run in more than one tab of a workspace, each tab's agents are
+  listed under a header with the tab's name (or `Tab N` if it has none); clicking the header shows that tab.
 - **Default theme is now Cyber Wave** for new installs and configs that do not set `theme`. Set
   `theme = "default"` for plain libadwaita.
 - **History panel** opens at the width of the terminal, right under the prompt line, and is reused instead

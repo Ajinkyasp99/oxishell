@@ -83,11 +83,23 @@ pub fn short_agent(agent: &str) -> String {
     .to_string()
 }
 
-/// Tab label: the agent and what it is doing, else the busy program, else
-/// the folder name.
-pub fn tab_text(agent: Option<&str>, summary: Option<&str>, program: Option<&str>, cwd: Option<&std::path::Path>) -> String {
+/// Sidebar header of the tab at `index` (0-based): the name the user gave
+/// it, else "Tab 2".
+pub fn tab_title(index: usize, name: Option<&str>) -> String {
+    match name {
+        Some(name) => name.to_string(),
+        None => format!("Tab {}", index + 1),
+    }
+}
+
+/// Tab label: the agent and its task (title or prompt, never its state),
+/// else the busy program, else the folder name.
+pub fn tab_text(agent: Option<&str>, task: Option<&str>, program: Option<&str>, cwd: Option<&std::path::Path>) -> String {
     if let Some(agent) = agent {
-        return format!("{}: {}", short_agent(agent), summary.unwrap_or(""));
+        return match task {
+            Some(task) => format!("{}: {task}", short_agent(agent)),
+            None => short_agent(agent),
+        };
     }
     if let Some(p) = program.filter(|p| !p.is_empty()) {
         return p.to_string();
@@ -197,9 +209,17 @@ mod tests {
             tab_text(Some("claude"), Some("Fix A"), Some("node"), Some(Path::new("/x/api"))),
             "Claude: Fix A"
         );
+        assert_eq!(tab_text(Some("codex"), None, None, None), "Codex", "no state words without a task");
         assert_eq!(tab_text(None, None, Some("cargo"), Some(Path::new("/x/api"))), "cargo");
         assert_eq!(tab_text(None, None, None, Some(Path::new("/home/u/api"))), "api");
         assert_eq!(tab_text(None, None, None, Some(Path::new("/"))), "/");
         assert_eq!(tab_text(None, None, None, None), "Terminal");
+    }
+
+    #[test]
+    fn tab_title_is_the_name_else_the_number_from_one() {
+        assert_eq!(tab_title(0, None), "Tab 1");
+        assert_eq!(tab_title(2, None), "Tab 3");
+        assert_eq!(tab_title(2, Some("api")), "api");
     }
 }

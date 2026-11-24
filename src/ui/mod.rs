@@ -1599,6 +1599,8 @@ impl App {
                 }
             }),
         );
+        drop(i);
+        compose_ui::command_ran(self, pane);
     }
 
     /// A shell command ended. Long ones raise a notification unless the user

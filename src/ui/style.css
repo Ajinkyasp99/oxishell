@@ -144,9 +144,9 @@
   font-size: 0.82em;
   opacity: 0.7;
 }
-/* One line per tab under its workspace, indented: state glyph, agent logo,
-   summary, model + age. The glyph is a spinner while working, a blinking
-   cursor when it needs input and a check when done. */
+/* One line per agent pane under its workspace, indented: state glyph, agent logo,
+   summary, model + age. The glyph is a spinner while working, a steady
+   amber ? when it needs input and a check when done. */
 .ws-sessions {
   margin: 4px 0 2px 14px;
 }
@@ -180,6 +180,18 @@
   opacity: 0.6;
 }
 .ws-session-more { font-size: 0.75em; }
+/* Tab header over its session lines, shown when agents run in more than one
+   tab of the workspace; the lines under it are indented. */
+.ws-tab-header {
+  min-height: 0;
+  padding: 3px 4px 1px 4px;
+  margin: 2px -4px 0 -4px;
+  font-size: 0.75em;
+  font-weight: 600;
+  opacity: 0.55;
+}
+.ws-tab-header.ws-tab-header-active { opacity: 0.85; }
+.ws-session.ws-session-grouped { margin-left: 6px; }
 
 /* Workspace tab bar: one per workspace, above its terminal area. */
 .tab-bar {
@@ -758,6 +770,50 @@ popover.compose-picker > contents {
   border-left-color: @accent_color;
   color: inherit;
 }
+.compose-recent {
+  padding: 6px 8px;
+  border-bottom: 1px solid alpha(currentColor, 0.15);
+}
+.compose-section {
+  font-size: 0.8em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.compose-recent flowboxchild {
+  padding: 0;
+}
+.compose-pill {
+  min-height: 0;
+  min-width: 0;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid alpha(currentColor, 0.25);
+}
+.compose-pill:hover {
+  border-color: @accent_color;
+  color: @accent_color;
+}
+.compose-chips {
+  padding-top: 4px;
+}
+.compose-chip-btn {
+  min-height: 0;
+  min-width: 0;
+  padding: 1px 9px;
+  border-radius: 4px;
+  border: 1px solid alpha(currentColor, 0.3);
+}
+.compose-chip-btn.compose-chip-go { color: @accent_color; }
+.compose-chip-btn.compose-chip-warn { color: @warning_color; }
+.compose-chip-btn.compose-chip-info { color: @success_color; }
+.compose-chip-btn:hover,
+.compose-chip-btn.compose-chip-on {
+  background-color: currentColor;
+}
+.compose-chip-btn:hover label,
+.compose-chip-btn.compose-chip-on label {
+  color: @window_bg_color;
+}
 .compose-key-btn {
   min-height: 0;
   min-width: 0;
@@ -773,13 +829,15 @@ popover.compose-picker > contents {
   color: @window_bg_color;
 }
 .compose-stack,
-.compose-logs {
+.compose-logs,
+.compose-rerun {
   padding: 2px 8px;
   border-top: 1px solid alpha(currentColor, 0.15);
   background-color: alpha(currentColor, 0.04);
 }
 .compose-stack label,
 .compose-logs label,
+.compose-rerun label,
 .compose-bar-btn,
 .compose-chip {
   font-family: monospace;
@@ -817,6 +875,15 @@ popover.compose-picker > contents {
 }
 .compose-bar-btn.compose-restart:hover {
   background-color: @warning_color;
+  color: @window_bg_color;
+}
+/* The run-again strip after a stack stopped: dim text, dim [×]. */
+.compose-rerun .compose-rerun-text,
+.compose-bar-btn.compose-hide {
+  color: alpha(@window_fg_color, 0.55);
+}
+.compose-bar-btn.compose-hide:hover {
+  background-color: @window_fg_color;
   color: @window_bg_color;
 }
 /* Service health: green up, yellow starting, red crashed, dim finished.

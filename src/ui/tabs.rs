@@ -3,11 +3,12 @@
 //! only re-parented, never recreated); `sync` shows the active tab and
 //! updates labels, state dots and unread marks from the model.
 
+use super::sidebar::Glyph;
 use super::{AppRc, Inner};
-use crate::agents::AgentState;
 use crate::model::{Tab, TabId, WorkspaceId};
 use gtk4::prelude::*;
 use gtk4::{gdk, glib, Orientation};
+use std::cell::Cell;
 
 /// Longest tab label before it is ellipsized.
 const TAB_CHARS: i32 = 28;
@@ -22,13 +23,22 @@ pub(super) struct TabBar {
 
 struct TabWidgets {
     widget: gtk4::Box,
-    dot: gtk4::Label,
+    /// The same state glyph as the sidebar: spinner, `?`, `✓` or `·`.
+    glyph: gtk4::Label,
+    glyph_state: Cell<Glyph>,
     label: gtk4::Label,
 }
 
 impl TabBar {
     pub fn stack(&self) -> &gtk4::Stack {
         &self.stack
+    }
+
+    /// Advance the animated tab glyphs to `frame`.
+    pub(super) fn tick(&self, frame: u64) {
+        for (_, t) in &self.tabs {
+            t.glyph_state.get().apply(&t.glyph, frame);
+        }
     }
 }
 
@@ -42,8 +52,9 @@ pub(super) fn primary_pane(i: &Inner, tab: &Tab) -> crate::model::PaneId {
     tab.layout.panes().into_iter().find(has_agent).unwrap_or(tab.focused)
 }
 
-/// Label of a tab: the name the user gave it, else agent and summary, else
-/// busy program, else folder.
+/// Label of a tab: the name the user gave it, else the agent and its task
+/// (never its state, which the glyph shows, so "needs input" or "done" does
+/// not rename the tab), else the busy program, else the folder.
 pub(super) fn tab_label(i: &Inner, tab: &Tab) -> String {
     if let Some(name) = &tab.name {
         return name.clone();
@@ -53,7 +64,7 @@ pub(super) fn tab_label(i: &Inner, tab: &Tab) -> String {
     };
     crate::agent_info::tab_text(
         p.agent_id(),
-        p.agent_summary().as_deref(),
+        p.agent_title.as_deref().or(p.agent_prompt.as_deref()),
         p.fg_program.as_deref(),
         p.cwd.as_deref(),
     )
@@ -126,9 +137,8 @@ fn build_tab(app: &AppRc, tab: TabId) -> TabWidgets {
     let widget = gtk4::Box::new(Orientation::Horizontal, 5);
     widget.add_css_class("tab");
     widget.set_widget_name(&format!("tab-{tab}"));
-    let dot = gtk4::Label::new(Some("●"));
-    dot.add_css_class("ws-session-dot");
-    dot.set_visible(false);
+    let glyph = super::sidebar::state_glyph();
+    glyph.add_css_class("tab-glyph");
     let label = gtk4::Label::builder()
         .xalign(0.0)
         .max_width_chars(TAB_CHARS)
@@ -151,7 +161,7 @@ fn build_tab(app: &AppRc, tab: TabId) -> TabWidgets {
             glib::idle_add_local_once(move || a.report(a.close_tab(tab, false, true)));
         }
     });
-    widget.append(&dot);
+    widget.append(&glyph);
     widget.append(&label);
     widget.append(&unread);
     widget.append(&close);
@@ -218,7 +228,12 @@ fn build_tab(app: &AppRc, tab: TabId) -> TabWidgets {
         }
     });
     widget.add_controller(src);
-    TabWidgets { widget, dot, label }
+    TabWidgets {
+        widget,
+        glyph,
+        glyph_state: Cell::new(Glyph::None),
+        label,
+    }
 }
 
 /// Where a tab dropped at `x` (in `area` coordinates) goes in `tabs_box`:
@@ -313,13 +328,17 @@ pub(super) fn sync(app: &AppRc) {
             if t.widget.tooltip_text().as_deref() != Some(tip.as_str()) {
                 t.widget.set_tooltip_text(Some(&tip));
             }
-            let agent = primary.and_then(|p| p.agent_id()).is_some();
-            let state = primary.and_then(|p| p.agent_state());
-            t.dot.set_visible(agent);
-            set_class(&t.dot, "dot-running", state == Some(AgentState::Running));
-            set_class(&t.dot, "dot-waiting", state == Some(AgentState::Waiting));
-            set_class(&t.dot, "dot-done", state == Some(AgentState::Idle));
-            set_class(&t.dot, "dot-detected", agent && state.is_none());
+            // Most urgent agent of the tab (a split tab can run several).
+            let glyph = tab
+                .layout
+                .panes()
+                .iter()
+                .filter_map(|id| i.panes.get(id))
+                .map(|p| Glyph::of(p.agent_id().is_some(), p.agent_state()))
+                .max_by_key(|g| g.rank())
+                .unwrap_or(Glyph::None);
+            t.glyph_state.set(glyph);
+            glyph.apply(&t.glyph, super::sidebar::glyph_frame());
         }
     }
 }
