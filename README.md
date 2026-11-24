@@ -160,7 +160,10 @@ review generated commands before pressing Enter. [Compose launcher guide](docs/C
 
 ### Codex and Claude usage limits
 
-The sidebar shows 5-hour and weekly usage with reset times when local data is available. OxiShell reads
+The sidebar shows 5-hour and weekly usage with reset times when local data is available. Each limit is a row
+of cells: five for the hours of the 5-hour window and seven for the days of the week. Cells fill as you use the
+limit, a white underline marks the hours or days already gone, and the reset time and date sit underneath. The
+meter turns amber at 90% used. It looks the same on Linux and macOS. OxiShell reads
 Codex's local session logs. For live Claude Code updates, run `oxi hooks install claude` and restart
 the agent to use the status-line bridge. The bridge preserves the output of an existing status-line
 command. Usage alerts are configurable in **Settings → Notifications**.

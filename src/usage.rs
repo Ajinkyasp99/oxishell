@@ -231,6 +231,10 @@ pub fn read_codex(root: &Path) -> Option<Usage> {
     latest.map(|(_, usage)| usage)
 }
 
+/// Length of Claude Code's and Codex's short and long limit windows, in seconds.
+pub const FIVE_HOUR_SECS: i64 = 5 * 3600;
+pub const WEEK_SECS: i64 = 7 * 86400;
+
 pub fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64
 }
@@ -238,6 +242,13 @@ pub fn now() -> i64 {
 impl Window {
     pub fn expired(&self, now: i64) -> bool {
         self.resets_at.is_some_and(|reset| reset <= now)
+    }
+
+    /// Share (0..=1) of a window of `length` seconds that has already passed,
+    /// worked out from its reset time. `None` when the reset time is unknown.
+    pub fn elapsed_fraction(&self, now: i64, length: i64) -> Option<f64> {
+        let reset = self.resets_at?;
+        Some((1.0 - (reset - now) as f64 / length as f64).clamp(0.0, 1.0))
     }
 
     pub fn remaining(&self) -> f64 {
@@ -366,6 +377,21 @@ mod tests {
         assert_eq!(w.reset_text(1000), "Resets in 1d 1h");
         w.resets_at = None;
         assert_eq!(w.reset_text(1000), "Reset time unavailable");
+    }
+
+    #[test]
+    fn elapsed_fraction_follows_the_reset_time_and_stays_in_range() {
+        let w = |resets_at| Window {
+            used_percent: 10.0,
+            resets_at,
+        };
+        assert_eq!(w(Some(1000 + 3600)).elapsed_fraction(1000, FIVE_HOUR_SECS), Some(0.8));
+        assert_eq!(w(Some(1000 + FIVE_HOUR_SECS)).elapsed_fraction(1000, FIVE_HOUR_SECS), Some(0.0));
+        assert_eq!(w(Some(1000)).elapsed_fraction(1000, FIVE_HOUR_SECS), Some(1.0));
+        // A reset further away than the window, or already past, is clamped.
+        assert_eq!(w(Some(1000 + 2 * WEEK_SECS)).elapsed_fraction(1000, WEEK_SECS), Some(0.0));
+        assert_eq!(w(Some(500)).elapsed_fraction(1000, WEEK_SECS), Some(1.0));
+        assert_eq!(w(None).elapsed_fraction(1000, WEEK_SECS), None);
     }
 
     #[test]

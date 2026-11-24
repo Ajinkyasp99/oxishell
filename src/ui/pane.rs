@@ -15,6 +15,9 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vte4::prelude::*;
 
+/// Silence after which a "running" agent counts as waiting for the user.
+const STALL: Duration = Duration::from_secs(15);
+
 pub struct Pane {
     pub id: PaneId,
     pub frame: gtk4::Box,
@@ -48,6 +51,9 @@ pub struct Pane {
     /// title and never counts as a summary.
     pub agent_seen_title: Option<String>,
     pub last_bell: Cell<Option<Instant>>,
+    /// When the terminal last changed. A working agent redraws its spinner and
+    /// timer every second, so a long silence means it is waiting for input.
+    pub last_output: Rc<Cell<Instant>>,
     /// Input sent before the shell finished spawning; flushed once it has.
     pub pending_input: Rc<std::cell::RefCell<Option<Vec<u8>>>>,
     /// Active Python/conda environment reported by shell integration.
@@ -137,9 +143,20 @@ impl Pane {
             .or(self.fg_agent)
     }
 
-    /// Hook-reported state while the session is live.
+    /// Hook-reported state while the session is live. A "running" agent whose
+    /// terminal has been silent for [`STALL`] is shown as done: hooks do not
+    /// report an interrupted turn (Esc), so it would otherwise run forever.
     pub fn agent_state(&self) -> Option<AgentState> {
-        self.agent.as_ref().map(|(_, s, _)| *s).filter(|s| *s != AgentState::Ended)
+        let state = self.agent.as_ref().map(|(_, s, _)| *s).filter(|s| *s != AgentState::Ended);
+        match state {
+            Some(AgentState::Running) if self.agent_stalled() => Some(AgentState::Idle),
+            s => s,
+        }
+    }
+
+    /// The hooks say running, but nothing has been drawn for [`STALL`].
+    pub fn agent_stalled(&self) -> bool {
+        matches!(self.agent, Some((_, AgentState::Running, _))) && self.last_output.get().elapsed() >= STALL
     }
 
     /// What the live agent is doing (title, else prompt, else state).
@@ -289,6 +306,11 @@ impl App {
     /// sanitized text from a previous session, shown read-only above the prompt.
     pub fn create_pane(self: &AppRc, wid: WorkspaceId, id: PaneId, cwd: Option<PathBuf>, restored: Option<String>) {
         let term = vte4::Terminal::new();
+        let last_output = Rc::new(Cell::new(Instant::now()));
+        {
+            let last_output = last_output.clone();
+            term.connect_contents_changed(move |_| last_output.set(Instant::now()));
+        }
         term.set_hexpand(true);
         term.set_vexpand(true);
         term.set_allow_hyperlink(true);
@@ -682,6 +704,7 @@ impl App {
                 agent_activity: None,
                 agent_seen_title: None,
                 last_bell: Cell::new(None),
+                last_output,
                 pending_input: pending,
                 python_env: None,
                 chips,

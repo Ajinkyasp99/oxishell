@@ -15,6 +15,31 @@ const PANE_MOVE_FALLBACK: &str = "list-drag-handle-symbolic";
 const COMPOSE: &str = "oxishell-compose-symbolic";
 const COMPOSE_FALLBACK: &str = "system-run-symbolic";
 
+/// Sidebar logos of AI agents (one colour, recoloured by CSS).
+const AGENT_ICONS: [(&str, &str, &[u8]); 4] = [
+    (
+        "claude",
+        "oxishell-agent-claude-symbolic",
+        include_bytes!("../../data/icons/oxishell-agent-claude-symbolic.svg"),
+    ),
+    (
+        "codex",
+        "oxishell-agent-codex-symbolic",
+        include_bytes!("../../data/icons/oxishell-agent-codex-symbolic.svg"),
+    ),
+    (
+        "gemini",
+        "oxishell-agent-gemini-symbolic",
+        include_bytes!("../../data/icons/oxishell-agent-gemini-symbolic.svg"),
+    ),
+    (
+        "",
+        "oxishell-agent-generic-symbolic",
+        include_bytes!("../../data/icons/oxishell-agent-generic-symbolic.svg"),
+    ),
+];
+const AGENT_FALLBACK: &str = "utilities-terminal-symbolic";
+
 const THEME_INDEX: &str = "\
 [Icon Theme]
 Name=Hicolor
@@ -54,7 +79,8 @@ fn install(display: &gdk::Display) -> Result<(), String> {
         (PANE_MOVE, include_bytes!("../../data/icons/oxishell-pane-move-symbolic.svg")),
         (COMPOSE, include_bytes!("../../data/icons/oxishell-compose-symbolic.svg")),
     ];
-    for (name, bytes) in icons {
+    let agent_icons = AGENT_ICONS.iter().map(|(_, name, bytes)| (*name, *bytes));
+    for (name, bytes) in icons.into_iter().chain(agent_icons) {
         let path = icon_dir.join(format!("{name}.svg"));
         if std::fs::read(&path).ok().as_deref() != Some(bytes) {
             crate::paths::write_atomic(&path, bytes, 0o600).map_err(|e| format!("{name}: {e}"))?;
@@ -93,4 +119,17 @@ pub fn compose() -> &'static str {
     } else {
         COMPOSE_FALLBACK
     }
+}
+
+/// Logo icon name for an agent id ("claude", "codex", ...). Agents without a
+/// logo of their own get a generic terminal mark.
+pub fn agent(id: &str) -> &'static str {
+    if !REGISTERED.get().copied().unwrap_or(false) {
+        return AGENT_FALLBACK;
+    }
+    AGENT_ICONS
+        .iter()
+        .find(|(agent, _, _)| *agent == id)
+        .or_else(|| AGENT_ICONS.iter().find(|(agent, _, _)| agent.is_empty()))
+        .map_or(AGENT_FALLBACK, |(_, name, _)| name)
 }

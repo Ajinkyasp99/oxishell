@@ -167,7 +167,7 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             mode: "system".into(),
-            theme: "default".into(),
+            theme: "cyber_wave".into(),
             font: "Hack 11".into(),
             sidebar_width: 230,
             sidebar_visible: true,

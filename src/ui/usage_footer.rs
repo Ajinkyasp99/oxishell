@@ -2,7 +2,7 @@
 
 use super::AppRc;
 use crate::agents::AgentState;
-use crate::usage::{ClaudeReports, Usage, Window};
+use crate::usage::{ClaudeReports, Usage, Window, FIVE_HOUR_SECS, WEEK_SECS};
 use crate::usage_alerts::Alerts;
 use gtk4::prelude::*;
 use gtk4::{glib, Orientation};
@@ -36,66 +36,154 @@ pub struct Polled {
 struct RowSnapshot {
     usage: Option<Usage>,
     expired: [bool; 2],
+    /// Cells whose hour (5h) or day (week) is already over.
+    passed: [usize; 2],
 }
 
 struct UsageRow {
     button: gtk4::MenuButton,
-    five_hour: UsageChip,
-    weekly: UsageChip,
+    five_hour: UsageLane,
+    weekly: UsageLane,
     details: gtk4::Box,
     name: &'static str,
     claude: bool,
     snapshot: RefCell<Option<RowSnapshot>>,
 }
 
-struct UsageChip {
+/// Height of one meter cell in pixels.
+const CELL_HEIGHT: i32 = 10;
+/// One cell per hour of the 5-hour window and per day of the weekly window.
+const FIVE_HOUR_CELLS: usize = 5;
+const WEEK_CELLS: usize = 7;
+
+/// A single meter cell: a track, a fill rising from the bottom and an
+/// underline once its hour or day has passed.
+struct UsageCell {
+    root: gtk4::Overlay,
+    fill: gtk4::Box,
+    passed: gtk4::Box,
+}
+
+impl UsageCell {
+    fn new() -> Self {
+        let root = gtk4::Overlay::new();
+        root.add_css_class("usage-cell");
+        root.set_overflow(gtk4::Overflow::Hidden);
+        root.set_hexpand(true);
+        let track = gtk4::Box::new(Orientation::Vertical, 0);
+        track.set_size_request(-1, CELL_HEIGHT);
+        let fill = gtk4::Box::new(Orientation::Vertical, 0);
+        fill.add_css_class("usage-cell-fill");
+        fill.set_valign(gtk4::Align::End);
+        fill.set_can_target(false);
+        let passed = gtk4::Box::new(Orientation::Vertical, 0);
+        passed.add_css_class("usage-cell-passed");
+        passed.set_valign(gtk4::Align::End);
+        passed.set_size_request(-1, 2);
+        passed.set_can_target(false);
+        root.set_child(Some(&track));
+        root.add_overlay(&fill);
+        root.add_overlay(&passed);
+        Self { root, fill, passed }
+    }
+
+    /// `filled` is 0..=1 of the cell's height.
+    fn set(&self, filled: f64, passed: bool) {
+        let height = (filled * f64::from(CELL_HEIGHT)).round() as i32;
+        self.fill.set_visible(filled > 0.0);
+        self.fill.set_size_request(-1, height.max(1));
+        self.passed.set_visible(passed);
+    }
+}
+
+/// One limit window: label, cells, percent and a "resets" line underneath.
+struct UsageLane {
     root: gtk4::Box,
-    meter: gtk4::Overlay,
-    label: gtk4::Label,
-    bar: gtk4::ProgressBar,
+    cells: Vec<UsageCell>,
+    percent: gtk4::Label,
     reset: gtk4::Label,
 }
 
-impl UsageChip {
-    fn new(text: &str) -> Self {
-        let root = gtk4::Box::new(Orientation::Vertical, 1);
-        root.set_valign(gtk4::Align::Start);
-        let meter = gtk4::Overlay::new();
-        meter.add_css_class("usage-chip");
-        meter.set_overflow(gtk4::Overflow::Hidden);
-        let bar = gtk4::ProgressBar::new();
-        bar.set_can_target(false);
+impl UsageLane {
+    fn new(short: &str, cells: usize) -> Self {
+        let root = gtk4::Box::new(Orientation::Vertical, 0);
+        let line = gtk4::Box::new(Orientation::Horizontal, 7);
+        let name = label(short, "usage-window");
+        name.set_width_chars(2);
+        let strip = gtk4::Box::new(Orientation::Horizontal, 3);
+        strip.set_homogeneous(true);
+        strip.set_hexpand(true);
+        strip.set_valign(gtk4::Align::Center);
+        let cells: Vec<UsageCell> = (0..cells).map(|_| UsageCell::new()).collect();
+        for cell in &cells {
+            strip.append(&cell.root);
+        }
+        let percent = label("—", "usage-percent");
+        percent.set_width_chars(4);
+        percent.set_xalign(1.0);
+        line.append(&name);
+        line.append(&strip);
+        line.append(&percent);
         let reset = label("—", "usage-reset");
-        let label = label(text, "usage-chip-text");
-        label.set_can_target(false);
-        meter.set_child(Some(&bar));
-        meter.add_overlay(&label);
-        // Let the value determine the compact pill's width and height.
-        meter.set_measure_overlay(&label, true);
-        reset.set_xalign(0.5);
-        reset.set_justify(gtk4::Justification::Center);
-        reset.set_ellipsize(gtk4::pango::EllipsizeMode::None);
-        root.append(&meter);
+        reset.set_use_markup(true);
+        root.append(&line);
         root.append(&reset);
         Self {
             root,
-            meter,
-            label,
-            bar,
+            cells,
+            percent,
             reset,
+        }
+    }
+
+    /// Fill the cells from `used` (0..=1): cell `i` holds the share of the
+    /// total that falls between `i` and `i + 1`. The first `passed` cells
+    /// get the underline.
+    fn set(&self, used: Option<f64>, percent: &str, passed: usize) {
+        let total = used.unwrap_or(0.0) * self.cells.len() as f64;
+        for (i, cell) in self.cells.iter().enumerate() {
+            cell.set((total - i as f64).clamp(0.0, 1.0), i < passed);
+        }
+        self.percent.set_label(percent);
+        if used.is_some_and(|u| u >= 0.8) {
+            self.root.add_css_class("usage-low");
+        } else {
+            self.root.remove_css_class("usage-low");
         }
     }
 }
 
+#[cfg(test)]
+impl UsageLane {
+    /// Fill height in pixels of each cell (0 = empty).
+    fn fills(&self) -> Vec<i32> {
+        self.cells
+            .iter()
+            .map(|c| if c.fill.is_visible() { c.fill.height_request() } else { 0 })
+            .collect()
+    }
+
+    /// How many cells carry the "already passed" underline.
+    fn passed(&self) -> usize {
+        self.cells.iter().filter(|c| c.passed.is_visible()).count()
+    }
+}
+
+/// Cells already over, from the reset time and the window length.
+fn passed_cells(window: Option<&Window>, now: i64, cells: usize, length: i64) -> usize {
+    window
+        .filter(|w| !w.expired(now))
+        .and_then(|w| w.elapsed_fraction(now, length))
+        .map_or(0, |e| (e * cells as f64).ceil() as usize)
+}
+
 impl UsageRow {
     fn new(name: &'static str, short_name: &str, claude: bool) -> Self {
-        let content = gtk4::Box::new(Orientation::Horizontal, 6);
-        let name_label = label(short_name, "usage-agent");
-        name_label.set_hexpand(true);
-        name_label.set_valign(gtk4::Align::Start);
-        let five_hour = UsageChip::new("5h —");
-        let weekly = UsageChip::new("Wk —");
-        content.append(&name_label);
+        let content = gtk4::Box::new(Orientation::Vertical, 2);
+        content.set_hexpand(true);
+        let five_hour = UsageLane::new("5h", FIVE_HOUR_CELLS);
+        let weekly = UsageLane::new("wk", WEEK_CELLS);
+        content.append(&label(short_name, "usage-agent"));
         content.append(&five_hour.root);
         content.append(&weekly.root);
         let details = gtk4::Box::new(Orientation::Vertical, 0);
@@ -125,16 +213,21 @@ impl UsageRow {
         // Update dates across midnight even when the quota snapshot is unchanged.
         self.five_hour.reset.set_label(&compact_reset(windows[0], now, false));
         self.weekly.reset.set_label(&compact_reset(windows[1], now, true));
+        let passed = [
+            passed_cells(windows[0], now, FIVE_HOUR_CELLS, FIVE_HOUR_SECS),
+            passed_cells(windows[1], now, WEEK_CELLS, WEEK_SECS),
+        ];
         let snapshot = RowSnapshot {
             usage: usage.cloned(),
             expired: windows.map(|w| w.is_some_and(|w| w.expired(now))),
+            passed,
         };
         if self.snapshot.borrow().as_ref() == Some(&snapshot) {
             return;
         }
-        for (chip, short, title, window) in [
-            (&self.five_hour, "5h", "5-hour limit", windows[0]),
-            (&self.weekly, "Wk", "Weekly limit", windows[1]),
+        for (lane, title, window, passed) in [
+            (&self.five_hour, "5-hour limit", windows[0], passed[0]),
+            (&self.weekly, "Weekly limit", windows[1], passed[1]),
         ] {
             let current = window.filter(|w| !w.expired(now));
             let percent = current
@@ -146,14 +239,8 @@ impl UsageRow {
                     }
                 })
                 .unwrap_or_else(|| "—".into());
-            chip.label.set_label(&format!("{short} {percent}"));
-            chip.bar.set_fraction(current.map(|w| w.used_percent / 100.0).unwrap_or(0.0));
-            if current.is_some_and(|w| w.used_percent >= 90.0) {
-                chip.meter.add_css_class("usage-low");
-            } else {
-                chip.meter.remove_css_class("usage-low");
-            }
-            chip.root
+            lane.set(current.map(|w| w.used_percent / 100.0), &percent, passed);
+            lane.root
                 .set_tooltip_text(Some(&format!("{title} · {percent} used\n{}", reset_text(window, now))));
         }
         self.button.set_tooltip_text(Some(&format!(
@@ -384,7 +471,7 @@ fn limit(card: &gtk4::Box, title: &str, window: Option<&Window>, now: i64) {
     let bar = gtk4::ProgressBar::new();
     bar.set_fraction(current.map(|w| w.used_percent / 100.0).unwrap_or(0.0));
     bar.set_hexpand(true);
-    if current.is_some_and(|w| w.used_percent >= 90.0) {
+    if current.is_some_and(|w| w.used_percent >= 80.0) {
         bar.add_css_class("usage-low");
     }
     group.append(&bar);
@@ -421,6 +508,8 @@ fn reset_time(date: &glib::DateTime) -> String {
     format!("{hour12}:{:02} {}", date.minute(), if hour < 12 { "AM" } else { "PM" })
 }
 
+/// Under each meter, as Pango markup (the time in bold): "resets 3:10 PM" for
+/// the 5-hour window, "resets 3:10 PM · 24 Nov" for the weekly one.
 fn compact_reset(window: Option<&Window>, now: i64, weekly: bool) -> String {
     let Some(window) = window else { return "—".into() };
     if window.expired(now) {
@@ -430,14 +519,10 @@ fn compact_reset(window: Option<&Window>, now: i64, weekly: bool) -> String {
         return "—".into();
     };
     let time = reset_time(&date);
-    let same_day = glib::DateTime::from_unix_local(now)
-        .is_ok_and(|today| (date.year(), date.month(), date.day_of_month()) == (today.year(), today.month(), today.day_of_month()));
-    if weekly || !same_day {
-        if let Ok(day) = date.format("%d %b") {
-            return format!("{time}\n{day}");
-        }
+    match date.format("%d %b") {
+        Ok(day) if weekly => format!("resets <b>{time}</b> · {day}"),
+        _ => format!("resets <b>{time}</b>"),
     }
-    time
 }
 
 #[cfg(test)]
@@ -498,14 +583,20 @@ mod tests {
         assert!(!footer.claude_row.button.get_visible());
         render_cards(&footer, true, true, now);
         assert!(footer.root.get_visible());
-        assert_eq!(footer.codex_row.five_hour.label.text(), "5h 20%");
-        assert_eq!(footer.codex_row.weekly.label.text(), "Wk 65%");
-        assert_eq!(footer.claude_row.five_hour.label.text(), "5h 20%");
-        assert_eq!(footer.codex_row.five_hour.bar.fraction(), 0.2);
-        assert_eq!(footer.codex_row.weekly.bar.fraction(), 0.65);
-        assert_eq!(footer.claude_row.five_hour.bar.fraction(), 0.2);
-        assert_eq!(footer.codex_row.five_hour.reset.text(), "8:30 PM");
-        assert_eq!(footer.codex_row.weekly.reset.text(), "8:15 AM\n14 Nov");
+        assert_eq!(footer.codex_row.five_hour.percent.text(), "20%");
+        assert_eq!(footer.codex_row.weekly.percent.text(), "65%");
+        assert_eq!(footer.claude_row.five_hour.percent.text(), "20%");
+        // 20% of 5 hour-cells is exactly one full cell; 65% of 7 day-cells is
+        // four full cells and a little over half of the fifth.
+        let full = CELL_HEIGHT;
+        assert_eq!(footer.codex_row.five_hour.fills(), [full, 0, 0, 0, 0]);
+        assert_eq!(footer.codex_row.weekly.fills(), [full, full, full, full, 5, 0, 0]);
+        assert_eq!(footer.claude_row.five_hour.fills(), [full, 0, 0, 0, 0]);
+        // One hour left of five: 4 of 5 hours passed. About 6.5 of 7 days left: day 1 only.
+        assert_eq!(footer.codex_row.five_hour.passed(), 4);
+        assert_eq!(footer.codex_row.weekly.passed(), 1);
+        assert_eq!(footer.codex_row.five_hour.reset.text(), "resets 8:30 PM");
+        assert_eq!(footer.codex_row.weekly.reset.text(), "resets 8:15 AM · 14 Nov");
         assert!(footer
             .codex_row
             .five_hour
@@ -543,8 +634,9 @@ mod tests {
         render_cards(&footer, false, true, five_reset + 1);
         assert!(!footer.codex_row.button.get_visible());
         assert!(footer.claude_row.button.get_visible());
-        assert_eq!(footer.claude_row.five_hour.label.text(), "5h —");
-        assert_eq!(footer.claude_row.five_hour.bar.fraction(), 0.0);
+        assert_eq!(footer.claude_row.five_hour.percent.text(), "—");
+        assert_eq!(footer.claude_row.five_hour.fills(), [0; 5]);
+        assert_eq!(footer.claude_row.five_hour.passed(), 0);
         assert_eq!(footer.claude_row.five_hour.reset.text(), "Updating");
         let claude = footer.claude_row.details.first_child().unwrap();
         let group = claude.first_child().unwrap().next_sibling().unwrap();
@@ -556,15 +648,16 @@ mod tests {
         assert!(!footer.root.get_visible());
 
         // Background refreshes retain the row/popover and its existing content.
-        render_cards(&footer, true, true, now);
+        // (Both instants sit inside the same hour-cell, so the meter is unchanged.)
+        render_cards(&footer, true, true, now - 60);
         let detail = footer.codex_row.details.first_child().unwrap();
-        render_cards(&footer, true, true, now + 15);
+        render_cards(&footer, true, true, now - 45);
         assert_eq!(footer.codex_row.details.first_child().unwrap(), detail);
         footer.claude.borrow_mut().latest = Usage::default();
         render_cards(&footer, true, true, now);
-        assert_eq!(footer.claude_row.five_hour.label.text(), "5h —");
-        assert_eq!(footer.claude_row.weekly.label.text(), "Wk —");
-        assert_eq!(footer.claude_row.weekly.bar.fraction(), 0.0);
+        assert_eq!(footer.claude_row.five_hour.percent.text(), "—");
+        assert_eq!(footer.claude_row.weekly.percent.text(), "—");
+        assert_eq!(footer.claude_row.weekly.fills(), [0; 7]);
         assert_eq!(footer.claude_row.weekly.reset.text(), "—");
 
         let css = gtk4::CssProvider::new();
@@ -576,8 +669,8 @@ mod tests {
         );
         let (_, height, _, _) = footer.root.measure(Orientation::Vertical, 230);
         assert!(
-            height <= 132,
-            "footer should stay compact with reset times and both agents: {height}px"
+            height <= 230,
+            "footer should stay compact with meters, reset lines and both agents: {height}px"
         );
 
         for percent in [0.0, 32.0, 90.0, 100.0] {
@@ -592,19 +685,18 @@ mod tests {
             assert_eq!(text.text(), format!("5-hour limit · {percent:.1}% used"));
             let bar = text.next_sibling().unwrap().downcast::<gtk4::ProgressBar>().unwrap();
             assert_eq!(bar.fraction(), percent / 100.0);
-            assert_eq!(bar.has_css_class("usage-low"), percent >= 90.0);
+            assert_eq!(bar.has_css_class("usage-low"), percent >= 80.0);
 
             let usage = Usage {
                 five_hour: Some(window),
                 weekly: None,
             };
             footer.codex_row.update(Some(&usage), 1000);
-            let chip = &footer.codex_row.five_hour;
-            assert_eq!(chip.label.text(), format!("5h {percent}%"));
-            assert_eq!(chip.bar.fraction(), percent / 100.0);
-            assert_eq!(chip.meter.has_css_class("usage-low"), percent >= 90.0);
-            assert_eq!(chip.meter.child().unwrap(), chip.bar);
-            assert_eq!(chip.label.parent().unwrap(), chip.meter);
+            let lane = &footer.codex_row.five_hour;
+            assert_eq!(lane.percent.text(), format!("{percent}%"));
+            let filled = (percent / 100.0 * FIVE_HOUR_CELLS as f64 * f64::from(CELL_HEIGHT)).round() as i32;
+            assert_eq!(lane.fills().iter().sum::<i32>(), filled.max(if percent > 0.0 { 1 } else { 0 }));
+            assert_eq!(lane.root.has_css_class("usage-low"), percent >= 80.0);
         }
 
         if let Some(path) = std::env::var_os("OXISHELL_USAGE_SCREENSHOT") {
