@@ -4,7 +4,7 @@
 
 use super::AppRc;
 use crate::agents::AgentState;
-use crate::model::{TabId, WorkspaceId};
+use crate::model::{PaneId, TabId, WorkspaceId};
 use gtk4::prelude::*;
 use gtk4::{gdk, gio, glib, Orientation};
 use std::cell::Cell;
@@ -51,7 +51,7 @@ pub fn connect(app: &AppRc) {
     });
     app.sidebar_list.add_controller(dbl);
 
-    // Animate the state glyphs (spinner, blinking cursor). A still window has
+    // Animate the running spinner (sidebar and tab bars). A still window has
     // nothing to show, so it costs nothing while unfocused.
     let w = app.weak();
     let mut stalled: Vec<crate::model::PaneId> = Vec::new();
@@ -83,6 +83,11 @@ pub fn connect(app: &AppRc) {
                     row.tick(frame);
                 }
             }
+            if let Ok(bars) = a.tab_bars.try_borrow() {
+                for bar in bars.values() {
+                    bar.tick(frame);
+                }
+            }
         }
         glib::ControlFlow::Continue
     });
@@ -93,7 +98,8 @@ pub fn connect(app: &AppRc) {
 pub(super) enum Glyph {
     /// Working: a braille spinner.
     Run,
-    /// Needs the user: a blinking block cursor.
+    /// Needs the user: a steady question mark (no blinking, so it does not
+    /// nag while you finish something else).
     Wait,
     /// Finished its turn: a check.
     Done,
@@ -106,7 +112,7 @@ pub(super) enum Glyph {
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 impl Glyph {
-    fn of(agent: bool, state: Option<AgentState>) -> Self {
+    pub(super) fn of(agent: bool, state: Option<AgentState>) -> Self {
         match (agent, state) {
             (false, _) => Self::None,
             (true, Some(AgentState::Running)) => Self::Run,
@@ -117,7 +123,7 @@ impl Glyph {
     }
 
     /// Most urgent first: needs input, then working, then done.
-    fn rank(self) -> u8 {
+    pub(super) fn rank(self) -> u8 {
         match self {
             Self::Wait => 4,
             Self::Run => 3,
@@ -130,9 +136,7 @@ impl Glyph {
     fn text(self, frame: u64) -> &'static str {
         match self {
             Self::Run => SPINNER[(frame % SPINNER.len() as u64) as usize],
-            // 500 ms on, 500 ms off.
-            Self::Wait if (frame / 5).is_multiple_of(2) => "▌",
-            Self::Wait => " ",
+            Self::Wait => "?",
             Self::Done => "✓",
             Self::Seen => "·",
             Self::None => "",
@@ -140,7 +144,7 @@ impl Glyph {
     }
 
     /// Show `self` on `label` (colour class and text for `frame`).
-    fn apply(self, label: &gtk4::Label, frame: u64) {
+    pub(super) fn apply(self, label: &gtk4::Label, frame: u64) {
         for (class, on) in [
             ("dot-running", self == Self::Run),
             ("dot-waiting", self == Self::Wait),
@@ -169,14 +173,16 @@ pub(super) struct Row {
     /// Most urgent state among the workspace's agents.
     glyph: gtk4::Label,
     glyph_state: Cell<Glyph>,
-    /// One button per tab running an AI agent.
+    /// One button per pane running an AI agent (a split tab can have several),
+    /// under a header per tab when more than one tab has agents.
     sessions: gtk4::Box,
-    session_lines: HashMap<TabId, SessionLine>,
+    session_lines: HashMap<PaneId, SessionLine>,
+    tab_headers: HashMap<TabId, gtk4::Button>,
     more: gtk4::Label,
     attention: gtk4::Label,
 }
 
-/// Most tab lines shown per workspace; the rest become "+N more".
+/// Most session lines shown per workspace; the rest become "+N more".
 const MAX_SESSION_LINES: usize = 8;
 
 /// Widgets of one session line, kept across refreshes so a click in flight
@@ -190,12 +196,16 @@ struct SessionLine {
     meta: gtk4::Label,
 }
 
-/// What one tab line shows.
+/// What one session line shows: one agent pane of a tab.
 pub(super) struct SessionInfo {
+    pub pane: PaneId,
     pub tab: TabId,
+    /// Header of the line's tab ("api", or "Tab 2" unnamed) when the workspace has agents
+    /// in more than one tab; `None` shows the lines without headers.
+    pub tab_header: Option<String>,
     /// The agent running in the tab, if any.
     pub agent: Option<String>,
-    /// The shown tab of its workspace.
+    /// The pane the shown tab of its workspace is on.
     pub active: bool,
     pub state: Option<AgentState>,
     pub summary: String,
@@ -205,7 +215,7 @@ pub(super) struct SessionInfo {
 }
 
 impl SessionLine {
-    fn new(app: &AppRc, tab: TabId) -> Self {
+    fn new(app: &AppRc, pane: PaneId) -> Self {
         let row = gtk4::Box::new(Orientation::Horizontal, 5);
         let glyph = state_glyph();
         let logo = gtk4::Image::new();
@@ -230,8 +240,11 @@ impl SessionLine {
         let w = app.weak();
         button.connect_clicked(move |_| {
             let Some(a) = w.upgrade() else { return };
-            // Deferred: selecting rebuilds the list this button is in.
-            glib::idle_add_local_once(move || a.report(a.select_tab(tab)));
+            // Deferred: focusing rebuilds the list this button is in.
+            glib::idle_add_local_once(move || {
+                a.focus_pane(pane);
+                a.refresh();
+            });
         });
         Self {
             button,
@@ -278,45 +291,82 @@ impl SessionLine {
     }
 }
 
-/// One line per tab of a workspace running an AI agent, in tab order: the
-/// agent and what it is doing (or the name the user gave the tab). Plain
-/// shell tabs are only in the tab bar.
+/// One line per pane of a workspace running an AI agent, in tab order and,
+/// within a split tab, layout order: the agent and what it is doing. When
+/// agents run in more than one tab, each tab's lines sit under a header with
+/// its name (or "Tab N" if it has none); otherwise a renamed tab with a single agent shows its
+/// name instead of the summary. Plain shell panes are only in the tab bar.
+/// A pane of a tab with an AI agent running in it.
+type AgentPane<'a> = (PaneId, &'a super::pane::Pane);
+
 pub(super) fn session_infos(i: &super::Inner, ws: &crate::model::Workspace) -> Vec<SessionInfo> {
     let now = std::time::Instant::now();
-    let infos: Vec<SessionInfo> = ws
+    let shown = ws.tab().id;
+    let tabs: Vec<(usize, &crate::model::Tab, Vec<AgentPane>)> = ws
         .tabs
         .iter()
-        .map(|tab| {
-            let p = i.panes.get(&super::tabs::primary_pane(i, tab));
-            let agent = p.and_then(|p| p.agent_id()).map(str::to_string);
-            SessionInfo {
-                tab: tab.id,
-                active: ws.tab().id == tab.id,
-                state: p.and_then(|p| p.agent_state()),
-                summary: match (&tab.name, &agent) {
-                    (Some(name), _) => name.clone(),
-                    (None, Some(_)) => p.and_then(|p| p.agent_summary()).unwrap_or_default(),
-                    (None, None) => super::tabs::tab_label(i, tab),
-                },
-                model: agent
-                    .as_ref()
-                    .and(p.and_then(|p| p.agent_model.as_deref()))
-                    .and_then(crate::agent_info::short_model),
-                ago: agent
-                    .as_ref()
-                    .and(p.and_then(|p| p.agent_activity))
-                    .map(|t| crate::agent_info::time_ago(now.duration_since(t))),
-                cwd: p.and_then(|p| p.cwd.as_deref()).map(crate::meta::display_path),
-                agent,
-            }
+        .enumerate()
+        .map(|(n, tab)| {
+            let agent_panes = tab
+                .layout
+                .panes()
+                .into_iter()
+                .filter_map(|id| i.panes.get(&id).map(|p| (id, p)))
+                .filter(|(_, p)| p.agent_id().is_some())
+                .collect::<Vec<_>>();
+            (n, tab, agent_panes)
         })
-        .filter(|s: &SessionInfo| s.agent.is_some())
+        .filter(|(_, _, panes)| !panes.is_empty())
         .collect();
+    let grouped = tabs.len() > 1;
+    let mut infos = Vec::new();
+    for (n, tab, agent_panes) in tabs {
+        let primary = super::tabs::primary_pane(i, tab);
+        let header = grouped.then(|| crate::agent_info::tab_title(n, tab.name.as_deref()));
+        let single = agent_panes.len() == 1;
+        for (pane, p) in agent_panes {
+            let agent = p.agent_id().map(str::to_string);
+            infos.push(SessionInfo {
+                pane,
+                tab: tab.id,
+                tab_header: header.clone(),
+                active: tab.id == shown && pane == primary,
+                state: p.agent_state(),
+                summary: match &tab.name {
+                    Some(name) if single && !grouped => name.clone(),
+                    _ => p.agent_summary().unwrap_or_default(),
+                },
+                model: p.agent_model.as_deref().and_then(crate::agent_info::short_model),
+                ago: p.agent_activity.map(|t| crate::agent_info::time_ago(now.duration_since(t))),
+                cwd: p.cwd.as_deref().map(crate::meta::display_path),
+                agent,
+            });
+        }
+    }
     infos
 }
 
+/// A flat button heading a tab's session lines; clicking it shows the tab.
+fn new_tab_header(app: &AppRc, tab: TabId) -> gtk4::Button {
+    let label = gtk4::Label::builder()
+        .xalign(0.0)
+        .ellipsize(gtk4::pango::EllipsizeMode::End)
+        .build();
+    let button = gtk4::Button::builder().child(&label).build();
+    button.add_css_class("flat");
+    button.add_css_class("ws-tab-header");
+    button.set_focus_on_click(false);
+    let w = app.weak();
+    button.connect_clicked(move |_| {
+        let Some(a) = w.upgrade() else { return };
+        // Deferred: selecting rebuilds the list this button is in.
+        glib::idle_add_local_once(move || a.report(a.select_tab(tab)));
+    });
+    button
+}
+
 /// One-character monospace state glyph, as the sidebar shows it.
-fn state_glyph() -> gtk4::Label {
+pub(super) fn state_glyph() -> gtk4::Label {
     let l = gtk4::Label::builder().width_chars(1).build();
     l.add_css_class("ws-session-dot");
     l.add_css_class("ws-glyph");
@@ -325,7 +375,7 @@ fn state_glyph() -> gtk4::Label {
 }
 
 /// Animation frame (100 ms steps) shared by every glyph.
-fn glyph_frame() -> u64 {
+pub(super) fn glyph_frame() -> u64 {
     (glib::monotonic_time() / 100_000) as u64
 }
 
@@ -414,6 +464,7 @@ impl Row {
             glyph_state: Cell::new(Glyph::None),
             sessions,
             session_lines: HashMap::new(),
+            tab_headers: HashMap::new(),
             more,
             attention,
         }
@@ -515,18 +566,56 @@ pub fn rebuild(app: &AppRc) {
 /// existing line widgets and only reordering when the order changed.
 fn sync_sessions(app: &AppRc, row: &mut Row, infos: &[SessionInfo]) {
     let shown = &infos[..infos.len().min(MAX_SESSION_LINES)];
-    row.session_lines.retain(|tab, line| {
-        let keep = shown.iter().any(|s| s.tab == *tab);
+    row.session_lines.retain(|pane, line| {
+        let keep = shown.iter().any(|s| s.pane == *pane);
         if !keep {
             row.sessions.remove(&line.button);
         }
         keep
     });
     for s in shown {
-        row.session_lines
-            .entry(s.tab)
-            .or_insert_with(|| SessionLine::new(app, s.tab))
-            .update(s);
+        let line = row.session_lines.entry(s.pane).or_insert_with(|| SessionLine::new(app, s.pane));
+        line.update(s);
+        if s.tab_header.is_some() {
+            line.button.add_css_class("ws-session-grouped");
+        } else {
+            line.button.remove_css_class("ws-session-grouped");
+        }
+    }
+    let headed: Vec<(TabId, &str, bool)> = {
+        let mut v: Vec<(TabId, &str, bool)> = Vec::new();
+        for s in shown {
+            if let Some(h) = &s.tab_header {
+                match v.last_mut() {
+                    Some(last) if last.0 == s.tab => last.2 |= s.active,
+                    _ => v.push((s.tab, h, s.active)),
+                }
+            }
+        }
+        v
+    };
+    row.tab_headers.retain(|tab, button| {
+        let keep = headed.iter().any(|h| h.0 == *tab);
+        if !keep && button.parent().is_some() {
+            row.sessions.remove(button);
+        }
+        keep
+    });
+    for (tab, title, active) in &headed {
+        let button = row.tab_headers.entry(*tab).or_insert_with(|| new_tab_header(app, *tab));
+        if let Some(label) = button.child().and_downcast::<gtk4::Label>() {
+            if label.text() != *title {
+                label.set_text(title);
+            }
+        }
+        if button.tooltip_text().as_deref() != Some(*title) {
+            button.set_tooltip_text(Some(title));
+        }
+        if *active {
+            button.add_css_class("ws-tab-header-active");
+        } else {
+            button.remove_css_class("ws-tab-header-active");
+        }
     }
     let mut current = Vec::new();
     let mut child = row.sessions.first_child();
@@ -534,7 +623,15 @@ fn sync_sessions(app: &AppRc, row: &mut Row, infos: &[SessionInfo]) {
         child = c.next_sibling();
         current.push(c);
     }
-    let wanted: Vec<gtk4::Widget> = shown.iter().map(|s| row.session_lines[&s.tab].button.clone().upcast()).collect();
+    let mut wanted: Vec<gtk4::Widget> = Vec::new();
+    let mut last_tab = None;
+    for s in shown {
+        if s.tab_header.is_some() && last_tab != Some(s.tab) {
+            wanted.push(row.tab_headers[&s.tab].clone().upcast());
+        }
+        last_tab = Some(s.tab);
+        wanted.push(row.session_lines[&s.pane].button.clone().upcast());
+    }
     if current != wanted {
         for c in &current {
             row.sessions.remove(c);
@@ -636,4 +733,15 @@ fn attach_menu(app: &AppRc, row: &gtk4::ListBoxRow, id: WorkspaceId) {
         pop.popup();
     });
     row.add_controller(click);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Glyph;
+
+    #[test]
+    fn needs_input_glyph_is_steady() {
+        assert!((0..40).all(|f| Glyph::Wait.text(f) == "?"), "needs input does not blink");
+        assert_ne!(Glyph::Run.text(0), Glyph::Run.text(1), "running still spins");
+    }
 }

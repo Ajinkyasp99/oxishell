@@ -11,15 +11,27 @@ Any terminal agent runs in an oxishell pane like any other program. What the int
 3. **Bell** — agents configured to ring the terminal bell (e.g. Claude Code's terminal-bell notification
    channel) mark the pane for attention without any hooks.
 
-## Sidebar tab lines
+## Sidebar session lines
 
-Each tab running an AI agent gets one line under its workspace in the sidebar (up to eight, then
-"+N more"); plain shell tabs appear only in the tab bar. The same text labels the tab in the workspace's
-tab bar. A tab is described by its focused pane if an agent runs there, else its first pane with an
-agent. A tab you renamed shows its name instead of the summary (the summary is in the tooltip).
+Each pane running an AI agent gets one line under its workspace in the sidebar (up to eight, then
+"+N more"), in tab order and, within a split tab, in layout order; so a tab split three ways with an agent
+in each pane shows three lines. Plain shell panes appear only in the tab bar. Clicking a line shows its tab
+and focuses that pane; the highlighted line is the agent pane the shown tab is on.
 
-- **State glyph** (monospace, same on Linux and macOS): a blue braille spinner while running, an amber
-  blinking block cursor `▌` when it needs input, a green `✓` when done, a grey `·` when detected without
+When agents run in more than one tab of a workspace, each tab's lines sit indented under a small header
+with the tab's name if you gave it one (`api`), else its number (`Tab 2`). Clicking a header shows
+that tab; the shown tab's header is brighter. With agents in a single tab there are no headers, and a
+renamed tab with a single agent shows its name instead of the summary (the summary is in the tooltip).
+
+In the tab bar, a tab running an agent is labelled with the agent and its task (`Claude: Fix login bug`,
+or just `Claude` before it has one), taken from its focused pane if an agent runs there, else its first
+pane with an agent. The label never carries the agent's state, so "needs input" or "done" does not rename
+the tab; the state is the glyph on the tab's left, the same one the sidebar shows (spinner, steady `?`,
+`✓`, `·`) for the tab's most urgent agent. The tooltip has the full summary, state included. A tab you
+renamed shows its name. All of this is the same on Linux and macOS.
+
+- **State glyph** (monospace, same on Linux and macOS): a blue braille spinner while running, a steady amber
+  `?` when it needs input (it does not blink), a green `✓` when done, a grey `·` when detected without
   hooks. The animation pauses while the window is not focused. The workspace name carries the same glyph
   for its most urgent agent (needs input, then running, then done).
 - **Logo**: a small one-colour mark of the agent (Claude, Codex, Gemini; a terminal mark for the others)

@@ -11,7 +11,7 @@ use gtk4::prelude::*;
 use gtk4::{gdk, glib, Orientation};
 use std::cell::{Cell, Ref, RefCell};
 use std::path::{Path, PathBuf};
-use std::rc::Weak;
+use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 pub fn tooltip() -> String {
@@ -33,10 +33,15 @@ pub struct PaneCompose {
     /// from raising the pane's minimum width (that would block resizing it).
     pub logs_clip: Clip,
     pub stack_clip: Clip,
+    /// Holds the one-line "run again" strip under the terminal.
+    pub rerun_clip: Clip,
     /// Compose files of the pane's repo and the compose program, from the meta worker.
     pub scan: Option<ComposeScan>,
     /// The stack started from this pane, while it runs.
     pub stack: Option<Stack>,
+    /// The pane's last stack after it stopped: the "run again" strip shows it
+    /// for the next [`compose::RERUN_KEEP_COMMANDS`] shell commands.
+    pub stopped: Option<compose::Stopped>,
     /// File whose `logs -f` runs in the pane.
     pub logs: Option<PathBuf>,
     /// Ask the meta worker to scan again on its next job.
@@ -61,6 +66,11 @@ pub struct Bars {
     pub stack_bar: gtk4::Box,
     /// Line above the stack bar while `logs -f` runs in the pane.
     pub logs_bar: gtk4::Box,
+    /// One line after the pane's stack stopped: `[run up] [up -d] [×]`.
+    pub rerun_bar: gtk4::Box,
+    rerun_label: gtk4::Label,
+    /// `[run up]` and `[up -d]`: greyed out while a program holds the pane.
+    rerun_buttons: Vec<gtk4::Button>,
     /// Status glyph, coloured by the stack's [`compose::Tone`].
     dot: gtk4::Label,
     status: gtk4::Label,
@@ -79,8 +89,10 @@ impl PaneCompose {
             button: attach_button(app, id, actions),
             logs_clip: Clip::new(),
             stack_clip: Clip::new(),
+            rerun_clip: Clip::new(),
             scan: None,
             stack: None,
+            stopped: None,
             logs: None,
             rescan: false,
             pending: None,
@@ -97,9 +109,18 @@ impl PaneCompose {
             let b = Bars::new(&self.app, self.id);
             fill_clip(&self.logs_clip, &b.logs_bar);
             fill_clip(&self.stack_clip, &b.stack_bar);
+            fill_clip(&self.rerun_clip, &b.rerun_bar);
             *self.bars.borrow_mut() = Some(b);
         }
         Ref::map(self.bars.borrow(), |b| b.as_ref().expect("bars were just built"))
+    }
+
+    /// The pane's stack has stopped (or gone `down`): drop its bar and offer to
+    /// run it again in the one-line strip.
+    pub fn end_stack(&mut self) {
+        if let Some(s) = self.stack.take() {
+            self.stopped = Some(compose::Stopped::new(&s.file, s.cmd, s.services.len(), crate::history::now_secs()));
+        }
     }
 
     /// Path of `file` as shown in the bars: relative to the repo root.
@@ -186,9 +207,48 @@ impl Bars {
         }
         logs_bar.append(&stop_logs_btn);
 
+        let rerun_bar = gtk4::Box::new(Orientation::Horizontal, 8);
+        rerun_bar.add_css_class("compose-rerun");
+        rerun_bar.set_visible(false);
+        rerun_bar.append(&label("↺", &["compose-status", "compose-dot", "compose-idle"]));
+        let rerun_label = label("", &["compose-status", "compose-rerun-text"]);
+        rerun_label.set_hexpand(true);
+        rerun_bar.append(&rerun_label);
+        let up_btn = bracket_button("run up", "Run docker compose up again in this pane");
+        let up_d_btn = bracket_button("up -d", "Run docker compose up -d again in this pane");
+        let hide_btn = bracket_button("×", "Hide");
+        up_btn.add_css_class("compose-rebuild");
+        up_d_btn.add_css_class("compose-rebuild");
+        hide_btn.add_css_class("compose-hide");
+        for (b, action) in [(&up_btn, Action::Up), (&up_d_btn, Action::UpDetached)] {
+            let w = app.clone();
+            b.connect_clicked(move |_| {
+                if let Some(a) = w.upgrade() {
+                    rerun(&a, id, action.clone());
+                }
+            });
+        }
+        {
+            let w = app.clone();
+            hide_btn.connect_clicked(move |_| {
+                if let Some(a) = w.upgrade() {
+                    if let Some(p) = a.inner.borrow_mut().panes.get_mut(&id) {
+                        p.compose.stopped = None;
+                    }
+                    a.refresh();
+                }
+            });
+        }
+        for b in [&up_btn, &up_d_btn, &hide_btn] {
+            rerun_bar.append(b);
+        }
+
         Self {
             stack_bar,
             logs_bar,
+            rerun_bar,
+            rerun_label,
+            rerun_buttons: vec![up_btn, up_d_btn],
             dot,
             status,
             chips,
@@ -304,14 +364,26 @@ pub fn sync(p: &Pane, cfg: &Config) {
 
     let logs = c.logs.as_ref().filter(|_| on && p.busy);
     let stack = c.stack.as_ref().filter(|_| on);
+    let stopped = c.stopped.as_ref().filter(|_| on && stack.is_none());
     // Nothing to show and nothing shown: leave the bars unbuilt.
-    if logs.is_none() && stack.is_none() && c.bars.borrow().is_none() {
+    if logs.is_none() && stack.is_none() && stopped.is_none() && c.bars.borrow().is_none() {
         return;
     }
     let bars = c.bars();
     set_visible(&bars.logs_bar, logs.is_some());
     if let Some(file) = logs {
         set_label(&bars.logs_label, &format!("≡ logs -f  {} │ following", c.display(file)));
+    }
+
+    set_visible(&bars.rerun_bar, stopped.is_some());
+    if let Some(s) = stopped {
+        set_label(&bars.rerun_label, &s.text(&c.display(&s.file), crate::history::now_secs()));
+        for b in &bars.rerun_buttons {
+            if b.is_sensitive() == p.busy {
+                b.set_sensitive(!p.busy);
+            }
+        }
+        ensure_clock(&c.app);
     }
 
     set_visible(&bars.stack_bar, stack.is_some());
@@ -438,7 +510,8 @@ thread_local! {
     static CLOCK: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Tick the uptime once a second while any stack bar is visible.
+/// Tick the uptime (and the "stopped … ago" of the run-again strip) once a
+/// second while any stack bar or strip is visible.
 fn ensure_clock(app: &Weak<App>) {
     if CLOCK.with(|c| c.replace(true)) {
         return;
@@ -451,11 +524,16 @@ fn ensure_clock(app: &Weak<App>) {
         };
         let i = a.inner.borrow();
         let mut any = false;
+        let now = crate::history::now_secs();
         for p in i.panes.values() {
             let c = &p.compose;
             let bars = c.bars.borrow();
             if let (Some(s), Some(b)) = (&c.stack, bars.as_ref().filter(|b| b.stack_bar.get_visible())) {
                 set_label(&b.status, &status_text(c, s));
+                any = true;
+            }
+            if let (Some(s), Some(b)) = (&c.stopped, bars.as_ref().filter(|b| b.rerun_bar.get_visible())) {
+                set_label(&b.rerun_label, &s.text(&c.display(&s.file), now));
                 any = true;
             }
         }
@@ -649,11 +727,50 @@ pub fn stop_logs(app: &AppRc, id: PaneId) {
     app.refresh();
 }
 
+/// Start the pane's stopped stack again with `action` (`up` or `up -d`), from
+/// the run-again strip.
+pub fn rerun(app: &AppRc, id: PaneId, action: Action) {
+    let Some(s) = app.inner.borrow().panes.get(&id).and_then(|p| p.compose.stopped.clone()) else {
+        return;
+    };
+    run_with(app, id, &s.file, action, Some(s.cmd));
+}
+
+/// The user ran a shell command in pane `id` (a non-empty line at the prompt):
+/// the run-again strip goes away after [`compose::RERUN_KEEP_COMMANDS`] of them.
+pub fn command_ran(app: &AppRc, id: PaneId) {
+    // Called from the terminal's key handling: change the app state on idle.
+    let w = app.weak();
+    glib::idle_add_local_once(move || {
+        let Some(a) = w.upgrade() else { return };
+        let gone = {
+            let mut i = a.inner.borrow_mut();
+            let Some(c) = i.panes.get_mut(&id).map(|p| &mut p.compose) else {
+                return;
+            };
+            let gone = c.stopped.as_mut().is_some_and(|s| !s.command_ran());
+            if gone {
+                c.stopped = None;
+            }
+            gone
+        };
+        if gone {
+            a.refresh();
+        }
+    });
+}
+
 /// Type `action` for `file` into the pane, and press Enter when
 /// `compose.run_immediately` is on. Does nothing while the pane is busy, and
 /// only says why while the prompt holds unfinished input: the command would be
 /// appended to it (and Enter would run both).
 pub fn run(app: &AppRc, id: PaneId, file: &Path, action: Action) {
+    run_with(app, id, file, action, None);
+}
+
+/// [`run`], with the compose program to use when the pane's current folder has
+/// no scan (the shell left the repo since the stack ran).
+fn run_with(app: &AppRc, id: PaneId, file: &Path, action: Action, fallback: Option<Vec<String>>) {
     let immediate = {
         let i = app.inner.borrow();
         let Some(p) = i.panes.get(&id) else { return };
@@ -665,7 +782,7 @@ pub fn run(app: &AppRc, id: PaneId, file: &Path, action: Action) {
             app.toast("The prompt has unfinished input: clear it (Ctrl+U) or run it first");
             return;
         }
-        let Some(cmd) = p.compose.scan.as_ref().and_then(|s| s.command.clone()) else {
+        let Some(cmd) = p.compose.scan.as_ref().and_then(|s| s.command.clone()).or(fallback) else {
             return;
         };
         // The shell's folder right now: `p.cwd` can be a few seconds old, and a
@@ -678,6 +795,11 @@ pub fn run(app: &AppRc, id: PaneId, file: &Path, action: Action) {
             .unwrap_or_default();
         let text = compose::typed_command(&cmd, file, &cwd, &action);
         let immediate = i.config.compose.run_immediately;
+        // `up` and `up -d` feed the picker's "last starts" row.
+        let mut starts = compose::load_starts();
+        if compose::record_start(&mut starts, file, &action, crate::history::now_secs()) {
+            compose::save_starts(&starts);
+        }
         p.type_input(&text);
         if immediate {
             p.type_input("\n");
@@ -792,9 +914,10 @@ fn apply_started(p: &mut Pane, file: &Path, action: &Action, cmd: Vec<String>) {
     match action {
         Action::Up | Action::UpBuild | Action::UpDetached => {
             c.stack = Some(Stack::new(file, *action != Action::UpDetached, cmd));
+            c.stopped = None;
         }
         Action::Logs => c.logs = Some(file.to_path_buf()),
-        Action::Down if c.stack.as_ref().is_some_and(|s| s.file == file) => c.stack = None,
+        Action::Down if c.stack.as_ref().is_some_and(|s| s.file == file) => c.end_stack(),
         _ => {}
     }
 }
@@ -809,7 +932,68 @@ pub fn rescan(app: &AppRc, id: PaneId) {
     }
 }
 
-/// The file picker under the pane button, drawn like terminal output.
+/// Width of the picker's list in pixels; longer lines are cut with an ellipsis.
+const PICKER_WIDTH: i32 = 540;
+
+/// The actions a file row offers, in the order Tab walks them: label, action and
+/// the style class that tells safe starts from stopping ones.
+fn chip_actions() -> [(&'static str, Action, &'static str); 5] {
+    [
+        ("up -d", Action::UpDetached, "compose-chip-go"),
+        ("up", Action::Up, "compose-chip-go"),
+        ("down", Action::Down, "compose-chip-warn"),
+        ("logs", Action::Logs, "compose-chip-info"),
+        ("restart", Action::Restart, "compose-chip-warn"),
+    ]
+}
+
+/// Shortcut text for the picker's own chords: `^X` on Linux, `⌘X` on macOS (Ctrl
+/// stays with the shell there, as everywhere else in oxishell).
+fn chord(key: &str) -> String {
+    let m = if cfg!(target_os = "macos") { "⌘" } else { "^" };
+    format!("{m}{}", key.to_uppercase())
+}
+
+/// A file row's second line: its service count and names, the part matching the
+/// filter in bold and underlined.
+fn services_markup(f: &ComposeFile, query: &str) -> String {
+    let esc = |s: &str| glib::markup_escape_text(s).to_string();
+    let Some(s) = &f.services else {
+        return esc("could not read services");
+    };
+    let head = if s.len() == 1 {
+        "1 service · ".to_string()
+    } else {
+        format!("{} services · ", s.len())
+    };
+    let mut out = esc(&head);
+    for (n, name) in s.iter().enumerate() {
+        if n > 0 {
+            out.push_str(", ");
+        }
+        for (piece, hit) in compose::split_matches(name, query) {
+            if hit {
+                out.push_str(&format!("<span weight=\"bold\" underline=\"single\">{}</span>", esc(&piece)));
+            } else {
+                out.push_str(&esc(&piece));
+            }
+        }
+    }
+    out
+}
+
+/// A folder header's text, with how many of its files match while filtering.
+fn group_text(dir: &str, shown: usize, total: usize, filtering: bool) -> String {
+    if filtering {
+        format!("▾ {dir}  · {shown} of {total} match")
+    } else {
+        format!("▾ {dir}")
+    }
+}
+
+/// The file picker under the pane button, drawn like terminal output: a filter
+/// on top (it always has the keyboard), the last starts, then the files grouped
+/// by folder. Only the selected file shows its action chips.
 pub fn open_picker(app: &AppRc, id: PaneId) {
     let (button, scan, default_action) = {
         let i = app.inner.borrow();
@@ -822,6 +1006,7 @@ pub fn open_picker(app: &AppRc, id: PaneId) {
         (b.clone(), scan, i.config.compose.default_action.clone())
     };
     let default = Action::from_setting(&default_action).unwrap_or(Action::Up);
+    let actions = chip_actions();
 
     let pop = gtk4::Popover::new();
     pop.add_css_class("compose-picker");
@@ -836,17 +1021,79 @@ pub fn open_picker(app: &AppRc, id: PaneId) {
     let root = label(&crate::meta::display_path(&scan.root), &["dim"]);
     root.set_hexpand(true);
     root.set_xalign(1.0);
+    root.set_max_width_chars(34);
     head.append(&root);
     body.append(&head);
 
     let filter_row = gtk4::Box::new(Orientation::Horizontal, 6);
     filter_row.add_css_class("compose-filter");
-    filter_row.append(&label("/", &["compose-accent"]));
+    filter_row.append(&label("›", &["compose-accent"]));
     let entry = gtk4::SearchEntry::new();
-    entry.set_placeholder_text(Some("press / to filter"));
+    entry.set_placeholder_text(Some("type to filter files and services"));
     entry.set_hexpand(true);
     filter_row.append(&entry);
     body.append(&filter_row);
+
+    // The last three starts (`up` / `up -d`) of files in this repo.
+    let recent: Vec<compose::Start> = compose::recent_starts(&compose::load_starts(), &scan.files, 3)
+        .into_iter()
+        .cloned()
+        .collect();
+    if !recent.is_empty() {
+        let recent_box = gtk4::Box::new(Orientation::Vertical, 2);
+        recent_box.add_css_class("compose-recent");
+        let m = chord("1").chars().next().map(String::from).unwrap_or_default();
+        recent_box.append(&label(
+            &format!("last starts · {m}1 {m}2 {m}3 to repeat"),
+            &["dim", "compose-section"],
+        ));
+        let pills = gtk4::FlowBox::new();
+        pills.set_selection_mode(gtk4::SelectionMode::None);
+        pills.set_homogeneous(false);
+        pills.set_max_children_per_line(3);
+        pills.set_halign(gtk4::Align::Start);
+        pills.set_column_spacing(6);
+        pills.set_row_spacing(4);
+        for (n, s) in recent.iter().enumerate() {
+            let name = s
+                .path
+                .file_name()
+                .map(|f| compose::short_name(&f.to_string_lossy()))
+                .unwrap_or_default();
+            let how = if s.detached { "up -d" } else { "up" };
+            let text = format!("↺ {} {name} · {how}", n + 1);
+            let pill = label(&text, &[]);
+            pill.set_max_width_chars(30);
+            let b = gtk4::Button::builder()
+                .child(&pill)
+                .tooltip_text(format!("Run {how} again ({})", chord(&(n + 1).to_string())))
+                .build();
+            b.add_css_class("flat");
+            b.add_css_class("compose-pill");
+            b.set_focus_on_click(false);
+            let (w, pop, s) = (app.weak(), pop.clone(), s.clone());
+            b.connect_clicked(move |_| {
+                if let Some(a) = w.upgrade() {
+                    pop.popdown();
+                    run(&a, id, &s.path, s.action());
+                }
+            });
+            pills.append(&b);
+        }
+        // Pills sit side by side and wrap to the next row when a row is full. The
+        // scroller keeps their natural width (all three in one row) from widening
+        // the picker past `PICKER_WIDTH`.
+        let pill_scroll = gtk4::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk4::PolicyType::Never)
+            .vscrollbar_policy(gtk4::PolicyType::Never)
+            .propagate_natural_height(true)
+            .min_content_width(PICKER_WIDTH - 16)
+            .max_content_width(PICKER_WIDTH - 16)
+            .child(&pills)
+            .build();
+        recent_box.append(&pill_scroll);
+        body.append(&recent_box);
+    }
 
     let list = gtk4::ListBox::new();
     list.add_css_class("compose-files");
@@ -856,21 +1103,33 @@ pub fn open_picker(app: &AppRc, id: PaneId) {
     // `slots[row index]` is the file shown by that row, `None` for a header.
     let mut slots: Vec<Option<usize>> = Vec::new();
     let mut folder: Option<String> = None;
+    // Header labels with the number of files under them, and each file row with
+    // its action chips and service line, to update while filtering.
+    let mut groups: Vec<(String, gtk4::Label, usize)> = Vec::new();
+    let mut rows: Vec<FileRow> = Vec::new();
     for (n, f) in scan.files.iter().enumerate() {
         let dir = folder_of(f);
         if folder.as_ref() != Some(&dir) {
-            list.append(&group_row(&dir));
+            let (row, text) = group_row(&dir);
+            list.append(&row);
             slots.push(None);
+            groups.push((dir.clone(), text, 0));
             folder = Some(dir);
         }
-        list.append(&file_row(app, id, &pop, f));
+        if let Some(g) = groups.last_mut() {
+            g.2 += 1;
+        }
+        let fr = file_row(app, id, &pop, f, &default, &actions);
+        list.append(&fr.row);
         slots.push(Some(n));
+        rows.push(fr);
     }
     let scroll = gtk4::ScrolledWindow::builder()
         .hscrollbar_policy(gtk4::PolicyType::Never)
         .propagate_natural_height(true)
-        .max_content_height(320)
-        .min_content_width(380)
+        .max_content_height(360)
+        .min_content_width(PICKER_WIDTH)
+        .max_content_width(PICKER_WIDTH)
         .child(&list)
         .build();
     body.append(&scroll);
@@ -910,12 +1169,47 @@ pub fn open_picker(app: &AppRc, id: PaneId) {
         });
     }
 
+    // The chip Tab has moved to (None: Enter runs the default action). Only the
+    // selected file shows its chips, and the chosen one is lit.
+    let chip: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
+    let rows = Rc::new(rows);
+    let show_chips = {
+        let (list, rows, chip) = (list.clone(), rows.clone(), chip.clone());
+        move || {
+            let selected = list.selected_row().filter(|r| r.is_child_visible());
+            for fr in rows.iter() {
+                let on = selected.as_ref() == Some(&fr.row);
+                fr.chips.set_visible(on);
+                let mut child = fr.chips.first_child();
+                let mut n = 0;
+                while let Some(c) = child {
+                    if on && chip.get() == Some(n) {
+                        c.add_css_class("compose-chip-on");
+                    } else {
+                        c.remove_css_class("compose-chip-on");
+                    }
+                    n += 1;
+                    child = c.next_sibling();
+                }
+            }
+        }
+    };
+    {
+        let (chip, show_chips) = (chip.clone(), show_chips.clone());
+        list.connect_row_selected(move |_, _| {
+            chip.set(None);
+            show_chips();
+        });
+    }
+
+    let (rescan_key, down_key, logs_key) = (chord("r"), chord("x"), chord("l"));
     let keys = label(
-        &format!("↑↓ move  ⏎ {default_action}  d detached  x down  l logs  / filter  r rescan  esc close"),
+        &format!("↑↓ move  ⏎ {default_action}  tab actions  {down_key} down  {logs_key} logs  {rescan_key} rescan  esc close"),
         &["compose-keys", "dim"],
     );
     keys.set_ellipsize(gtk4::pango::EllipsizeMode::None);
     keys.set_wrap(true);
+    keys.set_max_width_chars(62);
     body.append(&keys);
 
     let foot = gtk4::Box::new(Orientation::Horizontal, 8);
@@ -928,26 +1222,40 @@ pub fn open_picker(app: &AppRc, id: PaneId) {
     foot.append(&rescan_btn);
     body.append(&foot);
 
-    // Filter on the path.
+    // Filter on the path and on the service names.
     {
-        let entry = entry.clone();
-        let files = scan.files.clone();
+        let (entry, files) = (entry.clone(), scan.files.clone());
         list.set_filter_func(move |row| {
-            let q = entry.text().to_lowercase();
+            let q = entry.text();
             let name = row.widget_name();
-            let hit = |rel: &str| q.is_empty() || rel.to_lowercase().contains(&q);
             match name.strip_prefix(GROUP_PREFIX) {
                 // A folder header shows while any of its files does.
-                Some(dir) => files.iter().any(|f| folder_of(f) == dir && hit(&f.rel.to_string_lossy())),
-                None => hit(&name),
+                Some(dir) => files.iter().any(|f| folder_of(f) == dir && compose::matches_query(f, &q)),
+                None => files
+                    .iter()
+                    .find(|f| f.rel.to_string_lossy() == name.as_str())
+                    .is_some_and(|f| compose::matches_query(f, &q)),
             }
         });
     }
     {
-        let list = list.clone();
-        entry.connect_search_changed(move |_| {
+        let (list, entry, files, rows, show_chips) = (list.clone(), entry.clone(), scan.files.clone(), rows.clone(), show_chips.clone());
+        entry.connect_search_changed(move |e| {
+            let q = e.text();
             list.invalidate_filter();
+            for (f, fr) in files.iter().zip(rows.iter()) {
+                fr.services.set_markup(&services_markup(f, &q));
+            }
+            let filtering = !q.trim().is_empty();
+            for (dir, text, total) in &groups {
+                let shown = files
+                    .iter()
+                    .filter(|f| folder_of(f) == *dir && compose::matches_query(f, &q))
+                    .count();
+                text.set_text(&group_text(dir, shown, *total, filtering));
+            }
             select_visible(&list, 0, false);
+            show_chips();
         });
     }
 
@@ -983,36 +1291,84 @@ pub fn open_picker(app: &AppRc, id: PaneId) {
     let keyc = gtk4::EventControllerKey::new();
     keyc.set_propagation_phase(gtk4::PropagationPhase::Capture);
     {
-        let (w, pop, list, entry, rescan_btn) = (app.weak(), pop.clone(), list.clone(), entry.clone(), rescan_btn);
+        let (w, pop, list, rescan_btn) = (app.weak(), pop.clone(), list.clone(), rescan_btn);
+        let (chip, show_chips) = (chip.clone(), show_chips.clone());
         keyc.connect_key_pressed(move |_, key, _, mods| {
-            if mods.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK | super::primary_mask()) {
+            let primary = super::primary_mask();
+            let others = (gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK | gdk::ModifierType::META_MASK).difference(primary);
+            // Other chords (Ctrl+Shift+L, Alt+...) stay with the app.
+            if mods.intersects(others) {
                 return glib::Propagation::Proceed;
             }
-            let in_entry = entry.state_flags().contains(gtk4::StateFlags::FOCUS_WITHIN);
             let act = |action: Action| {
                 if let (Some(a), Some(f)) = (w.upgrade(), chosen()) {
                     pop.popdown();
                     run(&a, id, &f.path, action);
                 }
             };
+            if mods.contains(primary) {
+                // The picker's own chords: the filter has the keyboard, so single
+                // letters are for typing. Shift is left to the app's shortcuts.
+                if mods.contains(gdk::ModifierType::SHIFT_MASK) {
+                    return glib::Propagation::Proceed;
+                }
+                match key {
+                    gdk::Key::x => act(Action::Down),
+                    gdk::Key::l => act(Action::Logs),
+                    gdk::Key::r => rescan_btn.emit_clicked(),
+                    gdk::Key::_1 | gdk::Key::_2 | gdk::Key::_3 => {
+                        let n = match key {
+                            gdk::Key::_1 => 0,
+                            gdk::Key::_2 => 1,
+                            _ => 2,
+                        };
+                        if let (Some(a), Some(s)) = (w.upgrade(), recent.get(n)) {
+                            pop.popdown();
+                            run(&a, id, &s.path, s.action());
+                        }
+                    }
+                    _ => return glib::Propagation::Proceed,
+                }
+                return glib::Propagation::Stop;
+            }
+            let last = actions.len() - 1;
             match key {
                 // Our own arrow handling: GTK's list would get stuck on a folder
                 // header (not selectable) instead of skipping it.
                 gdk::Key::Down | gdk::Key::Up | gdk::Key::KP_Down | gdk::Key::KP_Up => {
                     let down = matches!(key, gdk::Key::Down | gdk::Key::KP_Down);
-                    select_visible(&list, if down { 1 } else { -1 }, !in_entry);
+                    select_visible(&list, if down { 1 } else { -1 }, false);
                 }
-                gdk::Key::Return | gdk::Key::KP_Enter if in_entry => act(default.clone()),
-                _ if in_entry => return glib::Propagation::Proceed,
-                gdk::Key::j => select_visible(&list, 1, true),
-                gdk::Key::k => select_visible(&list, -1, true),
-                gdk::Key::u => act(default.clone()),
-                gdk::Key::d => act(Action::UpDetached),
-                gdk::Key::x => act(Action::Down),
-                gdk::Key::l => act(Action::Logs),
-                gdk::Key::r => rescan_btn.emit_clicked(),
-                gdk::Key::slash => {
-                    entry.grab_focus();
+                gdk::Key::Return | gdk::Key::KP_Enter => act(chip.get().map(|n| actions[n].1.clone()).unwrap_or_else(|| default.clone())),
+                // Tab walks the action chips of the selected file, then back to
+                // the default; Shift+Tab walks the other way.
+                gdk::Key::Tab | gdk::Key::ISO_Left_Tab => {
+                    let back = key == gdk::Key::ISO_Left_Tab || mods.contains(gdk::ModifierType::SHIFT_MASK);
+                    chip.set(match (chip.get(), back) {
+                        (None, false) => Some(0),
+                        (None, true) => Some(last),
+                        (Some(n), false) if n < last => Some(n + 1),
+                        (Some(n), true) if n > 0 => Some(n - 1),
+                        _ => None,
+                    });
+                    show_chips();
+                }
+                gdk::Key::Right if chip.get().is_some() => {
+                    chip.set(chip.get().map(|n| (n + 1).min(last)));
+                    show_chips();
+                }
+                gdk::Key::Left if chip.get().is_some() => {
+                    chip.set(chip.get().map(|n| n.saturating_sub(1)));
+                    show_chips();
+                }
+                // Esc steps back out of the chips, then closes the picker.
+                gdk::Key::Escape => {
+                    if chip.get().is_some() {
+                        chip.set(None);
+                        show_chips();
+                    } else {
+                        pop.popdown();
+                    }
                 }
                 _ => return glib::Propagation::Proceed,
             }
@@ -1036,12 +1392,15 @@ pub fn open_picker(app: &AppRc, id: PaneId) {
         });
     }
 
-    // Move keyboard focus into the list once the popover is on screen.
+    // The filter has the keyboard from the start: typing narrows the list.
     {
-        let list = list.clone();
+        let (list, entry) = (list.clone(), entry.clone());
         pop.connect_map(move |_| {
-            let list = list.clone();
-            glib::idle_add_local_once(move || select_visible(&list, 0, true));
+            let (list, entry) = (list.clone(), entry.clone());
+            glib::idle_add_local_once(move || {
+                select_visible(&list, 0, false);
+                entry.grab_focus();
+            });
         });
     }
     let old = app
@@ -1056,6 +1415,7 @@ pub fn open_picker(app: &AppRc, id: PaneId) {
     pop.set_parent(&button);
     pop.popup();
     select_visible(&list, 0, false);
+    show_chips();
 }
 
 /// Move the selection `step` rows among the visible ones (0 = first visible).
@@ -1098,51 +1458,83 @@ fn folder_of(f: &ComposeFile) -> String {
 }
 
 /// A folder header in the picker: not selectable, skipped by the arrow keys.
-fn group_row(dir: &str) -> gtk4::ListBoxRow {
+/// Returns the row and its text label (the label shows match counts).
+fn group_row(dir: &str) -> (gtk4::ListBoxRow, gtk4::Label) {
     let row = gtk4::ListBoxRow::new();
     row.set_widget_name(&format!("{GROUP_PREFIX}{dir}"));
     row.set_selectable(false);
     row.set_activatable(false);
     row.set_can_focus(false);
     row.add_css_class("compose-group-row");
-    row.set_child(Some(&label(dir, &["compose-group"])));
-    row
+    let text = label(&group_text(dir, 0, 0, false), &["compose-group"]);
+    row.set_child(Some(&text));
+    (row, text)
 }
 
-fn file_row(app: &AppRc, id: PaneId, pop: &gtk4::Popover, f: &ComposeFile) -> gtk4::ListBoxRow {
+/// A file row and the parts of it that change while the picker is open.
+struct FileRow {
+    row: gtk4::ListBoxRow,
+    /// The action chips, shown only while this row is selected.
+    chips: gtk4::Box,
+    /// The service line, which highlights what the filter matches.
+    services: gtk4::Label,
+}
+
+fn file_row(
+    app: &AppRc,
+    id: PaneId,
+    pop: &gtk4::Popover,
+    f: &ComposeFile,
+    default: &Action,
+    actions: &[(&'static str, Action, &'static str); 5],
+) -> FileRow {
     let row = gtk4::ListBoxRow::new();
     row.set_widget_name(&f.rel.to_string_lossy());
     row.add_css_class("compose-file");
-    let line = gtk4::Box::new(Orientation::Horizontal, 8);
-    let text = gtk4::Box::new(Orientation::Vertical, 0);
-    text.set_hexpand(true);
+    let text = gtk4::Box::new(Orientation::Vertical, 2);
     let name = f.rel.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     text.append(&label(&name, &["compose-name"]));
-    let services = match &f.services {
-        Some(s) if s.len() == 1 => format!("1 service · {}", s[0]),
-        Some(s) => format!("{} services · {}", s.len(), s.join(", ")),
-        None => "could not read services".into(),
-    };
-    text.append(&label(&services, &["dim"]));
-    line.append(&text);
-    for (key, word, tip, action) in [
-        ("d", "-d", "Start detached (key d)", Action::UpDetached),
-        ("x", "down", "Stop and remove (key x)", Action::Down),
-        ("l", "logs", "Follow logs (key l)", Action::Logs),
-    ] {
-        let b = key_button(key, word, tip);
-        b.set_valign(gtk4::Align::Center);
-        let (w, pop, path) = (app.weak(), pop.clone(), f.path.clone());
+    let services = label("", &["dim"]);
+    services.set_use_markup(true);
+    services.set_markup(&services_markup(f, ""));
+    services.set_max_width_chars(58);
+    text.append(&services);
+    // Only the selected row shows these, so the list stays quiet.
+    let chips = gtk4::Box::new(Orientation::Horizontal, 6);
+    chips.add_css_class("compose-chips");
+    chips.set_visible(false);
+    for (word, action, tone) in actions {
+        let mut shown = word.to_string();
+        if action == default {
+            shown = format!("⏎ {shown}");
+        }
+        match action {
+            Action::Down => shown = format!("{shown} {}", chord("x")),
+            Action::Logs => shown = format!("{shown} {}", chord("l")),
+            _ => {}
+        }
+        let b = gtk4::Button::builder().child(&label(&shown, &[])).build();
+        b.add_css_class("flat");
+        b.add_css_class("compose-chip-btn");
+        b.add_css_class(tone);
+        b.set_tooltip_text(Some(&if action == default {
+            format!("{word} (Enter)")
+        } else {
+            word.to_string()
+        }));
+        b.set_focus_on_click(false);
+        let (w, pop, path, action) = (app.weak(), pop.clone(), f.path.clone(), action.clone());
         b.connect_clicked(move |_| {
             if let Some(a) = w.upgrade() {
                 pop.popdown();
                 run(&a, id, &path, action.clone());
             }
         });
-        line.append(&b);
+        chips.append(&b);
     }
-    row.set_child(Some(&line));
-    row
+    text.append(&chips);
+    row.set_child(Some(&text));
+    FileRow { row, chips, services }
 }
 
 /// A flat button reading `<key> <word>`, the key highlighted.

@@ -1743,6 +1743,7 @@ fn command_block_headers_stay_put_when_output_passes_the_scrollback_limit() {
 }
 
 /// Pump until `f` is true; panic after `ms` milliseconds.
+#[track_caller]
 fn wait_for(ms: u64, f: impl Fn() -> bool) {
     let until = Instant::now() + Duration::from_millis(ms);
     while !f() {
@@ -1946,7 +1947,7 @@ fn compose_picker_opens_from_the_shortcut_action_and_works_from_the_keyboard() {
             .filter_map(|w| w.downcast::<gtk4::Label>().ok())
             .map(|l| l.label().to_string())
             .collect();
-        assert_eq!(groups, ["repo root", "services/pay/"]);
+        assert_eq!(groups, ["▾ repo root", "▾ services/pay/"]);
         let selected = || list.selected_row().map(|r| r.widget_name().to_string());
         assert_eq!(selected().as_deref(), Some("docker-compose.yml"), "the first file is selected");
         screenshot(&pop, "compose-picker");
@@ -1970,17 +1971,22 @@ fn compose_picker_opens_from_the_shortcut_action_and_works_from_the_keyboard() {
         pump(400);
         assert_eq!(shown_groups().len(), 2);
         assert_eq!(selected().as_deref(), Some("docker-compose.yml"));
-        list.selected_row().unwrap().grab_focus();
-        pump(100);
+        assert!(
+            entry.state_flags().contains(gtk4::StateFlags::FOCUS_WITHIN),
+            "the filter has the keyboard from the start"
+        );
 
-        xdo(&["key", "--window", &h.window, "j"]);
+        xdo(&["key", "--window", &h.window, "Down"]);
         pump(200);
         assert_eq!(
             selected().as_deref(),
             Some("services/pay/compose.yaml"),
-            "j moves to the next file, skipping the folder header"
+            "Down moves to the next file, skipping the folder header"
         );
-        xdo(&["key", "--window", &h.window, "d"]);
+        // Tab moves to the first action chip (up -d); Enter runs it.
+        xdo(&["key", "--window", &h.window, "Tab"]);
+        pump(200);
+        xdo(&["key", "--window", &h.window, "Return"]);
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains(" up -d"));
         assert!(ran().contains("compose -f services/pay/compose.yaml up -d"), "{}", ran());
@@ -2031,11 +2037,7 @@ fn compose_picker_keeps_keyboard_selection_fully_visible() {
         visible(0);
         // Arrows skip headers, scroll in both directions and wrap at either end.
         // They also work while typing a filter, without taking its keyboard focus.
-        for in_filter in [false, true] {
-            if in_filter {
-                xdo(&["key", "slash"]);
-                pump(100);
-            }
+        for in_filter in [true] {
             for (key, indices) in [
                 ("Down", (1..files.len()).collect::<Vec<_>>()),
                 ("Up", (0..files.len() - 1).rev().collect()),
@@ -2057,8 +2059,7 @@ fn compose_picker_keeps_keyboard_selection_fully_visible() {
         entry.set_text("");
         pump(400);
         visible(0);
-        list.selected_row().unwrap().grab_focus();
-        for (key, index) in [("k", 23), ("j", 0), ("KP_Up", 23), ("KP_Down", 0)] {
+        for (key, index) in [("Up", 23), ("Down", 0), ("KP_Up", 23), ("KP_Down", 0)] {
             xdo(&["key", key]);
             pump(80);
             visible(index);
@@ -2602,9 +2603,7 @@ fn typing_a_filter_in_the_compose_picker_narrows_the_list() {
                 .collect::<Vec<_>>()
         };
 
-        // Real keys, as a user types them: / then the text.
-        xdo(&["key", "--window", &h.window, "slash"]);
-        pump(200);
+        // Real keys, as a user types them: the filter has the keyboard already.
         xdo(&["type", "--window", &h.window, "--delay", "40", "pay"]);
         pump(600);
         assert_eq!(entry.text().as_str(), "pay", "the letters go into the filter");
@@ -2619,6 +2618,86 @@ fn typing_a_filter_in_the_compose_picker_narrows_the_list() {
         pump(300);
         let term = h.app.inner.borrow().panes[&pane].term.clone();
         assert!(term.has_focus(), "typing goes back to the terminal after the picker closes");
+    });
+}
+
+#[test]
+fn compose_picker_shows_last_starts_service_matches_and_chips_for_the_selected_file() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-picker-history");
+        let (_, record, _) = fake_docker(&h);
+        std::fs::create_dir_all(h.root.join("home/proj/services/pay")).unwrap();
+        std::fs::write(h.root.join("home/proj/docker-compose.yml"), "services:\n  api: {}\n  redis: {}\n").unwrap();
+        std::fs::write(h.root.join("home/proj/services/pay/compose.yaml"), "services:\n  pay: {}\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("shop"), Some(h.root.join("home/proj"))).unwrap();
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.button.is_visible());
+        wait_for(8_000, || h.app.inner.borrow().panes[&pane].compose.scan.is_some());
+        let button = h.app.inner.borrow().panes[&pane].compose.button.clone();
+
+        // One earlier start of the root file, one of a file in another repo.
+        let root_file = h.app.inner.borrow().panes[&pane].compose.scan.as_ref().unwrap().files[0]
+            .path
+            .clone();
+        let now = oxishell::history::now_secs();
+        let mut starts = Vec::new();
+        oxishell::compose::record_start(
+            &mut starts,
+            std::path::Path::new("/elsewhere/compose.yml"),
+            &oxishell::compose::Action::Up,
+            now - 50,
+        );
+        oxishell::compose::record_start(&mut starts, &root_file, &oxishell::compose::Action::UpDetached, now - 240);
+        oxishell::compose::save_starts(&starts);
+
+        h.app.run_action("compose-files");
+        pump(400);
+        let pop = find_by_class(button.upcast_ref(), "compose-picker").expect("the picker opened");
+        let list: gtk4::ListBox = find_descendant(&pop).unwrap();
+        let entry: gtk4::SearchEntry = find_descendant(&pop).unwrap();
+
+        // Last starts: only this repo's, with the action it ran.
+        let pills: Vec<String> = widgets(&pop)
+            .into_iter()
+            .filter(|w| w.has_css_class("compose-pill"))
+            .flat_map(|b| widgets(&b))
+            .filter_map(|w| w.downcast::<gtk4::Label>().ok())
+            .map(|l| l.label().to_string())
+            .collect();
+        assert_eq!(pills.len(), 1, "{pills:?}");
+        assert!(pills[0].contains("docker-compose") && pills[0].contains("up -d"), "{pills:?}");
+
+        // Only the selected file shows its action chips.
+        let shown_chips = || {
+            widgets(&list)
+                .into_iter()
+                .filter(|w| w.has_css_class("compose-chips") && w.is_child_visible() && w.is_visible())
+                .count()
+        };
+        assert_eq!(shown_chips(), 1);
+
+        // The filter finds a file by one of its service names.
+        xdo(&["type", "--window", &h.window, "--delay", "40", "redis"]);
+        pump(600);
+        assert_eq!(entry.text().as_str(), "redis");
+        let visible_files = widgets(&list)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk4::ListBoxRow>().ok())
+            .filter(|r| r.is_child_visible() && !r.widget_name().starts_with("group:"))
+            .map(|r| r.widget_name().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(visible_files, ["docker-compose.yml"]);
+
+        // The picker's own chord runs `down` for the selected file.
+        xdo(&["key", "--window", &h.window, "ctrl+x"]);
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        wait_for(8_000, || ran().contains(" down"));
+        assert!(ran().contains("compose -f docker-compose.yml down"), "{}", ran());
+        assert!(!pop.is_visible(), "the picker closes after an action");
+        // `down` is not a start: the saved list is unchanged.
+        assert_eq!(oxishell::compose::load_starts().len(), 2);
     });
 }
 
@@ -2789,6 +2868,100 @@ fn clicking_stop_sends_no_crash_alert_for_killed_containers_and_removes_the_bar(
 }
 
 #[test]
+fn a_stopped_stack_leaves_a_run_again_strip_for_two_commands() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("compose-rerun");
+        let (_, record, ps) = fake_docker(&h);
+        let (pane, file) = compose_workspace(&h, "shop");
+        let ran = || std::fs::read_to_string(&record).unwrap_or_default();
+        let starts = || ran().lines().filter(|l| l.ends_with(" up -d")).count();
+        let exited = r#"{"Service":"api","State":"exited","Health":"","ExitCode":137,"Publishers":[]}"#;
+        let (term, bar, strip) = {
+            let i = h.app.inner.borrow();
+            let term = i.panes[&pane].term.clone();
+            let bars = i.panes[&pane].compose.bars();
+            let (bar, strip) = (bars.stack_bar.clone(), bars.rerun_bar.clone());
+            drop(bars);
+            (term, bar, strip)
+        };
+        let strip_text = || {
+            widgets(&strip)
+                .into_iter()
+                .filter(|w| w.has_css_class("compose-rerun-text"))
+                .filter_map(|w| w.downcast::<gtk4::Label>().ok())
+                .map(|l| l.label().to_string())
+                .next()
+                .unwrap_or_default()
+        };
+        // Wait on state, not on fixed pauses or on effects of an earlier round:
+        // a slow runner (CI) must not see the previous round's ` stop`, click a
+        // button before it can act, or type before the shell reads commands.
+        let ready = || h.app.inner.borrow().panes[&pane].prompt_is_empty();
+        let seen_running = || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.seen_running && !s.capturing)
+        };
+        let stops = || ran().lines().filter(|l| l.ends_with(" stop")).count();
+        let commands = || h.app.inner.borrow().panes[&pane].compose.stopped.as_ref().map(|s| s.commands);
+        let stop_and_wait_for_strip = |round: usize| {
+            std::fs::write(&ps, PS_API_RUNNING).unwrap();
+            wait_for(8_000, seen_running);
+            wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
+            pump(5_500); // past the start-up grace period
+            let stop = button_with(&bar, "compose-bar-btn", "[stop]").expect("[stop]");
+            wait_for(2_000, || stop.is_mapped() && stop.is_sensitive());
+            click_widget(&h, &stop);
+            wait_for(8_000, || stops() == round);
+            std::fs::write(&ps, exited).unwrap();
+            wait_for(8_000, || !bar.is_visible());
+            wait_for(2_000, || strip.is_visible());
+        };
+
+        wait_for(8_000, ready);
+        oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
+        stop_and_wait_for_strip(1);
+        assert_eq!(strip_text(), "docker-compose.yml  stopped just now · 1 service");
+        screenshot(&h.app.window, "compose-rerun-strip");
+
+        // [up -d] starts the same stack again: the strip makes way for the bar.
+        let up_d = button_with(&strip, "compose-bar-btn", "[up -d]").expect("[up -d]");
+        wait_for(8_000, ready);
+        wait_for(2_000, || up_d.is_mapped() && up_d.is_sensitive() && up_d.width() > 0);
+        click_widget(&h, &up_d);
+        wait_for(8_000, || starts() == 2);
+        assert!(!strip.is_visible(), "the stack runs again: no strip");
+        assert!(h.app.inner.borrow().panes[&pane].compose.stopped.is_none());
+
+        stop_and_wait_for_strip(2);
+        assert_eq!(commands(), Some(0));
+        wait_for(8_000, ready);
+        h.point(&term);
+        xdo(&["click", "1"]);
+        wait_for(2_000, || term.has_focus());
+        xdo(&["type", "--delay", "15", "echo one"]);
+        xdo(&["key", "Return"]);
+        wait_for(4_000, || commands() == Some(1));
+        wait_for(8_000, ready);
+        xdo(&["key", "Return"]); // an empty line is not a command
+        pump(500);
+        wait_for(8_000, ready);
+        assert_eq!(commands(), Some(1), "an empty line is not a command");
+        assert!(strip.is_visible(), "one command run: the strip stays");
+        xdo(&["type", "--delay", "15", "echo two"]);
+        xdo(&["key", "Return"]);
+        wait_for(4_000, || !strip.is_visible());
+        assert!(h.app.inner.borrow().panes[&pane].compose.stopped.is_none());
+        assert_eq!(starts(), 2, "typing commands starts nothing");
+    });
+}
+
+#[test]
 fn with_run_immediately_off_pressing_enter_starts_the_stack_bar() {
     if !have_input() {
         return;
@@ -2953,15 +3126,15 @@ fn ui_launcher_shortcut_opens_the_picker_and_the_arrow_keys_skip_folder_headers(
         assert_eq!(sel().as_deref(), Some("docker-compose-dev.yml"));
         press(&h, "Down");
         assert_eq!(sel().as_deref(), Some("docker-compose.yml"));
-        press(&h, "j");
+        press(&h, "Down");
         assert_eq!(
             sel().as_deref(),
             Some("services/pay/compose.yaml"),
             "skips the services/pay/ header"
         );
-        press(&h, "j");
+        press(&h, "Down");
         assert_eq!(sel().as_deref(), Some("docker-compose-dev.yml"), "wraps to the top");
-        press(&h, "k");
+        press(&h, "Up");
         assert_eq!(sel().as_deref(), Some("services/pay/compose.yaml"), "wraps to the bottom");
         press(&h, "Up");
         assert_eq!(sel().as_deref(), Some("docker-compose.yml"));
@@ -2979,7 +3152,6 @@ fn ui_launcher_filter_no_match_does_nothing_and_backspace_brings_the_list_back()
         let (_, button) = ui_launcher_setup(&h, UI_FILES);
         press(&h, "ctrl+shift+l");
         let pop = open_picker(&button).expect("picker");
-        press(&h, "slash");
         type_keys(&h, "zzz");
         pump(400);
         assert!(picker_files(&pop).is_empty(), "nothing matches");
@@ -3013,6 +3185,10 @@ fn ui_launcher_row_buttons_clicked_with_the_mouse_run_their_action() {
         let (_, button) = ui_launcher_setup(&h, UI_FILES);
         click_widget(&h, &button);
         let pop = open_picker(&button).expect("picker");
+        // Only the selected file shows its action chips: select the pay file first.
+        press(&h, "Down");
+        press(&h, "Down");
+        assert_eq!(picker_selected(&pop).as_deref(), Some("services/pay/compose.yaml"));
         let row = widgets(&pop)
             .into_iter()
             .filter_map(|w| w.downcast::<gtk4::ListBoxRow>().ok())
@@ -3020,9 +3196,9 @@ fn ui_launcher_row_buttons_clicked_with_the_mouse_run_their_action() {
             .unwrap();
         let down = widgets(&row)
             .into_iter()
-            .filter(|w| w.has_css_class("compose-key-btn"))
-            .find(|w| w.tooltip_text().is_some_and(|t| t.contains("Stop and remove")))
-            .expect("x down button");
+            .filter(|w| w.has_css_class("compose-chip-btn"))
+            .find(|w| w.tooltip_text().is_some_and(|t| t == "down"))
+            .expect("down chip");
         click_widget(&h, &down);
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains(" down"));
@@ -3068,7 +3244,9 @@ fn ui_launcher_stack_bar_buttons_and_chips_work_with_the_mouse() {
         press(&h, "ctrl+shift+l");
         assert!(open_picker(&button).is_some());
         press(&h, "Down");
-        press(&h, "d");
+        // Tab moves to the first action chip (up -d); Enter runs it.
+        press(&h, "Tab");
+        press(&h, "Return");
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains("compose -f docker-compose.yml up -d"));
         let bar = h.app.inner.borrow().panes[&pane].compose.bars().stack_bar.clone();
@@ -3110,7 +3288,7 @@ fn ui_launcher_logs_line_stop_logs_clicked_with_the_mouse() {
         let (pane, button) = ui_launcher_setup(&h, UI_FILES);
         press(&h, "ctrl+shift+l");
         assert!(open_picker(&button).is_some());
-        press(&h, "l");
+        press(&h, "ctrl+l");
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains(" logs -f"));
         let logs_bar = h.app.inner.borrow().panes[&pane].compose.bars().logs_bar.clone();
@@ -3140,7 +3318,8 @@ fn ui_launcher_dragging_the_divider_narrows_a_pane_that_shows_the_stack_bar() {
         std::fs::write(&ps, many).unwrap();
         press(&h, "ctrl+shift+l");
         assert!(open_picker(&button).is_some());
-        press(&h, "d");
+        press(&h, "Tab");
+        press(&h, "Return");
         let ran = || std::fs::read_to_string(&record).unwrap_or_default();
         wait_for(8_000, || ran().contains(" up -d"));
         // The bar shows only the services the started file declares.
@@ -3276,6 +3455,20 @@ fn widget_text(w: &gtk4::Widget) -> String {
     let mut labels: Vec<gtk4::Label> = Vec::new();
     all_of_type(w, &mut labels);
     labels.iter().map(|l| l.label().to_string()).collect::<Vec<_>>().join(" ")
+}
+
+/// The name a tab shows, without its state glyph and unread dot.
+fn tab_name(h: &Harness, tab: oxishell::model::TabId) -> String {
+    let mut v = Vec::new();
+    all_by_class(&tab_of(h, tab), "tab-label", &mut v);
+    widget_text(&v[0])
+}
+
+/// The state glyph a tab shows ("" for a tab without an agent).
+fn tab_glyph(h: &Harness, tab: oxishell::model::TabId) -> String {
+    let mut v = Vec::new();
+    all_by_class(&tab_of(h, tab), "tab-glyph", &mut v);
+    v.first().filter(|g| g.is_visible()).map(widget_text).unwrap_or_default()
 }
 
 /// Mapped widgets with `class` anywhere in the window.
@@ -3515,6 +3708,89 @@ fn sidebar_lists_each_tab_and_click_selects_it() {
 }
 
 #[test]
+fn sidebar_lists_every_agent_in_a_split_tab() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        use oxishell::agents::{AgentState, HookInfo};
+        use oxishell::model::Orient;
+        let h = Harness::new("wssplitagents");
+        let p1 = h.app.focused_pane().unwrap();
+        let p2 = h.app.split(Some(p1), Orient::Horizontal, None).unwrap();
+        let p3 = h.app.split(Some(p2), Orient::Vertical, None).unwrap();
+        pump(300);
+        let prompt = |s: &str| HookInfo {
+            prompt: Some(s.into()),
+            ..Default::default()
+        };
+        h.app.agent_event(p1, "claude", AgentState::Running, prompt("Fix A")).unwrap();
+        h.app.agent_event(p2, "codex", AgentState::Waiting, prompt("Fix B")).unwrap();
+        h.app.agent_event(p3, "gemini", AgentState::Idle, prompt("Fix C")).unwrap();
+        h.app.focus_pane(p1);
+        pump(200);
+        let sidebar: gtk4::Widget = h.app.sidebar_list.clone().upcast();
+        let lines = || {
+            let mut v = Vec::new();
+            all_by_class(&sidebar, "ws-session", &mut v);
+            v
+        };
+        let l = lines();
+        let texts: Vec<String> = l.iter().map(widget_text).collect();
+        assert_eq!(l.len(), 3, "one line per agent pane of the split tab: {texts:?}");
+        assert!(
+            texts[0].contains("Fix A") && texts[1].contains("Fix B") && texts[2].contains("Fix C"),
+            "{texts:?}"
+        );
+        assert!(l[0].has_css_class("ws-session-active") && !l[2].has_css_class("ws-session-active"));
+        h.point(&l[2]);
+        xdo(&["click", "1"]);
+        pump(300);
+        assert_eq!(h.app.focused_pane(), Some(p3), "clicking a line focuses its pane");
+        let l = lines();
+        assert!(l[2].has_css_class("ws-session-active") && !l[0].has_css_class("ws-session-active"));
+
+        // A named tab with several agents keeps each agent's own summary.
+        let t = ws_tabs(&h, h.app.inner.borrow().state.active.unwrap()).1;
+        h.app.rename_tab(t, Some("api")).unwrap();
+        pump(200);
+        let texts: Vec<String> = lines().iter().map(widget_text).collect();
+        assert!(texts[1].contains("Fix B"), "{texts:?}");
+        let headers = || {
+            let mut v = Vec::new();
+            all_by_class(&sidebar, "ws-tab-header", &mut v);
+            v
+        };
+        assert!(headers().is_empty(), "one tab with agents gets no tab header");
+
+        // Agents in a second tab: each tab's lines sit under a "Tab N" header.
+        let wid = h.app.inner.borrow().state.active.unwrap();
+        let (t2, q) = h.app.new_tab(Some(wid), None).unwrap();
+        h.app.agent_event(q, "claude", AgentState::Running, prompt("Fix D")).unwrap();
+        h.app.focus_pane(p1);
+        pump(300);
+        let hs = headers();
+        let titles: Vec<String> = hs.iter().map(widget_text).collect();
+        assert_eq!(titles, ["api", "Tab 2"], "a named tab shows its name, else its number");
+        let mut ordered = Vec::new();
+        all_by_class(&sidebar, "ws-session", &mut ordered);
+        all_by_class(&sidebar, "ws-tab-header", &mut ordered);
+        ordered.sort_by_key(|w| w.compute_point(&sidebar, &gtk4::graphene::Point::zero()).unwrap().y() as i32);
+        let order: Vec<String> = ordered.iter().map(widget_text).collect();
+        assert!(
+            order[0] == "api" && order[1].contains("Fix A") && order[4].contains("Tab 2") && order[5].contains("Fix D"),
+            "headers sit above their tab's lines: {order:?}"
+        );
+        assert!(lines().iter().all(|l| l.has_css_class("ws-session-grouped")));
+        assert!(hs[0].has_css_class("ws-tab-header-active") && !hs[1].has_css_class("ws-tab-header-active"));
+        h.point(&hs[1]);
+        xdo(&["click", "1"]);
+        pump(300);
+        assert_eq!(ws_tabs(&h, wid).1, t2, "clicking a tab header shows that tab");
+    });
+}
+
+#[test]
 fn dragging_a_tab_reorders_it() {
     if !have_input() {
         return;
@@ -3571,7 +3847,7 @@ fn ctrl_tab_cycles_tabs_and_ctrl_shift_t_opens_one() {
 }
 
 #[test]
-fn tab_label_follows_the_agent_title_with_the_sidebar() {
+fn agent_tab_shows_its_task_and_an_animated_state_glyph() {
     if !have_input() {
         return;
     }
@@ -3582,32 +3858,34 @@ fn tab_label_follows_the_agent_title_with_the_sidebar() {
         let wid = h.app.inner.borrow().state.active.unwrap();
         let t = ws_tabs(&h, wid).1;
         pump(300);
+        assert_eq!(tab_glyph(&h, t), "", "a plain shell tab has no glyph");
         let info = HookInfo {
             prompt: Some("Fix A".into()),
             ..Default::default()
         };
         h.app.agent_event(p, "claude", AgentState::Running, info).unwrap();
         pump(200);
-        assert!(
-            widget_text(&tab_of(&h, t)).contains("Claude: Fix A"),
-            "{}",
-            widget_text(&tab_of(&h, t))
-        );
+        assert_eq!(tab_name(&h, t), "Claude: Fix A");
+        let spinner = |g: &str| g.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c));
+        let first = tab_glyph(&h, t);
+        assert!(spinner(&first), "a working agent spins on the tab: {first:?}");
+        wait_for(2_000, || tab_glyph(&h, t) != first);
         h.app.inner.borrow().panes[&p]
             .term
             .feed_child(b"sh -c \"printf '\\033]0;\\342\\234\\263 Title T\\007'; sleep 3\"\r");
-        let sidebar: gtk4::Widget = h.app.sidebar_list.clone().upcast();
-        wait_for(5_000, || {
-            let mut lines = Vec::new();
-            all_by_class(&sidebar, "ws-session", &mut lines);
-            lines.first().is_some_and(|l| widget_text(l).contains("Title T"))
-        });
-        // Same moment: the tab says what the sidebar says.
-        assert!(
-            widget_text(&tab_of(&h, t)).contains("Claude: Title T"),
-            "{}",
-            widget_text(&tab_of(&h, t))
-        );
+        wait_for(5_000, || tab_name(&h, t) == "Claude: Title T");
+        h.app.agent_event(p, "claude", AgentState::Waiting, HookInfo::default()).unwrap();
+        pump(200);
+        assert_eq!(tab_name(&h, t), "Claude: Title T", "needing input does not rename the tab");
+        assert_eq!(tab_glyph(&h, t), "?", "needs input is a steady ? on the tab");
+        pump(700);
+        assert_eq!(tab_glyph(&h, t), "?", "and it does not blink");
+        let tip = tab_of(&h, t).tooltip_text().unwrap_or_default();
+        assert!(tip.contains("Needs input"), "the state is in the tooltip: {tip}");
+        h.app.agent_event(p, "claude", AgentState::Idle, HookInfo::default()).unwrap();
+        pump(200);
+        assert_eq!(tab_name(&h, t), "Claude: Title T", "finishing does not rename the tab");
+        assert_eq!(tab_glyph(&h, t), "✓");
     });
 }
 
@@ -3670,8 +3948,7 @@ fn double_clicking_a_tab_renames_it() {
             pump(20);
         }
         pump(200);
-        let label = widget_text(&tab_of(&h, t));
-        assert!(label.contains("api server") && !label.contains("Fix A"), "{label}");
+        assert_eq!(tab_name(&h, t), "api server");
         let tip = tab_of(&h, t).tooltip_text().unwrap_or_default();
         assert!(tip.contains("Fix A"), "the agent's summary moves to the tooltip: {tip}");
         let sidebar: gtk4::Widget = h.app.sidebar_list.clone().upcast();
@@ -3687,7 +3964,7 @@ fn double_clicking_a_tab_renames_it() {
         // Clearing the name brings the automatic label back.
         h.app.rename_tab(t, None).unwrap();
         pump(200);
-        assert!(widget_text(&tab_of(&h, t)).contains("Claude: Fix A"));
+        assert_eq!(tab_name(&h, t), "Claude: Fix A");
     });
 }
 

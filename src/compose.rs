@@ -268,6 +268,135 @@ impl Action {
     }
 }
 
+/// One remembered start (`up` or `up -d`) of a compose file, for the picker's
+/// "last starts" row.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Start {
+    pub path: PathBuf,
+    /// `up -d` when true, plain `up` otherwise.
+    pub detached: bool,
+    /// Unix seconds.
+    pub at: i64,
+}
+
+impl Start {
+    pub fn action(&self) -> Action {
+        if self.detached {
+            Action::UpDetached
+        } else {
+            Action::Up
+        }
+    }
+}
+
+/// Starts kept on disk, newest first.
+pub const MAX_STARTS: usize = 12;
+
+/// Remember `action` for `file` when it is a start (`up` / `up -d`); every other
+/// action (down, logs, restart...) is ignored. A repeat of the same file and
+/// action moves to the front instead of filling the list. Returns whether the
+/// list changed.
+pub fn record_start(list: &mut Vec<Start>, file: &Path, action: &Action, at: i64) -> bool {
+    let detached = match action {
+        Action::Up => false,
+        Action::UpDetached => true,
+        _ => return false,
+    };
+    list.retain(|s| !(s.path == file && s.detached == detached));
+    list.insert(
+        0,
+        Start {
+            path: file.to_path_buf(),
+            detached,
+            at,
+        },
+    );
+    list.truncate(MAX_STARTS);
+    true
+}
+
+/// The newest `n` starts whose file is in `files` (the current repo).
+pub fn recent_starts<'a>(list: &'a [Start], files: &[ComposeFile], n: usize) -> Vec<&'a Start> {
+    list.iter().filter(|s| files.iter().any(|f| f.path == s.path)).take(n).collect()
+}
+
+/// Where the starts are kept.
+pub fn starts_path() -> PathBuf {
+    crate::paths::state_dir().join("compose-starts.json")
+}
+
+/// The saved starts; empty when the file is missing or unreadable.
+pub fn load_starts() -> Vec<Start> {
+    std::fs::read_to_string(starts_path())
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<Start>>(&t).ok())
+        .map(|mut v| {
+            v.truncate(MAX_STARTS);
+            v
+        })
+        .unwrap_or_default()
+}
+
+pub fn save_starts(list: &[Start]) {
+    if let Ok(text) = serde_json::to_string(list) {
+        let _ = crate::paths::write_atomic(&starts_path(), text.as_bytes(), 0o600);
+    }
+}
+
+/// A file name for a pill or a row: no extension and no `docker-compose-` prefix
+/// (`docker-compose-local-infra.yml` -> `local-infra`; `docker-compose.yml` stays
+/// `docker-compose`).
+pub fn short_name(file_name: &str) -> String {
+    let stem = file_name
+        .strip_suffix(".yml")
+        .or_else(|| file_name.strip_suffix(".yaml"))
+        .unwrap_or(file_name);
+    match stem.strip_prefix("docker-compose-") {
+        Some(rest) if !rest.is_empty() => rest.to_string(),
+        _ => stem.to_string(),
+    }
+}
+
+/// Does the picker's filter `query` match `file`? The path or any service name,
+/// ignoring case; an empty query matches everything.
+pub fn matches_query(file: &ComposeFile, query: &str) -> bool {
+    let q = query.trim().to_lowercase();
+    q.is_empty()
+        || file.rel.to_string_lossy().to_lowercase().contains(&q)
+        || file
+            .services
+            .as_ref()
+            .is_some_and(|s| s.iter().any(|n| n.to_lowercase().contains(&q)))
+}
+
+/// Split `text` into pieces, each flagged when it is a case-insensitive match of
+/// `query` (to highlight it). No match, or an empty query: one unflagged piece.
+pub fn split_matches(text: &str, query: &str) -> Vec<(String, bool)> {
+    let q = query.trim().to_ascii_lowercase();
+    if q.is_empty() {
+        return vec![(text.to_string(), false)];
+    }
+    // ASCII lowercasing keeps every byte offset, unlike `to_lowercase`.
+    let lower = text.to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(i) = lower[at..].find(&q) {
+        let (start, end) = (at + i, at + i + q.len());
+        if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            break;
+        }
+        if start > at {
+            out.push((text[at..start].to_string(), false));
+        }
+        out.push((text[start..end].to_string(), true));
+        at = end;
+    }
+    if at < text.len() {
+        out.push((text[at..].to_string(), false));
+    }
+    out
+}
+
 /// Quote `s` for a POSIX shell, leaving plain paths as they are.
 pub fn shell_quote(s: &str) -> String {
     // Never type a raw control character (they act as keys in a terminal).
@@ -612,10 +741,92 @@ pub fn stack_should_hide(seen_running: bool, now: &[ServiceStatus], pane_busy: b
     !now.iter().any(ServiceStatus::is_running) && (seen_running || !pane_busy) && (stopping || !crashed)
 }
 
+/// How many shell commands the "run again" strip stays for after its stack
+/// stopped; after that the pane is a plain terminal again.
+pub const RERUN_KEEP_COMMANDS: u32 = 2;
+
+/// A stack started from the launcher that has stopped in its pane: what the
+/// "run again" strip shows and starts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stopped {
+    pub file: PathBuf,
+    /// The compose program that ran the stack.
+    pub cmd: Vec<String>,
+    /// Services the stack had when it stopped.
+    pub services: usize,
+    /// When it stopped, in Unix seconds.
+    pub at: i64,
+    /// Shell commands run in the pane since it stopped.
+    pub commands: u32,
+}
+
+impl Stopped {
+    pub fn new(file: &Path, cmd: Vec<String>, services: usize, at: i64) -> Self {
+        Self {
+            file: file.to_path_buf(),
+            cmd,
+            services,
+            at,
+            commands: 0,
+        }
+    }
+
+    /// Count one shell command run in the pane. False once the strip should go.
+    pub fn command_ran(&mut self) -> bool {
+        self.commands = self.commands.saturating_add(1);
+        self.commands < RERUN_KEEP_COMMANDS
+    }
+
+    /// `docker-compose.yml  stopped 3 min ago · 4 services`, with the file shown as `display`.
+    pub fn text(&self, display: &str, now: i64) -> String {
+        let when = crate::history::relative_time(self.at, now);
+        match self.services {
+            0 => format!("{display}  stopped {when}"),
+            1 => format!("{display}  stopped {when} · 1 service"),
+            n => format!("{display}  stopped {when} · {n} services"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
+
+    fn stopped(services: usize, at: i64) -> Stopped {
+        Stopped::new(
+            Path::new("/r/docker-compose.yml"),
+            vec!["docker".into(), "compose".into()],
+            services,
+            at,
+        )
+    }
+
+    #[test]
+    fn the_run_again_strip_stays_for_two_commands() {
+        let mut s = stopped(4, 0);
+        assert_eq!(RERUN_KEEP_COMMANDS, 2);
+        assert!(s.command_ran(), "after the 1st command the strip stays");
+        assert!(!s.command_ran(), "after the 2nd command it goes away");
+        assert!(!s.command_ran(), "and stays gone");
+    }
+
+    #[test]
+    fn the_run_again_strip_says_when_the_stack_stopped_and_how_big_it_is() {
+        assert_eq!(
+            stopped(4, 1_000).text("docker-compose.yml", 1_010),
+            "docker-compose.yml  stopped just now · 4 services"
+        );
+        assert_eq!(
+            stopped(1, 1_000).text("dev.yml", 1_000 + 180),
+            "dev.yml  stopped 3 min ago · 1 service"
+        );
+        assert_eq!(
+            stopped(0, 1_000).text("dev.yml", 1_000),
+            "dev.yml  stopped just now",
+            "no services known"
+        );
+    }
 
     #[test]
     fn launch_context_is_the_processs_own_environment_and_folder() {
@@ -893,6 +1104,115 @@ mod tests {
         assert_eq!(repo_root(&root.join("sub")), root.canonicalize().unwrap());
         let plain = tmp("not-a-repo");
         assert_eq!(repo_root(&plain), plain);
+    }
+
+    fn cf(rel: &str, services: Option<&[&str]>) -> ComposeFile {
+        ComposeFile {
+            path: PathBuf::from("/repo").join(rel),
+            rel: PathBuf::from(rel),
+            services: services.map(|s| s.iter().map(|n| n.to_string()).collect()),
+        }
+    }
+
+    #[test]
+    fn only_up_and_up_d_are_remembered_newest_first() {
+        let mut l = Vec::new();
+        let a = Path::new("/repo/a.yml");
+        let b = Path::new("/repo/b.yml");
+        assert!(record_start(&mut l, a, &Action::UpDetached, 1));
+        assert!(record_start(&mut l, b, &Action::Up, 2));
+        for other in [Action::Down, Action::Logs, Action::Restart, Action::Stop, Action::UpBuild] {
+            assert!(!record_start(&mut l, a, &other, 3), "{other:?}");
+        }
+        assert_eq!(
+            l.iter().map(|s| (s.path.as_path(), s.detached)).collect::<Vec<_>>(),
+            vec![(b, false), (a, true)]
+        );
+        // The same file and action again moves to the front instead of repeating.
+        assert!(record_start(&mut l, a, &Action::UpDetached, 9));
+        assert_eq!(l.len(), 2);
+        assert_eq!((l[0].path.as_path(), l[0].at), (a, 9));
+        // The same file with the other action is a separate start.
+        assert!(record_start(&mut l, a, &Action::Up, 10));
+        assert_eq!(l.len(), 3);
+        assert_eq!(l[0].action(), Action::Up);
+        assert_eq!(l[1].action(), Action::UpDetached);
+    }
+
+    #[test]
+    fn starts_are_capped_and_survive_json() {
+        let mut l = Vec::new();
+        for n in 0..(MAX_STARTS + 5) {
+            record_start(&mut l, Path::new(&format!("/repo/{n}.yml")), &Action::Up, n as i64);
+        }
+        assert_eq!(l.len(), MAX_STARTS);
+        assert_eq!(l[0].at, (MAX_STARTS + 4) as i64);
+        let back: Vec<Start> = serde_json::from_str(&serde_json::to_string(&l).unwrap()).unwrap();
+        assert_eq!(back, l);
+    }
+
+    #[test]
+    fn recent_starts_are_the_newest_three_of_this_repo() {
+        let files = [cf("a.yml", None), cf("b.yml", None), cf("c.yml", None), cf("d.yml", None)];
+        let mut l = Vec::new();
+        // `elsewhere.yml` is another repo's file: never shown here.
+        for (p, t) in [
+            ("/repo/a.yml", 1),
+            ("/other/elsewhere.yml", 2),
+            ("/repo/b.yml", 3),
+            ("/repo/c.yml", 4),
+            ("/repo/d.yml", 5),
+        ] {
+            record_start(&mut l, Path::new(p), &Action::UpDetached, t);
+        }
+        let got: Vec<_> = recent_starts(&l, &files, 3).iter().map(|s| s.at).collect();
+        assert_eq!(got, vec![5, 4, 3]);
+        assert!(recent_starts(&[], &files, 3).is_empty());
+    }
+
+    #[test]
+    fn short_names() {
+        assert_eq!(short_name("docker-compose-local-infra.yml"), "local-infra");
+        assert_eq!(short_name("docker-compose-with-redundancy.yaml"), "with-redundancy");
+        assert_eq!(short_name("docker-compose.yml"), "docker-compose");
+        assert_eq!(short_name("compose.yaml"), "compose");
+        assert_eq!(short_name("docker-compose-.yml"), "docker-compose-");
+    }
+
+    #[test]
+    fn the_filter_matches_file_names_and_service_names() {
+        let f = cf("backend/docker-compose-with-server-1.yml", Some(&["web", "Redis_Server"]));
+        assert!(matches_query(&f, ""));
+        assert!(matches_query(&f, "  "));
+        assert!(matches_query(&f, "SERVER-1"));
+        assert!(matches_query(&f, "redis"));
+        assert!(!matches_query(&f, "kafka"));
+        // A file whose YAML did not parse still matches by name.
+        let broken = cf("compose.yml", None);
+        assert!(matches_query(&broken, "compose"));
+        assert!(!matches_query(&broken, "redis"));
+    }
+
+    #[test]
+    fn matches_are_split_for_highlighting() {
+        let join = |v: Vec<(String, bool)>| v.iter().map(|(t, _)| t.as_str()).collect::<String>();
+        let v = split_matches("web, Redis, redis_server", "redis");
+        assert_eq!(
+            v,
+            vec![
+                ("web, ".to_string(), false),
+                ("Redis".to_string(), true),
+                (", ".to_string(), false),
+                ("redis".to_string(), true),
+                ("_server".to_string(), false),
+            ]
+        );
+        assert_eq!(join(v), "web, Redis, redis_server");
+        assert_eq!(split_matches("web", ""), vec![("web".to_string(), false)]);
+        assert_eq!(split_matches("web", "zzz"), vec![("web".to_string(), false)]);
+        // Non-ASCII text is never cut inside a character.
+        assert_eq!(join(split_matches("café-redis", "redis")), "café-redis");
+        assert_eq!(join(split_matches("ÉÉ", "é")), "ÉÉ");
     }
 
     #[test]

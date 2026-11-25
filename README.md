@@ -147,13 +147,21 @@ workspace on API tests and another on a Codex task, then jump back when Codex as
    the app finds a Compose command and a matching YAML file. The scan starts at the Git repository
    root or, outside Git, the pane's current directory.
 3. Click the icon or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> on Linux or
-   <kbd>⇧</kbd>+<kbd>⌘</kbd>+<kbd>L</kbd> on macOS. Filter by path with <kbd>/</kbd>, select a file, and
-   press <kbd>Enter</kbd> to run `up` by default. Row buttons offer `up -d`, `logs -f`, and `down`.
+   <kbd>⇧</kbd>+<kbd>⌘</kbd>+<kbd>L</kbd> on macOS. The filter has the keyboard, so just type: it matches
+   file paths and service names. Files are grouped by folder, and the last three starts (`up` or `up -d`)
+   sit above the list; repeat one with <kbd>Ctrl</kbd>+<kbd>1</kbd>–<kbd>3</kbd> (<kbd>⌘</kbd>+<kbd>1</kbd>–<kbd>3</kbd> on macOS).
+   Select a file and press <kbd>Enter</kbd> to run the default action. The selected file shows its actions
+   (`up -d`, `up`, `down`, `logs`, `restart`): <kbd>Tab</kbd> walks them, <kbd>Ctrl</kbd>+<kbd>X</kbd> runs `down`,
+   <kbd>Ctrl</kbd>+<kbd>L</kbd> follows logs and <kbd>Ctrl</kbd>+<kbd>R</kbd> rescans. On macOS these use
+   <kbd>⌘</kbd> so Ctrl stays with the shell.
 
 <a href="docs/assets/compose-picker.png"><img src="docs/assets/compose-picker.png" width="568" alt="Compose picker grouping project files by folder, with a path filter and actions to start detached, bring down a stack, or follow logs"></a>
 
 The bar below the terminal shows service states and published ports. Use **Rebuild**, **Restart**, or
 **Stop**, or click a service chip to restart just that service. Crash and health alerts are configurable.
+When the stack stops, the bar shrinks to one line with **run up**, **up -d** and **×**, so you can start
+the same stack again without the picker. The line stays while you run up to two more commands in the pane,
+then goes away. It works the same on Linux and macOS.
 If the launcher is missing or dimmed, check **Settings → Workflow → Docker Compose**, the Compose CLI,
 and the pane's working directory and foreground command. Turn off **Run the command right away** to
 review generated commands before pressing Enter. [Compose launcher guide](docs/COMPOSE_LAUNCHER.md)

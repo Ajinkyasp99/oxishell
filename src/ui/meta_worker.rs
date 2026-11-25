@@ -526,7 +526,7 @@ pub fn attach(app: &AppRc, rx: async_channel::Receiver<Update>) {
                             .collect();
                     }
                     if !stack.apply_ps(ps, p.busy) {
-                        p.compose.stack = None;
+                        p.compose.end_stack();
                     }
                     shown = true;
                 }

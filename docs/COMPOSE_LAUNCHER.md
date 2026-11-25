@@ -93,21 +93,30 @@ sorted by path and files by name. Each file row shows its name and its services 
 `4 services · api, web, postgres, redis`). Headers cannot be selected; the arrow keys skip them, and a
 filter hides folders with no matching file.
 
-Keys:
+The filter always has the keyboard, so letters type into it (no single-key actions). Under the filter,
+**last starts** shows the three most recent `up` / `up -d` runs of files in this repo, for example
+`↺ 1 local-infra · up -d`. Only starts are kept (never `down`, `logs` or `restart`), in
+`~/.local/state/oxishell/compose-starts.json`, and a pill repeats exactly the action it shows. A file
+that no longer exists in the repo is not shown.
 
-| Key | Action |
+The filter matches the file path or any service name (case-insensitive), and highlights the matching
+service. Folder headers show `3 of 8 match` while filtering. Only the selected file shows its action chips,
+so the other rows stay quiet and the service list is never cut off by buttons.
+
+| Key (Linux / macOS) | Action |
 |---|---|
-| `↑` `↓` or `j` `k` | Move the selection |
-| `Enter` or `u` | `up` (or `default_action`) |
-| `d` | `up -d` |
-| `x` | `down` |
-| `l` | `logs -f` |
-| `/` | Focus the filter |
-| `r` | Rescan |
-| `Esc` | Close |
+| `↑` `↓` | Move the selection |
+| `Enter` | Run the default action (`default_action`), or the chip Tab moved to |
+| `Tab` / `Shift+Tab` | Walk the action chips: `up -d`, `up`, `down`, `logs`, `restart`; `←` `→` also move |
+| `Ctrl+X` / `⌘X` | `down` |
+| `Ctrl+L` / `⌘L` | `logs -f` |
+| `Ctrl+R` / `⌘R` | Rescan |
+| `Ctrl+1`–`3` / `⌘1`–`3` | Repeat a last start |
+| `Esc` | Leave the chips, then close |
 
-Letters act as keys only outside the filter, so single keys do not clash with typing a filter (the same rule
-as lazygit). Each row also has clickable `d -d`, `x down` and `l logs` buttons.
+These chords work only inside the picker. They use `⌘` on macOS so Ctrl stays with the shell; this means
+`⌘X` does not cut text in the filter there. Chords with Shift or Alt are left to the app's own shortcuts.
+Each chip is also clickable.
 
 `Ctrl+Shift+L` opens the list for the focused pane. It is not used by oxishell today. Register it as an app
 action with this default accelerator so it can be changed in the `[shortcuts]` table like other actions.
@@ -149,6 +158,29 @@ and `/proc/<pid>/cwd` once it has started). Variables exported in the pane, such
 same project and daemon for `ps`, [stop] and [restart] as for the `up`. Status polling waits until the
 context is known. If the process ended before it could be read, the shell's own environment and folder are
 used instead.
+
+### Run-again strip
+
+When a stack started from the launcher stops, the stack bar goes away and one line takes its place:
+
+```
+↺ docker-compose.yml  stopped 3 min ago · 4 services        [run up] [up -d] [×]
+```
+
+This happens after [stop], Ctrl+C on an attached `up`, an `up` that ends by itself, or `down` from the
+picker. A stack that crashed keeps its red stack bar as before.
+
+- **[run up]** and **[up -d]** type the same command for the same file into the pane, like the picker does.
+  They are greyed out while a program holds the pane. Starting any stack in the pane removes the line.
+- **[×]** hides the line.
+- The line stays while you run up to 2 more commands in the pane (`RERUN_KEEP_COMMANDS` in
+  `src/compose.rs`), then goes away and the pane is a plain terminal again. A command is a non-empty line
+  sent with Enter at the shell prompt. An empty Enter, Ctrl+C at the prompt, and keys typed inside a
+  running program (vim, less) do not count.
+- After the line is gone, the stack is still under "last starts" in the picker.
+
+Linux and macOS: the line is the same GTK widget under the terminal on both and follows the same rules.
+Only the tooltips name different keys.
 
 ### Logs line
 
