@@ -1743,6 +1743,7 @@ fn command_block_headers_stay_put_when_output_passes_the_scrollback_limit() {
 }
 
 /// Pump until `f` is true; panic after `ms` milliseconds.
+#[track_caller]
 fn wait_for(ms: u64, f: impl Fn() -> bool) {
     let until = Instant::now() + Duration::from_millis(ms);
     while !f() {
@@ -2895,39 +2896,62 @@ fn a_stopped_stack_leaves_a_run_again_strip_for_two_commands() {
                 .next()
                 .unwrap_or_default()
         };
-        let stop_and_wait_for_strip = || {
+        // Wait on state, not on fixed pauses or on effects of an earlier round:
+        // a slow runner (CI) must not see the previous round's ` stop`, click a
+        // button before it can act, or type before the shell reads commands.
+        let ready = || h.app.inner.borrow().panes[&pane].prompt_is_empty();
+        let seen_running = || {
+            h.app.inner.borrow().panes[&pane]
+                .compose
+                .stack
+                .as_ref()
+                .is_some_and(|s| s.seen_running && !s.capturing)
+        };
+        let stops = || ran().lines().filter(|l| l.ends_with(" stop")).count();
+        let commands = || h.app.inner.borrow().panes[&pane].compose.stopped.as_ref().map(|s| s.commands);
+        let stop_and_wait_for_strip = |round: usize| {
             std::fs::write(&ps, PS_API_RUNNING).unwrap();
+            wait_for(8_000, seen_running);
             wait_for(8_000, || button_with(&bar, "compose-chip", "api").is_some());
             pump(5_500); // past the start-up grace period
             let stop = button_with(&bar, "compose-bar-btn", "[stop]").expect("[stop]");
+            wait_for(2_000, || stop.is_mapped() && stop.is_sensitive());
             click_widget(&h, &stop);
-            wait_for(8_000, || ran().contains(" stop"));
+            wait_for(8_000, || stops() == round);
             std::fs::write(&ps, exited).unwrap();
             wait_for(8_000, || !bar.is_visible());
             wait_for(2_000, || strip.is_visible());
         };
 
+        wait_for(8_000, ready);
         oxishell::ui::compose_ui::run(&h.app, pane, &file, oxishell::compose::Action::UpDetached);
-        stop_and_wait_for_strip();
+        stop_and_wait_for_strip(1);
         assert_eq!(strip_text(), "docker-compose.yml  stopped just now · 1 service");
         screenshot(&h.app.window, "compose-rerun-strip");
 
         // [up -d] starts the same stack again: the strip makes way for the bar.
         let up_d = button_with(&strip, "compose-bar-btn", "[up -d]").expect("[up -d]");
+        wait_for(8_000, ready);
+        wait_for(2_000, || up_d.is_mapped() && up_d.is_sensitive() && up_d.width() > 0);
         click_widget(&h, &up_d);
         wait_for(8_000, || starts() == 2);
         assert!(!strip.is_visible(), "the stack runs again: no strip");
         assert!(h.app.inner.borrow().panes[&pane].compose.stopped.is_none());
 
-        stop_and_wait_for_strip();
+        stop_and_wait_for_strip(2);
+        assert_eq!(commands(), Some(0));
+        wait_for(8_000, ready);
         h.point(&term);
         xdo(&["click", "1"]);
-        pump(200);
+        wait_for(2_000, || term.has_focus());
         xdo(&["type", "--delay", "15", "echo one"]);
         xdo(&["key", "Return"]);
-        pump(800);
+        wait_for(4_000, || commands() == Some(1));
+        wait_for(8_000, ready);
         xdo(&["key", "Return"]); // an empty line is not a command
-        pump(800);
+        pump(500);
+        wait_for(8_000, ready);
+        assert_eq!(commands(), Some(1), "an empty line is not a command");
         assert!(strip.is_visible(), "one command run: the strip stays");
         xdo(&["type", "--delay", "15", "echo two"]);
         xdo(&["key", "Return"]);
