@@ -34,6 +34,13 @@ impl TabBar {
         &self.stack
     }
 
+    pub(super) fn show_tab(&self, tab: TabId) {
+        let name = tab.to_string();
+        if self.stack.visible_child_name().as_deref() != Some(name.as_str()) && self.stack.child_by_name(&name).is_some() {
+            self.stack.set_visible_child_name(&name);
+        }
+    }
+
     /// Advance the animated tab glyphs to `frame`.
     pub(super) fn tick(&self, frame: u64) {
         for (_, t) in &self.tabs {
@@ -301,10 +308,7 @@ pub(super) fn sync(app: &AppRc) {
     let bars = app.tab_bars.borrow();
     for (wid, bar) in bars.iter() {
         let Some(ws) = i.state.workspace(*wid) else { continue };
-        let shown = ws.tab().id.to_string();
-        if bar.stack.visible_child_name().as_deref() != Some(shown.as_str()) && bar.stack.child_by_name(&shown).is_some() {
-            bar.stack.set_visible_child_name(&shown);
-        }
+        bar.show_tab(ws.tab().id);
         for (id, t) in &bar.tabs {
             let Some(tab) = ws.tabs.iter().find(|x| x.id == *id) else {
                 continue;

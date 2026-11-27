@@ -264,7 +264,25 @@ pub fn detach(w: &impl IsA<gtk4::Widget>) {
     }
 }
 
+thread_local! {
+    /// `[terminal] padding`, which the window CSS gives every terminal.
+    static TERM_PAD: std::cell::Cell<i32> = const { std::cell::Cell::new(1) };
+}
+
+/// Pixels between a terminal's edge and its first cell. Overlays drawn over
+/// the text (command blocks, suggestions, the history panel) offset by this.
+pub fn term_pad() -> i32 {
+    TERM_PAD.with(|p| p.get())
+}
+
+/// CSS for the terminal padding; the window's theme stylesheet includes it.
+pub fn padding_css(cfg: &Config) -> String {
+    format!(".oxishell-root vte-terminal {{ padding: {}px; }}\n", cfg.terminal.padding)
+}
+
 pub fn style_terminal(t: &vte4::Terminal, cfg: &Config, scale: f64, theme: &crate::theme::Theme) {
+    TERM_PAD.with(|p| p.set(cfg.terminal.padding));
+    t.set_cell_height_scale(cfg.terminal.line_height);
     t.set_font_desc(Some(&gtk4::pango::FontDescription::from_string(&cfg.appearance.font)));
     t.set_font_scale(scale);
     t.set_scrollback_lines(cfg.terminal.scrollback_lines);
@@ -335,6 +353,7 @@ impl App {
             .hexpand(true)
             .vexpand(true)
             .build();
+        super::scroll::attach_history(&term, &scroll);
         super::zoom::attach_scroll(self, &scroll);
 
         let entry = gtk4::SearchEntry::builder()

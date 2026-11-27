@@ -7,12 +7,11 @@
 //! - Ctrl+click a link: open it right away in the default browser.
 //! - Right-click a link: the context menu starts with the same two actions.
 //!
-//! File positions (`src/model.rs:230:9`, Python's `File "x.py", line 12`) are
-//! links too when the file exists, relative to the pane's folder: they offer
-//! **Open in Editor** and **Copy Path** instead (see [`crate::editor`]).
+//! Existing local paths offer a workspace preview, an editor, and Copy Path.
 //!
 //! A click that selects text (drag, double-click) never triggers anything.
 
+use super::project_files::{self, FileMode};
 use super::{App, AppRc};
 use crate::editor;
 use crate::model::{Orient, PaneId};
@@ -39,25 +38,42 @@ pub const URL_PATTERN: &str = concat!(
     r#"[^\s<>"'`{}\[\].,;:!?\x{2500}-\x{259f}]"#,
 );
 
-/// `path:line[:col]` as compilers, test runners and agents print it. The file
-/// name needs an extension starting with a letter, so clock times
-/// (`12:30:45`) and addresses (`10.0.0.1:8080`) never match, and it may not
-/// start in the middle of a word or path (URLs keep their own match).
-/// Flat character classes only, for the same depth limit as [`URL_PATTERN`].
-pub const FILE_PATTERN: &str = concat!(
-    r#"(?<![\w./~@+-])(?:~/|\.{1,2}/|/)?"#,
-    r#"[\w@+-][\w.@+/-]*\.[A-Za-z]\w*"#,
-    r#":[0-9]+(?::[0-9]+)?"#,
+// Keep a complete token, even when it has a location suffix. A partial
+// filename can resolve to a different existing file in the same directory.
+macro_rules! location_pattern {
+    () => {
+        r#"(?::[0-9]+(?::[0-9]+)?(?:[-–][0-9]+(?::[0-9]+)?)?|\#L[0-9]+(?:C[0-9]+)?(?:[-–]L[0-9]+(?:C[0-9]+)?)?)?"#
+    };
+}
+
+const FILE_PATTERN: &str = concat!(
+    r#"(?<![\p{L}\p{M}\p{N}_./~@+:%#-])(?:"#,
+    r#"(?:~/|\.{1,2}/|/)[\p{L}\p{M}\p{N}_.@+%/-]+"#,
+    r#"|[\p{L}\p{M}\p{N}_.@+%-]+/[\p{L}\p{M}\p{N}_.@+%/-]+"#,
+    r#"|[\p{L}\p{N}_@+%-][\p{L}\p{M}\p{N}_.@+%-]*\.[\p{L}][\p{L}\p{M}\p{N}_.@+%-]*"#,
+    r#"|\.[\p{L}_][\p{L}\p{M}\p{N}_.@+%-]*"#,
+    r#"|[\p{L}_][\p{L}\p{M}\p{N}_@+%-]*(?=:[0-9]|\#L[0-9])"#,
+    r#"|README|Dockerfile|Containerfile|Makefile|GNUmakefile|LICENSE|COPYING|NOTICE|CHANGELOG|Gemfile|Rakefile|Procfile|Justfile|justfile)"#,
+    location_pattern!(),
+    r#"(?![\p{L}\p{M}\p{N}_/~@+:%#-]|\.[\p{L}\p{M}\p{N}_.@+%/-])"#,
 );
+
+const QUOTED_FILE_PATTERN: &str = concat!(r#"(?:`[^`\r\n]+`|"[^"\r\n]+"|'[^'\r\n]+')"#, location_pattern!(),);
 
 /// Python tracebacks: `File "app/main.py", line 12`.
 pub const PY_FILE_PATTERN: &str = r#"File "[^"\r\n]+", line [0-9]+"#;
 
 /// What a click on the terminal points at.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Link {
+enum Link {
     Url(String),
-    File { path: PathBuf, line: u32, col: Option<u32> },
+    File(FileTarget),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FileTarget {
+    pub path: PathBuf,
+    pub location: Option<(u32, Option<u32>)>,
 }
 
 impl Link {
@@ -65,9 +81,10 @@ impl Link {
     fn text(&self) -> String {
         match self {
             Link::Url(u) => u.clone(),
-            Link::File { path, line, col } => match col {
-                Some(c) => format!("{}:{line}:{c}", path.display()),
-                None => format!("{}:{line}", path.display()),
+            Link::File(FileTarget { path, location }) => match location {
+                Some((line, Some(col))) => format!("{}:{line}:{col}", path.display()),
+                Some((line, None)) => format!("{}:{line}", path.display()),
+                None => path.display().to_string(),
             },
         }
     }
@@ -90,11 +107,104 @@ pub fn trim_link(link: &str) -> &str {
 
 /// What to hand to the browser: `www.example.com` gets `https://`.
 pub fn normalize(link: &str) -> String {
-    if link.len() >= 4 && link[..4].eq_ignore_ascii_case("www.") {
+    if link.get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case("www.")) {
         format!("https://{link}")
     } else {
         link.to_string()
     }
+}
+
+fn number(text: &str) -> Option<u32> {
+    if text.is_empty() || !text.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok().filter(|n| *n > 0)
+}
+
+fn location(text: &str) -> Option<(u32, Option<u32>)> {
+    let (text, hash) = if let Some(text) = text.strip_prefix('#') {
+        (text, true)
+    } else {
+        (text.strip_prefix(':')?, false)
+    };
+    let parse = |part: &str| {
+        let (part, delimiter) = if hash { (part.strip_prefix('L')?, 'C') } else { (part, ':') };
+        match part.split_once(delimiter) {
+            Some((line, col)) if col.bytes().all(|c| c.is_ascii_digit()) && !col.is_empty() => Some((number(line)?, number(col))),
+            Some(_) => None,
+            None => Some((number(part)?, None)),
+        }
+    };
+    if let Some((start, end)) = text.split_once(['-', '–']) {
+        parse(end)?;
+        parse(start)
+    } else {
+        parse(text)
+    }
+}
+
+fn valid_path_text(text: &str) -> bool {
+    !text.is_empty() && !text.chars().any(char::is_control)
+}
+
+fn resolve_match(text: &str, cwd: Option<&Path>, home: &Path) -> Option<FileTarget> {
+    let resolve = |text: &str, location| {
+        if !valid_path_text(text) {
+            return None;
+        }
+        editor::resolve(text, cwd, home).map(|path| FileTarget { path, location })
+    };
+    if text.starts_with("File \"") {
+        let reference = editor::parse_file_ref(text)?;
+        return resolve(&reference.path, Some((reference.line, reference.col)));
+    }
+    let resolve_path = |text: &str| {
+        resolve(text, None).or_else(|| {
+            text.match_indices([':', '#'])
+                .find_map(|(i, _)| resolve(&text[..i], Some(location(&text[i..])?)))
+        })
+    };
+    if let Some(quote @ ('"' | '\'' | '`')) = text.chars().next() {
+        let (path, suffix) = text[1..].split_once(quote)?;
+        return if suffix.is_empty() {
+            resolve_path(path)
+        } else {
+            resolve(path, Some(location(suffix)?))
+        };
+    }
+    resolve_path(text).or_else(|| {
+        let trimmed = text.trim_end_matches('.');
+        (trimmed != text).then(|| resolve_path(trimmed)).flatten()
+    })
+}
+
+fn file_uri(text: &str) -> bool {
+    text.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+}
+
+fn resolve_file_uri(uri: &str) -> Option<FileTarget> {
+    let (uri, location) = match uri.split_once('#') {
+        Some((base, fragment)) => (base, location(&format!("#{fragment}"))),
+        None => (uri, None),
+    };
+    if uri.contains('?') {
+        return None;
+    }
+    let (path, host) = glib::filename_from_uri(uri).ok()?;
+    if host.is_some_and(|host| !host.eq_ignore_ascii_case("localhost"))
+        || path.to_str().is_some_and(|text| !valid_path_text(text))
+        || !path.is_absolute()
+    {
+        return None;
+    }
+    if path.is_file() {
+        return Some(FileTarget { path, location });
+    }
+    // Some terminal clients append a colon location before emitting the URI.
+    if location.is_none() {
+        return resolve_match(path.to_str()?, None, Path::new("/"));
+    }
+    None
 }
 
 /// Pointer movement smaller than this between press and release is a click.
@@ -119,28 +229,52 @@ impl Ctx {
     /// widget point `x, y`.
     fn link_at(&self, term: &vte4::Terminal, x: f64, y: f64) -> Option<Link> {
         if let Some(h) = term.check_hyperlink_at(x, y) {
-            return Some(Link::Url(h.to_string()));
+            return uri_link(&h);
         }
         let (text, tag) = term.check_match_at(x, y);
         let text = text?;
         if !self.file_tags.contains(&tag) {
-            return Some(Link::Url(trim_link(&text).to_string()));
+            return uri_link(trim_link(&text));
         }
-        let r = editor::parse_file_ref(&text)?;
-        let path = editor::resolve(&r.path, self.cwd().as_deref(), &crate::paths::home())?;
-        Some(Link::File {
-            path,
-            line: r.line,
-            col: r.col,
-        })
+        resolve_match(&text, self.cwd().as_deref(), &crate::paths::home()).map(Link::File)
     }
 }
 
-/// Open a link: URLs in the browser, files in the editor.
+fn uri_link(text: &str) -> Option<Link> {
+    if file_uri(text) {
+        return resolve_file_uri(text).map(Link::File);
+    }
+    Some(Link::Url(text.to_string()))
+}
+
 fn activate(ctx: &Ctx, term: &vte4::Terminal, link: &Link) {
     match link {
         Link::Url(u) => open(&ctx.app, term, u),
-        Link::File { path, line, col } => open_file(ctx, term, path, *line, *col),
+        Link::File(target) => {
+            if let Some(app) = ctx.app.upgrade() {
+                project_files::open_file(&app, ctx.pane, target.clone(), FileMode::Preview);
+            }
+        }
+    }
+}
+
+fn activate_editor(ctx: &Ctx, _term: &vte4::Terminal, link: &Link) {
+    if let Link::File(target) = link {
+        let app = ctx.app.clone();
+        let pane = ctx.pane;
+        let target = target.clone();
+        // Let the menu return focus to the terminal before focusing the editor.
+        glib::idle_add_local_once(move || {
+            if let Some(app) = app.upgrade() {
+                project_files::open_file(&app, pane, target, FileMode::Edit);
+            }
+        });
+    }
+}
+
+fn activate_external_editor(ctx: &Ctx, _term: &vte4::Terminal, link: &Link) {
+    if let (Some(app), Link::File(target)) = (ctx.app.upgrade(), link) {
+        open_file(&app, ctx.pane, target);
     }
 }
 
@@ -149,7 +283,7 @@ fn copy_link(ctx: &Ctx, term: &vte4::Terminal, link: &Link) {
     if let Some(a) = ctx.app.upgrade() {
         a.toast(match link {
             Link::Url(_) => "Link copied",
-            Link::File { .. } => "Path copied",
+            Link::File(_) => "Path copied",
         });
     }
 }
@@ -166,22 +300,29 @@ fn shell_quote(s: &str) -> String {
 /// Open `path` at `line` in the user's editor. Terminal editors get a new
 /// pane to the right; with no editor found the desktop's default app opens
 /// the file (without the line).
-fn open_file(ctx: &Ctx, term: &vte4::Terminal, path: &Path, line: u32, col: Option<u32>) {
-    let Some(app) = ctx.app.upgrade() else { return };
+pub(super) fn open_file(app: &AppRc, pane: PaneId, target: &FileTarget) {
+    let Some(term) = app.inner.borrow().panes.get(&pane).map(|p| p.term.clone()) else {
+        return;
+    };
+    let path = &target.path;
+    if !path.is_file() {
+        app.toast(&format!("File is no longer available: {}", path.display()));
+        return;
+    }
     let configured = app.inner.borrow().config.editor.command.clone();
     let env = |k| std::env::var(k).ok();
     let chosen = editor::choose_editor(&configured, env("VISUAL").as_deref(), env("EDITOR").as_deref(), |p| {
         glib::find_program_in_path(p).is_some()
     });
-    let Some(ed) = chosen else {
-        open(&ctx.app, term, &gio::File::for_path(path).uri());
+    let Some(ed) = chosen.filter(|_| path.to_str().is_some()) else {
+        open(&app.weak(), &term, &gio::File::for_path(path).uri());
         return;
     };
-    let argv = editor::editor_argv(&ed, path, line, col);
+    let argv = editor::editor_argv_at(&ed, path, target.location);
     let dir = path.parent().map(Path::to_path_buf);
     if editor::is_terminal_editor(&ed) {
         let cmd: Vec<String> = argv.iter().map(|a| shell_quote(a)).collect();
-        match app.split(Some(ctx.pane), Orient::Horizontal, dir) {
+        match app.split(Some(pane), Orient::Horizontal, dir) {
             Ok(new) => {
                 if let Some(p) = app.inner.borrow().panes.get(&new) {
                     p.send_input(format!("{}\n", cmd.join(" ")).as_bytes());
@@ -231,6 +372,9 @@ struct Popover {
     pop: gtk4::Popover,
     url: gtk4::Label,
     open: adw::ButtonContent,
+    open_button: gtk4::Button,
+    editor: gtk4::Button,
+    external_editor: gtk4::Button,
     copy: adw::ButtonContent,
     hint: gtk4::Label,
 }
@@ -239,13 +383,13 @@ struct Popover {
 #[cfg(not(target_os = "macos"))]
 const LINK_HINT: &str = "Tip: Ctrl+Click opens links directly";
 #[cfg(not(target_os = "macos"))]
-const FILE_HINT: &str = "Tip: Ctrl+Click opens the file directly";
+const FILE_HINT: &str = "Tip: Ctrl+Click previews the file";
 #[cfg(not(target_os = "macos"))]
 const HOVER_HINT: &str = "Click for link options · Ctrl+Click to open";
 #[cfg(target_os = "macos")]
 const LINK_HINT: &str = "Tip: ⌘-Click opens links directly";
 #[cfg(target_os = "macos")]
-const FILE_HINT: &str = "Tip: ⌘-Click opens the file directly";
+const FILE_HINT: &str = "Tip: ⌘-Click previews the file";
 #[cfg(target_os = "macos")]
 const HOVER_HINT: &str = "Click for link options · ⌘-Click to open";
 
@@ -253,12 +397,20 @@ impl Popover {
     fn show(&self, link: &Link) {
         let (text, open, copy, icon, hint) = match link {
             Link::Url(u) => (normalize(u), "Open Link", "Copy Link", "web-browser-symbolic", LINK_HINT),
-            Link::File { .. } => (link.text(), "Open in Editor", "Copy Path", "document-edit-symbolic", FILE_HINT),
+            Link::File(_) => (link.text(), "Preview", "Copy Path", "document-open-symbolic", FILE_HINT),
         };
         self.url.set_label(&text);
         self.url.set_tooltip_text(Some(&text));
         self.open.set_label(open);
         self.open.set_icon_name(icon);
+        let file = matches!(link, Link::File(_));
+        self.editor.set_visible(file);
+        self.external_editor.set_visible(file);
+        if file {
+            self.open_button.remove_css_class("suggested-action");
+        } else {
+            self.open_button.add_css_class("suggested-action");
+        }
         self.copy.set_label(copy);
         self.hint.set_label(hint);
     }
@@ -280,6 +432,9 @@ fn build_popover(term: &vte4::Terminal) -> Popover {
     };
     let (open_btn, open_content) = button("web-browser-symbolic", "Open Link", "link.open");
     open_btn.add_css_class("suggested-action");
+    let (editor_btn, _) = button("document-edit-symbolic", "Edit File", "link.edit");
+    editor_btn.add_css_class("suggested-action");
+    let (external_btn, _) = button("window-new-symbolic", "Open in External Editor", "link.editor");
     let (copy_btn, copy_content) = button("edit-copy-symbolic", "Copy Link", "link.copy");
     let hint = gtk4::Label::new(Some(LINK_HINT));
     hint.add_css_class("link-hint");
@@ -287,6 +442,7 @@ fn build_popover(term: &vte4::Terminal) -> Popover {
 
     let buttons = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     buttons.set_homogeneous(true);
+    buttons.append(&editor_btn);
     buttons.append(&open_btn);
     buttons.append(&copy_btn);
     let col = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
@@ -296,12 +452,13 @@ fn build_popover(term: &vte4::Terminal) -> Popover {
     col.set_margin_end(4);
     col.append(&url);
     col.append(&buttons);
+    col.append(&external_btn);
     col.append(&hint);
 
     let pop = gtk4::Popover::builder().child(&col).position(gtk4::PositionType::Bottom).build();
     pop.add_css_class("link-popover");
     pop.set_parent(term);
-    for b in [&open_btn, &copy_btn] {
+    for b in [&open_btn, &editor_btn, &external_btn, &copy_btn] {
         let p = pop.clone();
         b.connect_clicked(move |_| p.popdown());
     }
@@ -314,6 +471,9 @@ fn build_popover(term: &vte4::Terminal) -> Popover {
         pop,
         url,
         open: open_content,
+        open_button: open_btn,
+        editor: editor_btn,
+        external_editor: external_btn,
         copy: copy_content,
         hint,
     }
@@ -353,11 +513,13 @@ fn keep_row_cache_in_sync_with_scrolling(term: &vte4::Terminal) {
 }
 
 /// Register `pattern` as a clickable match; returns its tag.
-fn add_match(term: &vte4::Terminal, pattern: &str, flags: u32) -> Option<i32> {
+fn add_match(term: &vte4::Terminal, pattern: &str, flags: u32, pointer: bool) -> Option<i32> {
     match vte4::Regex::for_match(pattern, flags) {
         Ok(re) => {
             let tag = term.match_add_regex(&re, 0);
-            term.match_set_cursor_name(tag, "pointer");
+            if pointer {
+                term.match_set_cursor_name(tag, "pointer");
+            }
             Some(tag)
         }
         Err(e) => {
@@ -368,10 +530,17 @@ fn add_match(term: &vte4::Terminal, pattern: &str, flags: u32) -> Option<i32> {
 }
 
 /// The pane's context menu with `open` / `copy` entries on top.
-fn menu_with(menu: &gio::Menu, open: &str, copy: &str) -> gio::Menu {
+fn menu_with(menu: &gio::Menu, file: bool) -> gio::Menu {
     let section = gio::Menu::new();
-    section.append(Some(open), Some("link.open"));
-    section.append(Some(copy), Some("link.copy"));
+    if file {
+        section.append(Some("Edit File"), Some("link.edit"));
+        section.append(Some("Preview"), Some("link.open"));
+        section.append(Some("Open in External Editor"), Some("link.editor"));
+        section.append(Some("Copy Path"), Some("link.copy"));
+    } else {
+        section.append(Some("Open Link"), Some("link.open"));
+        section.append(Some("Copy Link"), Some("link.copy"));
+    }
     let m = gio::Menu::new();
     m.append_section(None, &section);
     for i in 0..menu.n_items() {
@@ -385,10 +554,10 @@ fn menu_with(menu: &gio::Menu, open: &str, copy: &str) -> gio::Menu {
 pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, menu: &gio::Menu) {
     keep_row_cache_in_sync_with_scrolling(term);
     // URLs first: where a file pattern could also match, the URL wins.
-    add_match(term, URL_PATTERN, PCRE2_UTF | PCRE2_MULTILINE | PCRE2_CASELESS);
-    let file_tags = [FILE_PATTERN, PY_FILE_PATTERN]
-        .iter()
-        .filter_map(|p| add_match(term, p, PCRE2_UTF | PCRE2_MULTILINE))
+    add_match(term, URL_PATTERN, PCRE2_UTF | PCRE2_MULTILINE | PCRE2_CASELESS, true);
+    let file_tags = [(PY_FILE_PATTERN, true), (QUOTED_FILE_PATTERN, false), (FILE_PATTERN, true)]
+        .into_iter()
+        .filter_map(|(p, pointer)| add_match(term, p, PCRE2_UTF | PCRE2_MULTILINE, pointer))
         .collect();
     let ctx = Rc::new(Ctx {
         app: app.weak(),
@@ -413,24 +582,26 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, menu: &gio::Menu
         group.add_action(&act);
     };
     make("open", activate);
+    make("edit", activate_editor);
+    make("editor", activate_external_editor);
     make("copy", copy_link);
     term.insert_action_group("link", Some(&group));
 
-    let menu_with_link = menu_with(menu, "Open Link", "Copy Link");
-    let menu_with_file = menu_with(menu, "Open in Editor", "Copy Path");
+    let menu_with_link = menu_with(menu, false);
+    let menu_with_file = menu_with(menu, true);
 
     let popover = build_popover(term);
 
     // Pointer position in terminal coordinates; also shows a hint over links.
-    let pos = Rc::new(Cell::new((0.0f64, 0.0f64)));
+    let pos = Rc::new(Cell::new(None));
     let over_link = Rc::new(Cell::new(false));
     {
         let motion = gtk4::EventControllerMotion::new();
-        let pos = pos.clone();
+        let position = pos.clone();
         let over_link = over_link.clone();
         let ctx = ctx.clone();
         motion.connect_motion(move |m, x, y| {
-            pos.set((x, y));
+            position.set(Some((x, y)));
             let Some(t) = m.widget().and_downcast::<vte4::Terminal>() else {
                 return;
             };
@@ -440,11 +611,13 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, menu: &gio::Menu
                 t.set_tooltip_text(on.then_some(HOVER_HINT));
             }
         });
+        let pos = pos.clone();
+        motion.connect_leave(move |_| pos.set(None));
         term.add_controller(motion);
     }
 
-    // Raw button events in the capture phase: seen before VTE's own handling
-    // (selection, context menu) and never claimed, so VTE works as before.
+    // Capture before VTE handles selection and the context menu. Leave the
+    // events available to VTE.
     let legacy = gtk4::EventControllerLegacy::new();
     legacy.set_propagation_phase(gtk4::PropagationPhase::Capture);
     let pressed_at: Cell<Option<(f64, f64)>> = Cell::new(None);
@@ -456,13 +629,16 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, menu: &gio::Menu
         let Some(button) = ev.downcast_ref::<gdk::ButtonEvent>().map(|b| b.button()) else {
             return glib::Propagation::Proceed;
         };
-        let (x, y) = pos.get();
+        let Some((x, y)) = pos.get() else {
+            pressed_at.set(None);
+            return glib::Propagation::Proceed;
+        };
         match (ev.event_type(), button) {
             (gdk::EventType::ButtonPress, 3) => {
                 let link = ctx.link_at(&t, x, y);
                 t.set_context_menu_model(Some(match link {
                     Some(Link::Url(_)) => &menu_with_link,
-                    Some(Link::File { .. }) => &menu_with_file,
+                    Some(Link::File(_)) => &menu_with_file,
                     None => &menu,
                 }));
                 *current.borrow_mut() = link;
@@ -523,5 +699,59 @@ mod tests {
         assert_eq!(normalize("WWW.example.com/x"), "https://WWW.example.com/x");
         assert_eq!(normalize("https://github.com"), "https://github.com");
         assert_eq!(normalize("mailto:a@b.c"), "mailto:a@b.c");
+    }
+
+    #[test]
+    fn resolves_agent_paths_and_local_uris_with_optional_locations() {
+        let root = std::env::temp_dir().join(format!("oxishell-link-targets-{}", std::process::id()));
+        let dir = root.join("src");
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in ["src/main.rs", "src/notes here", "README", ".project", "src/colon:name"] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+        let resolve = |input| resolve_match(input, Some(&root), &root);
+        for (input, path, location) in [
+            ("src/main.rs", "src/main.rs", None),
+            ("README", "README", None),
+            ("./README.", "README", None),
+            ("~/.project", ".project", None),
+            ("src/main.rs:13:2–15:3", "src/main.rs", Some((13, Some(2)))),
+            ("README#L13C2-L15C3", "README", Some((13, Some(2)))),
+            ("`src/notes here`:2:3", "src/notes here", Some((2, Some(3)))),
+            ("\"src/colon:name:2\"", "src/colon:name", Some((2, None))),
+            ("File \"src/notes here\", line 8", "src/notes here", Some((8, None))),
+        ] {
+            assert_eq!(
+                resolve(input),
+                Some(FileTarget {
+                    path: root.join(path),
+                    location
+                }),
+                "{input}"
+            );
+        }
+        for missing in ["src", "missing.rs", "src/main.rs:0", "src/main.rs:1:2:3", "src/main.rs:1-"] {
+            assert_eq!(resolve(missing), None, "{missing}");
+        }
+        let file = root.join("src/notes here");
+        let uri = glib::filename_to_uri(&file, None).unwrap();
+        assert_eq!(
+            resolve_file_uri(&format!("{uri}#L8C2-L10")),
+            Some(FileTarget {
+                path: file.clone(),
+                location: Some((8, Some(2)))
+            })
+        );
+        let uri = glib::filename_to_uri(&file, Some("localhost")).unwrap();
+        assert_eq!(
+            resolve_file_uri(&uri),
+            Some(FileTarget {
+                path: file.clone(),
+                location: None
+            })
+        );
+        let uri = glib::filename_to_uri(&file, Some("remote.example")).unwrap();
+        assert_eq!(resolve_file_uri(&uri), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -1,5 +1,43 @@
 # Release notes
 
+## 0.7.0 — 2026-11-27
+
+- **Project Explorer and file editor:** open the explorer from the folder button in the header, the main menu
+  or the command palette. It lists the focused terminal's Git worktree (or its folder outside Git) beside the
+  terminal; opening a text file brings up an editor there. UTF-8 files up to 1 MiB, autosave one second after
+  you stop typing (Settings → Terminal → Editor changes the delay or turns it off), Ctrl+S on Linux and ⌘S on
+  macOS save at once. A file changed by another program refreshes a clean editor; an editor with unsaved edits
+  keeps them, pauses autosave and offers **Reload from Disk**. Clicking a file path in terminal output offers
+  **Edit File**, **Preview**, **Open in External Editor** and **Copy Path**.
+- **File icons and Git letters:** explorer entries show a coloured icon for their type (Rust, TypeScript,
+  Markdown, config, images, lock files…) and a Git letter when they changed: **M** modified, **A** added,
+  **U** untracked, **D** deleted, **R** renamed, **!** conflict. Folders with changes inside get a dot. Git runs
+  only when the explorer opens or refreshes, after a save, when an agent finishes its turn and when the window
+  comes back to the front, never on a timer.
+- **Diff view:** a changed file has a **Diff** button in the editor header. It shows the file's changes since
+  the last commit (staged and unstaged together) with added lines on green and removed lines on red, without
+  the file headers. Untracked files show as entirely added. Select **Diff** again to return to the editor.
+- **Terminal padding and line spacing:** text now starts 8 px from the pane edge instead of 1 px. Settings →
+  Appearance has **Padding** (0 to 32 px) and **Line spacing** (1.0 to 2.0, default 1.0 keeps today's look);
+  in the config file they are `[terminal] padding` and `line_height`. Command-block headers, history
+  suggestions and the history panel follow the padding.
+- **Smoother panels:** the sidebar and the file panel fade in and out, the explorer slides to a file preview and
+  back, a workspace's session list slides open, and new sidebar rows fade in, each in 120 to 160 ms. A pane
+  that takes focus from a neighbour flashes its border once, and pane dividers show the accent colour on
+  hover. Mouse-wheel scrolling through scrollback glides instead of jumping a page. All motion turns off with
+  GNOME's "Reduce animation" on Linux and with System Settings → Accessibility → Display → "Reduce motion" on
+  macOS.
+- **Less CPU while an agent works in the background:** the pulsing dot in the header stops while the window is
+  behind other windows. With an agent working and oxishell in the background, CPU use went from about 31% to
+  under 1% (Linux, software rendering). Idle CPU and memory are otherwise unchanged; numbers are in
+  `docs/PERFORMANCE.md`.
+- Checked on Linux: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, the unit tests, and the e2e
+  and interaction suites under Xvfb (three new GUI tests cover the explorer's icons, Git letters and diff, the
+  padding and line spacing, and the focus flash). Two tests that also fail on 0.6.0 still fail
+  (`usage_footer` GTK initialisation, and `switching_back_before_a_new_tab_is_shown_settles`). macOS: the
+  clippy cross-compile check passes, but nothing was run on a Mac. "Reduce motion", the fades and the padding
+  there are untested until someone tries them by hand.
+
 ## 0.6.0 — 2026-11-24
 
 - **Compose picker redesigned:** the file list now works like a command bar. The filter has the keyboard from

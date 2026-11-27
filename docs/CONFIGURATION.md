@@ -25,6 +25,8 @@ suggestions = true       # ghost-text suggestions from shell history; accept wit
 compact_prompt = true    # prompt is just ❯ (red after a failed command) inside oxishell; new terminals
 cursor_shape = "block"   # block (solid bar) | ibeam (vertical line) | underline (horizontal line)
 cursor_blink = true
+line_height = 1.0        # 1.0–2.0: line spacing as a multiple of the font's line height
+padding = 8              # 0–32: pixels between the pane edge and the text
 command_blocks = true    # Warp-style header above each command: folder, branch, ✓/✗ exit status, duration; new terminals
 highlight_commands = true # typed commands in bold cyan, output in the normal colour (needs compact_prompt); new terminals
 history_panel = true     # ↑ at the shell prompt opens the history panel, filtered by what is already typed
@@ -39,9 +41,12 @@ command_min_seconds = 10 # ... that ran at least this long
 usage_alerts = true      # notify once when Codex/Claude Code passes 80% and 95% of a 5-hour or weekly limit
 
 [editor]
-command = ""             # opens file:line links (src/main.rs:42) from terminal output, e.g. "code" or "nvim".
+autosave = true          # Save after a pause in typing or when you leave the file editor.
+autosave_delay_ms = 1000 # Time after the last edit, limited to 250–10,000 ms.
+command = ""             # used by Open in External Editor for terminal file links.
                          # Empty = $VISUAL, then $EDITOR, then the first of code, zed, codium, subl, kate,
                          # gnome-text-editor, gedit that is installed. Terminal editors open in a new pane.
+                         # Ctrl-click (Cmd-click on macOS) opens the built-in preview.
 
 [session]
 restore = true           # restore workspaces, layouts and directories on start

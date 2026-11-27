@@ -58,6 +58,11 @@
     <category>TerminalEmulator</category>
   </categories>
   <releases>
+    <release version="0.7.0" date="2026-11-27">
+      <description>
+        <p>Project Explorer with a file editor, file icons, Git letters and a diff view; terminal padding and line spacing; smoother panels; less CPU while an agent works in the background.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-11-24">
       <description>
         <p>New segment-clock usage meters, official Claude and Codex logos, agent state glyphs in the sidebar and a Cyber Wave default theme.</p>

@@ -453,6 +453,14 @@ pub(super) fn hidden_jobs(state: &AppState, panes_with_stack: &HashSet<PaneId>) 
 
 pub fn attach(app: &AppRc, rx: async_channel::Receiver<Update>) {
     let w = app.weak();
+    let refresh = super::once_per_idle({
+        let w = w.clone();
+        move || {
+            if let Some(a) = w.upgrade() {
+                a.refresh();
+            }
+        }
+    });
     glib::spawn_future_local(async move {
         while let Ok(u) = rx.recv().await {
             let Some(a) = w.upgrade() else { return };
@@ -537,7 +545,7 @@ pub fn attach(app: &AppRc, rx: async_channel::Receiver<Update>) {
                 a.notify_compose_crash(u.pane, *stack, file, crash);
             }
             if changed.0 || changed.1 {
-                a.refresh();
+                refresh();
             }
             if changed.0 {
                 a.schedule_save();

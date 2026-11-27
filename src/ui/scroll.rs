@@ -1,4 +1,4 @@
-//! Mouse-wheel speed for mouse-reporting terminal applications.
+//! Mouse-wheel handling for terminal applications and scrollback.
 //!
 //! VTE consumes these events before GtkScrolledWindow sees them. Keep its
 //! protocol encoding and coordinates, but use three reports per wheel step.
@@ -6,9 +6,101 @@
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
 use std::cell::Cell;
+use std::rc::Rc;
 use vte4::prelude::*;
 
 const APP_WHEEL_MULTIPLIER: usize = 3;
+const HISTORY_SCROLL_US: i64 = 100_000;
+
+#[derive(Clone, Copy)]
+struct WheelStep {
+    started: i64,
+    from: f64,
+    to: f64,
+    last: f64,
+}
+
+pub fn attach_history(term: &vte4::Terminal, scroll: &gtk4::ScrolledWindow) {
+    let step = Rc::new(Cell::new(None::<WheelStep>));
+    let ticking = Rc::new(Cell::new(false));
+    let pending = step.clone();
+    term.connect_commit(move |_, _, _| pending.set(None));
+    let pending = step.clone();
+    term.connect_unmap(move |_| pending.set(None));
+
+    // VTE gets the event first. If it propagated the wheel event, ease the
+    // same distance as GtkScrolledWindow. Surface deltas keep GTK's inertia.
+    let wheel = gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
+    wheel.connect_scroll(move |controller, _, dy| {
+        let Some(scroll) = controller.widget().and_downcast::<gtk4::ScrolledWindow>() else {
+            return glib::Propagation::Proceed;
+        };
+        let plain = (controller.current_event_state() & gtk4::accelerator_get_default_mod_mask()).is_empty();
+        if dy == 0.0 || !plain || controller.unit() != gdk::ScrollUnit::Wheel || !scroll.settings().is_gtk_enable_animations() {
+            step.set(None);
+            return glib::Propagation::Proceed;
+        }
+        let adj = scroll.vadjustment();
+        let lower = adj.lower();
+        let upper = adj.upper() - adj.page_size();
+        if upper <= lower {
+            step.set(None);
+            return glib::Propagation::Proceed;
+        }
+        let from = adj.value();
+        let previous = step.get().filter(|s| s.last == from);
+        let to = (previous.map_or(from, |s| s.to) + dy * adj.page_size().powf(2.0 / 3.0)).clamp(lower, upper);
+        if to == from {
+            step.set(None);
+            return if previous.is_some() {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            };
+        }
+        // Leave the live edge immediately. Output parsed before the first
+        // animation frame would otherwise follow the bottom and cancel the step.
+        let from = if from == upper {
+            let first = (from - 1.0).max(to);
+            adj.set_value(first);
+            adj.value()
+        } else {
+            from
+        };
+        step.set(Some(WheelStep {
+            started: glib::monotonic_time(),
+            from,
+            to,
+            last: from,
+        }));
+        if !ticking.replace(true) {
+            let step = step.clone();
+            let ticking = ticking.clone();
+            scroll.add_tick_callback(move |scroll, clock| {
+                let adj = scroll.vadjustment();
+                // A touch gesture, scrollbar drag, or VTE itself can move
+                // the view while the animation is pending.
+                if let Some(mut motion) = step.get().filter(|s| s.last == adj.value()) {
+                    let elapsed = (clock.frame_time() - motion.started).max(0);
+                    let progress = (elapsed as f64 / HISTORY_SCROLL_US as f64).min(1.0);
+                    let eased = super::motion::ease_out_cubic(progress);
+                    let value = motion.from + (motion.to - motion.from) * eased;
+                    adj.set_value(value);
+                    if progress < 1.0 && value == adj.value() {
+                        motion.last = value;
+                        step.set(Some(motion));
+                        return glib::ControlFlow::Continue;
+                    }
+                }
+                step.set(None);
+                ticking.set(false);
+                glib::ControlFlow::Break
+            });
+        }
+        glib::Propagation::Stop
+    });
+    scroll.add_controller(wheel);
+}
 
 fn is_wheel_report(text: &str) -> bool {
     // SGR mouse mode (Codex, tmux, vim, etc.). Modified buttons and horizontal

@@ -8,6 +8,7 @@ mod corner_resize;
 mod desktop_notify;
 mod dialogs;
 mod edge_reveal;
+mod file_icons;
 mod fonts;
 mod history_panel;
 mod icons;
@@ -15,7 +16,9 @@ mod ipc_handler;
 mod island;
 mod links;
 mod meta_worker;
+mod motion;
 mod pane;
+mod project_files;
 mod scroll;
 mod settings;
 mod sidebar;
@@ -67,6 +70,7 @@ pub struct App {
     sidebar_rows: RefCell<HashMap<WorkspaceId, sidebar::Row>>,
     /// Tab bar of each workspace, rebuilt with its layout.
     tab_bars: RefCell<HashMap<WorkspaceId, tabs::TabBar>>,
+    file_panels: RefCell<HashMap<WorkspaceId, Rc<project_files::Panel>>>,
     pub usage_footer: usage_footer::Footer,
     /// CPU / memory strip in the status bar; paused while the window is hidden.
     system_status: system_status::SystemStatus,
@@ -103,6 +107,23 @@ pub struct App {
 
 pub type AppRc = Rc<App>;
 
+/// Queue work once for the next idle, even if several signals request it.
+fn once_per_idle(callback: impl Fn() + 'static) -> impl Fn() + Clone {
+    let pending = Rc::new(Cell::new(false));
+    let callback = Rc::new(callback);
+    move || {
+        if pending.replace(true) {
+            return;
+        }
+        let pending = pending.clone();
+        let callback = callback.clone();
+        glib::idle_add_local_once(move || {
+            pending.set(false);
+            callback();
+        });
+    }
+}
+
 /// The primary shortcut modifier: Command on macOS, Ctrl elsewhere.
 pub fn primary_mask() -> gdk::ModifierType {
     if cfg!(target_os = "macos") {
@@ -119,6 +140,9 @@ fn window_hidden(w: &gtk4::Window) -> bool {
             .and_then(|s| s.downcast::<gdk::Toplevel>().ok())
             .is_some_and(|t| t.state().contains(gdk::ToplevelState::MINIMIZED))
 }
+
+/// Length of the `.focus-flash` animation in style.css.
+const FOCUS_FLASH_MS: u64 = 1500;
 
 /// Below this window width the sidebar is hidden automatically.
 const NARROW_WIDTH: i32 = 640;
@@ -164,6 +188,7 @@ impl App {
             eprintln!("oxishell: bundled icons unavailable: {e}");
         }
 
+        motion::follow_os();
         let css = gtk4::CssProvider::new();
         css.load_from_string(include_str!("style.css"));
         gtk4::style_context_add_provider_for_display(
@@ -211,9 +236,15 @@ impl App {
             .tooltip_text(crate::config::with_shortcut("Split down", "split-down"))
             .action_name("app.split-down")
             .build();
+        let explorer = gtk4::Button::builder()
+            .icon_name("folder-open-symbolic")
+            .tooltip_text(crate::config::with_shortcut("Explore Project", "explore-project"))
+            .action_name("app.explore-project")
+            .build();
 
         let menu = gio::Menu::new();
         menu.append(Some("Command Palette"), Some("app.command-palette"));
+        menu.append(Some("Explore Project"), Some("app.explore-project"));
         menu.append(Some("Search Scrollback"), Some("app.search"));
         menu.append(Some("Settings"), Some("app.settings"));
         menu.append(Some("Keyboard Shortcuts"), Some("app.show-shortcuts"));
@@ -231,7 +262,12 @@ impl App {
         let edge = edge_reveal::EdgeReveal::new(
             &header,
             &[sidebar_btn.upcast_ref(), new_ws.upcast_ref()],
-            &[split_r.upcast_ref(), split_d.upcast_ref(), menu_btn.upcast_ref()],
+            &[
+                split_r.upcast_ref(),
+                split_d.upcast_ref(),
+                explorer.upcast_ref(),
+                menu_btn.upcast_ref(),
+            ],
             vec![menu_btn.clone()],
         );
 
@@ -256,6 +292,9 @@ impl App {
         let stack = gtk4::Stack::new();
         stack.set_hexpand(true);
         stack.set_vexpand(true);
+        // Workspaces switch at once. A crossfade was measured at about 7 MB more
+        // memory with 5 workspaces (GTK keeps rendered copies of each page's
+        // terminals), over the memory budget for this polish.
         stack.set_transition_type(gtk4::StackTransitionType::None);
         // Size to the visible workspace only, not the largest hidden one.
         stack.set_hhomogeneous(false);
@@ -271,19 +310,25 @@ impl App {
             .ellipsize(gtk4::pango::EllipsizeMode::End)
             .build();
         watermark.add_css_class("ws-watermark");
-        let stack_overlay = gtk4::Overlay::new();
-        stack_overlay.set_child(Some(&stack));
-        stack_overlay.add_overlay(&watermark);
-        stack_overlay.set_clip_overlay(&watermark, true);
-
         let split = gtk4::Paned::new(Orientation::Horizontal);
-        split.set_start_child(Some(&sidebar_box));
-        split.set_end_child(Some(&stack_overlay));
+        // The sidebar fades in and out; once faded out it leaves the split.
+        let sidebar_reveal = gtk4::Revealer::builder()
+            .child(&sidebar_box)
+            .visible(config.appearance.sidebar_visible)
+            .reveal_child(config.appearance.sidebar_visible)
+            .build();
+        motion::reveal(&sidebar_reveal, gtk4::RevealerTransitionType::Crossfade);
+        sidebar_reveal.connect_child_revealed_notify(|r| {
+            if !r.reveals_child() && !r.is_child_revealed() {
+                r.set_visible(false);
+            }
+        });
+        split.set_start_child(Some(&sidebar_reveal));
+        split.set_end_child(Some(&stack));
         split.set_shrink_start_child(false);
         split.set_resize_start_child(false);
         split.set_position(config.appearance.sidebar_width);
         split.set_vexpand(true);
-        sidebar_box.set_visible(config.appearance.sidebar_visible);
 
         let status = gtk4::Label::builder()
             .xalign(0.0)
@@ -335,6 +380,7 @@ impl App {
             sidebar_list,
             sidebar_rows: RefCell::new(HashMap::new()),
             tab_bars: RefCell::new(HashMap::new()),
+            file_panels: RefCell::new(HashMap::new()),
             usage_footer,
             system_status,
             hidden: Cell::new(false),
@@ -451,6 +497,23 @@ impl App {
             let w = Rc::downgrade(&app);
             app.window.connect_close_request(move |_| {
                 if let Some(a) = w.upgrade() {
+                    let pending = a
+                        .file_panels
+                        .borrow()
+                        .iter()
+                        .find_map(|(wid, panel)| panel.pending_edits().map(|message| (*wid, panel.clone(), message)));
+                    if let Some((wid, panel, message)) = pending {
+                        let app = a.weak();
+                        if !panel.after_autosave(move |_| {
+                            if let Some(app) = app.upgrade() {
+                                app.window.close();
+                            }
+                        }) {
+                            a.select_workspace(wid);
+                            a.toast(message);
+                        }
+                        return glib::Propagation::Stop;
+                    }
                     a.quitting.set(true);
                     a.desktop.close_all();
                     a.save_session(true);
@@ -485,11 +548,25 @@ impl App {
         {
             let w = Rc::downgrade(&app);
             app.window.connect_is_active_notify(move |win| {
-                if win.is_active() {
-                    if let Some(a) = w.upgrade() {
+                // Pause looping animations (the island pulse) while behind other windows.
+                set_class(win, "window-inactive", !win.is_active());
+                if let Some(a) = w.upgrade() {
+                    if win.is_active() {
+                        // The OS motion setting may have changed while away (macOS only).
+                        motion::follow_os();
+                        // Files may have changed outside oxishell meanwhile.
+                        let workspace = a.inner.borrow().state.active;
+                        if let Some(panel) = workspace.and_then(|wid| a.file_panels.borrow().get(&wid).cloned()) {
+                            panel.refresh_git_if_shown();
+                        }
                         // Coming back to the window counts as seeing the focused pane.
                         if let Some(p) = a.focused_pane() {
                             a.mark_read(p);
+                        }
+                    } else {
+                        let workspace = a.inner.borrow().state.active;
+                        if let Some(panel) = workspace.and_then(|wid| a.file_panels.borrow().get(&wid).cloned()) {
+                            panel.flush_autosave();
                         }
                     }
                 }
@@ -553,8 +630,20 @@ impl App {
         page.set_hexpand(true);
         page.set_vexpand(true);
         corner_resize::attach(self, &page, wid);
-        self.stack.add_named(&page, Some(&wid.to_string()));
+        let files = project_files::Panel::new(self, wid, &page);
+        self.file_panels.borrow_mut().insert(wid, files.clone());
+        self.stack.add_named(&files.split, Some(&wid.to_string()));
         self.inner.borrow_mut().pages.insert(wid, page);
+    }
+
+    fn remove_page(&self, wid: WorkspaceId) {
+        self.inner.borrow_mut().pages.remove(&wid);
+        let files = self.file_panels.borrow_mut().remove(&wid);
+        if let Some(files) = files {
+            self.stack.remove(&files.split);
+        }
+        self.tab_bars.borrow_mut().remove(&wid);
+        self.inner.borrow_mut().notes.forget_workspace(wid);
     }
 
     pub fn select_workspace(self: &Rc<Self>, wid: WorkspaceId) {
@@ -568,8 +657,9 @@ impl App {
         self.stack.set_visible_child_name(&wid.to_string());
         if let Some(p) = focused {
             self.focus_pane(p);
+        } else {
+            self.refresh();
         }
-        self.refresh();
         // Forced ports: the sidebar is fresh when the user looks at it.
         self.request_meta(true, true);
     }
@@ -632,6 +722,12 @@ impl App {
         if self.inner.borrow().state.workspace(wid).is_none() {
             return Err(format!("no such workspace: {wid}"));
         }
+        if self.defer_close_for_file(wid, interactive, move |app| {
+            let result = app.close_workspace(wid, force, interactive);
+            app.report(result);
+        })? {
+            return Ok(());
+        }
         let running = self.workspace_running(wid).len();
         if !force && interactive {
             // Closing from the window (button, menu, shortcut) always asks first.
@@ -673,14 +769,33 @@ impl App {
         for p in panes {
             self.destroy_pane(p, true);
         }
-        let page = self.inner.borrow_mut().pages.remove(&wid);
-        if let Some(page) = page {
-            self.stack.remove(&page);
-        }
-        self.tab_bars.borrow_mut().remove(&wid);
-        self.inner.borrow_mut().notes.forget_workspace(wid);
+        self.remove_page(wid);
         self.after_structure_change();
         Ok(())
+    }
+
+    fn defer_close_for_file(
+        self: &Rc<Self>,
+        wid: WorkspaceId,
+        interactive: bool,
+        close: impl FnOnce(&AppRc) + 'static,
+    ) -> Result<bool, String> {
+        let panel = self.file_panels.borrow().get(&wid).cloned();
+        let Some((panel, message)) = panel.and_then(|panel| panel.pending_edits().map(|message| (panel, message))) else {
+            return Ok(false);
+        };
+        if interactive {
+            let app = self.weak();
+            if panel.after_autosave(move |_| {
+                if let Some(app) = app.upgrade() {
+                    close(&app);
+                }
+            }) {
+                return Ok(true);
+            }
+            self.toast(message);
+        }
+        Err(message.into())
     }
 
     fn after_structure_change(self: &Rc<Self>) {
@@ -713,7 +828,6 @@ impl App {
         self.create_pane(wid, new, cwd, None);
         self.rebuild_workspace(wid);
         self.select_workspace(wid);
-        self.focus_pane(new);
         self.schedule_save();
         Ok(new)
     }
@@ -732,7 +846,6 @@ impl App {
         self.create_pane(wid, pane, cwd, None);
         self.rebuild_workspace(wid);
         self.select_workspace(wid);
-        self.focus_pane(pane);
         self.schedule_save();
         Ok((tab, pane))
     }
@@ -741,7 +854,6 @@ impl App {
     pub fn select_tab(self: &Rc<Self>, tab: TabId) -> Result<(), String> {
         let pane = self.inner.borrow_mut().state.select_tab(tab).map_err(|e| e.to_string())?;
         self.focus_pane(pane);
-        self.refresh();
         Ok(())
     }
 
@@ -759,7 +871,6 @@ impl App {
         let next = self.inner.borrow_mut().state.cycle_tab(wid, delta);
         if let Ok(next) = next {
             self.focus_pane(next);
-            self.refresh();
         }
     }
 
@@ -776,6 +887,21 @@ impl App {
     /// program is running; otherwise refuses unless `force`.
     pub fn close_tab(self: &Rc<Self>, tab: TabId, force: bool, interactive: bool) -> Result<(), String> {
         let panes = self.inner.borrow().state.tab_panes(tab).map_err(|e| e.to_string())?;
+        let closing_workspace = {
+            let i = self.inner.borrow();
+            panes
+                .first()
+                .and_then(|pane| i.state.workspace_of(*pane))
+                .filter(|wid| i.state.workspace(*wid).is_some_and(|w| w.tabs.len() == 1))
+        };
+        if let Some(wid) = closing_workspace {
+            if self.defer_close_for_file(wid, interactive, move |app| {
+                let result = app.close_tab(tab, force, interactive);
+                app.report(result);
+            })? {
+                return Ok(());
+            }
+        }
         let (running, confirm) = {
             let i = self.inner.borrow();
             let running = panes
@@ -856,8 +982,9 @@ impl App {
         // the pane widget itself needs, or GTK pushes the last panes off-screen.
         let (frame_min_w, _, _, _) = p.frame.measure(Orientation::Horizontal, -1);
         let (frame_min_h, _, _, _) = p.frame.measure(Orientation::Vertical, -1);
-        let min_w = ((p.term.char_width() * MIN_PANE_COLS) as f64 + 24.0).max(frame_min_w as f64);
-        let min_h = ((p.term.char_height() * MIN_PANE_ROWS) as f64 + 44.0).max(frame_min_h as f64);
+        let pad = 2.0 * f64::from(pane::term_pad());
+        let min_w = ((p.term.char_width() * MIN_PANE_COLS) as f64 + 24.0 + pad).max(frame_min_w as f64);
+        let min_h = ((p.term.char_height() * MIN_PANE_ROWS) as f64 + 44.0 + pad).max(frame_min_h as f64);
         let Some(tab) = ws.tab_index_of(pane).map(|t| &ws.tabs[t]) else {
             return Ok(());
         };
@@ -875,6 +1002,14 @@ impl App {
     }
 
     pub fn close_pane(self: &Rc<Self>, pane: PaneId, force: bool, interactive: bool) -> Result<(), String> {
+        if let Some(wid) = self.workspace_of_last_pane(pane) {
+            if self.defer_close_for_file(wid, interactive, move |app| {
+                let result = app.close_pane(pane, force, interactive);
+                app.report(result);
+            })? {
+                return Ok(());
+            }
+        }
         let (running, confirm, program) = {
             let i = self.inner.borrow();
             let p = i.panes.get(&pane).ok_or(format!("no such pane: {pane}"))?;
@@ -923,12 +1058,7 @@ impl App {
                 self.schedule_save();
             }
             Ok(PaneClosed::WorkspaceRemoved(wid)) => {
-                let page = self.inner.borrow_mut().pages.remove(&wid);
-                if let Some(page) = page {
-                    self.stack.remove(&page);
-                }
-                self.tab_bars.borrow_mut().remove(&wid);
-                self.inner.borrow_mut().notes.forget_workspace(wid);
+                self.remove_page(wid);
                 self.after_structure_change();
             }
             Err(_) => {}
@@ -963,20 +1093,37 @@ impl App {
         if self.quitting.get() || !self.inner.borrow().panes.contains_key(&pane) {
             return;
         }
+        // Keep the workspace available when its last terminal exits before
+        // the file editor has finished with the current draft.
+        if let Some(wid) = self.workspace_of_last_pane(pane) {
+            let deferred = self.defer_close_for_file(wid, true, move |app| app.on_child_exited(pane));
+            if !matches!(deferred, Ok(false)) {
+                return;
+            }
+        }
         self.remove_pane(pane, false);
     }
 
+    fn workspace_of_last_pane(&self, pane: PaneId) -> Option<WorkspaceId> {
+        let i = self.inner.borrow();
+        let wid = i.state.workspace_of(pane)?;
+        (i.state.workspace(wid)?.panes().len() == 1).then_some(wid)
+    }
+
     pub fn focus_pane(self: &Rc<Self>, pane: PaneId) {
-        let (wid, term) = {
+        let (wid, tab, term) = {
             let mut i = self.inner.borrow_mut();
             let Ok(wid) = i.state.focus(pane) else { return };
-            (wid, i.panes.get(&pane).map(|p| p.term.clone()))
+            let tab = i.state.workspace(wid).unwrap().tab().id;
+            (wid, tab, i.panes.get(&pane).map(|p| p.term.clone()))
         };
         if self.stack.visible_child_name().as_deref() != Some(&wid.to_string()) {
             self.stack.set_visible_child_name(&wid.to_string());
         }
         // Show the pane's tab before focusing its terminal.
-        tabs::sync(self);
+        if let Some(bar) = self.tab_bars.borrow().get(&wid) {
+            bar.show_tab(tab);
+        }
         if let Some(t) = term {
             if t.is_mapped() {
                 if !t.has_focus() {
@@ -995,7 +1142,7 @@ impl App {
                 handler.set(Some(id));
             }
         }
-        self.mark_read(pane);
+        self.inner.borrow_mut().notes.mark_pane_read(pane);
         self.refresh();
     }
 
@@ -1025,9 +1172,11 @@ impl App {
             let _ = i.state.focus(pane);
             before != Some(pane)
         };
-        self.mark_read(pane);
-        if changed {
+        let read = self.inner.borrow_mut().notes.mark_pane_read(pane);
+        if changed || read {
             self.refresh();
+        }
+        if changed {
             self.request_meta(true, false);
         }
     }
@@ -1398,6 +1547,12 @@ impl App {
             }
             worked
         };
+        // A finished turn usually changed files: update the explorer's git letters.
+        if matches!(state, AgentState::Idle | AgentState::Ended) {
+            if let Some(panel) = self.file_panel_of_pane(pane) {
+                panel.refresh_git_if_shown();
+            }
+        }
         if state.notifies() {
             let name = crate::agents::display_name(agent);
             let (title, kind) = match state {
@@ -1429,8 +1584,18 @@ impl App {
         usage_footer::refresh(self);
         let i = self.inner.borrow();
         let focused = i.state.active_workspace().map(|w| w.focused());
+        // Flash the rim of a pane that takes focus from another pane of the
+        // same tab (not at startup, not when switching workspace or tab).
+        let flash = i.state.active_workspace().and_then(|ws| {
+            let now = focused?;
+            let before = i.panes.iter().find(|(_, p)| p.frame.has_css_class("focused")).map(|(id, _)| *id)?;
+            (before != now && ws.tab_index_of(before).is_some() && ws.tab_index_of(before) == ws.tab_index_of(now)).then_some(now)
+        });
         for (id, p) in &i.panes {
             set_class(&p.frame, "focused", Some(*id) == focused);
+            if flash == Some(*id) {
+                motion::once(&p.frame, "focus-flash", FOCUS_FLASH_MS);
+            }
             set_class(&p.frame, "attention", i.notes.unread_for_pane(*id) > 0);
             p.chips
                 .update(p.python_env.as_deref(), p.cwd.as_deref(), p.git.as_ref(), i.config.appearance.chips);
@@ -1471,6 +1636,16 @@ impl App {
         }
         let show_mark = i.config.appearance.watermark;
         self.island.set_workspace(&ws.name, activity);
+        if let Some(files) = self.file_panels.borrow().get(&ws.id) {
+            let previous = self.watermark.parent().and_downcast::<gtk4::Overlay>();
+            if previous.as_ref() != Some(&files.terminal_area) {
+                if let Some(previous) = previous {
+                    previous.remove_overlay(&self.watermark);
+                }
+                files.terminal_area.add_overlay(&self.watermark);
+                files.terminal_area.set_clip_overlay(&self.watermark, true);
+            }
+        }
         let mark = if show_mark { ws.name.as_str() } else { "" };
         if self.watermark.label() != mark {
             self.watermark.set_label(mark);
@@ -1480,18 +1655,38 @@ impl App {
 
     fn fit_sidebar_to_width(&self) {
         let want = self.inner.borrow().config.appearance.sidebar_visible && self.window.default_width() >= NARROW_WIDTH;
-        if let Some(s) = self.split.start_child() {
-            // get_visible() is the property; is_visible() also needs visible parents.
-            if s.get_visible() != want {
-                s.set_visible(want);
+        if self.sidebar_shown() != want {
+            self.show_sidebar(want);
+        }
+    }
+
+    /// The file panel of the workspace holding `pane`.
+    fn file_panel_of_pane(&self, pane: PaneId) -> Option<Rc<project_files::Panel>> {
+        let workspace = self.inner.borrow().state.workspace_of(pane)?;
+        self.file_panels.borrow().get(&workspace).cloned()
+    }
+
+    /// The sidebar's fade revealer, the split's start child.
+    fn sidebar_reveal(&self) -> Option<gtk4::Revealer> {
+        self.split.start_child().and_downcast()
+    }
+
+    /// Whether the sidebar is shown or fading in (not whether it is mapped).
+    fn sidebar_shown(&self) -> bool {
+        self.sidebar_reveal().is_some_and(|r| r.reveals_child())
+    }
+
+    fn show_sidebar(&self, show: bool) {
+        if let Some(r) = self.sidebar_reveal() {
+            if show {
+                r.set_visible(true);
             }
+            r.set_reveal_child(show);
         }
     }
 
     pub fn set_sidebar_visible(self: &Rc<Self>, v: bool) {
-        if let Some(s) = self.split.start_child() {
-            s.set_visible(v);
-        }
+        self.show_sidebar(v);
         let changed = {
             let mut i = self.inner.borrow_mut();
             let c = i.config.appearance.sidebar_visible != v;
@@ -1539,8 +1734,12 @@ impl App {
             });
             theme
         };
-        let opacity = self.inner.borrow().config.appearance.opacity;
-        self.theme_css.load_from_string(&(theme.css() + &theme.opacity_css(opacity)));
+        let (opacity, padding) = {
+            let i = self.inner.borrow();
+            (i.config.appearance.opacity, pane::padding_css(&i.config))
+        };
+        self.theme_css
+            .load_from_string(&(theme.css() + &theme.opacity_css(opacity) + &padding));
         self.inner.borrow_mut().theme = theme;
         {
             let w = self.weak();
@@ -1560,6 +1759,10 @@ impl App {
         }
         self.apply_terminal_style();
         self.rebuild_keymap();
+        let autosave_delay = self.inner.borrow().config.editor.autosave_delay();
+        for panel in self.file_panels.borrow().values() {
+            panel.set_autosave(autosave_delay);
+        }
         // Pane widgets that follow settings (e.g. the Compose launcher) update at once.
         self.refresh();
     }
@@ -1650,6 +1853,9 @@ impl App {
         ctl.connect_key_pressed(move |_, key, _, state| {
             let Some(a) = w.upgrade() else { return glib::Propagation::Proceed };
             let mods = state & gtk4::accelerator_get_default_mod_mask();
+            if mods == primary_mask() && key.to_lower() == gdk::Key::s && project_files::save_focused(&a) {
+                return glib::Propagation::Stop;
+            }
             // Shift+Tab arrives as ISO_Left_Tab; shortcuts name it Tab.
             let key = if key == gdk::Key::ISO_Left_Tab { gdk::Key::Tab } else { key };
             let action = a.inner.borrow().keymap.get(&(key.to_lower().into_glib(), mods)).cloned();
@@ -1902,13 +2108,19 @@ impl App {
             "focus-up" => self.focus_direction(Direction::Up),
             "focus-down" => self.focus_direction(Direction::Down),
             "copy" => {
-                if let Some((t, _)) = term {
-                    t.copy_clipboard_format(vte4::Format::Text);
+                if !project_files::copy_text(self) {
+                    if let Some((t, _)) = term {
+                        t.copy_clipboard_format(vte4::Format::Text);
+                    }
                 }
             }
             "paste" => {
-                if let Some((t, _)) = term {
-                    t.paste_clipboard();
+                if project_files::has_focus(self) {
+                    project_files::paste_text(self);
+                } else {
+                    if let Some((t, _)) = term {
+                        t.paste_clipboard();
+                    }
                 }
             }
             "search" => {
@@ -1917,6 +2129,7 @@ impl App {
                 }
             }
             "command-palette" => dialogs::command_palette(self),
+            "explore-project" => project_files::explore(self),
             "compose-files" => {
                 if let Some(p) = focused {
                     compose_ui::open_picker(self, p);
@@ -1924,7 +2137,7 @@ impl App {
             }
             "toggle-sidebar" => {
                 // Toggle what is on screen (it may be auto-hidden in a narrow window).
-                let shown = self.split.start_child().is_some_and(|s| s.get_visible());
+                let shown = self.sidebar_shown();
                 self.set_sidebar_visible(!shown);
             }
             "newline" | "newline-alt" => {

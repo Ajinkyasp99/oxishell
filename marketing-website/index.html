@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OxiShell — Open-source terminal for AI coding agents</title>
-  <meta name="description" content="OxiShell is a native Linux and macOS terminal. Organize project workspaces, run AI coding agents in split panes, and jump to the pane that needs you.">
-  <meta name="theme-color" content="#0b0d11">
+  <title>OxiShell — Terminal for Claude Code and Codex on Linux and macOS</title>
+  <meta name="description" content="OxiShell is a free, open-source terminal for Linux and macOS. Run Claude Code, Codex, and dev servers in split panes with project workspaces and agent alerts.">
+  <meta name="robots" content="max-image-preview:large">
+  <meta name="theme-color" content="#080d17">
   <link rel="canonical" href="https://ajinkyasp99.github.io/oxishell/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="OxiShell">
@@ -15,12 +16,12 @@
   <meta property="og:image" content="https://ajinkyasp99.github.io/oxishell/assets/social-preview.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="OxiShell terminal on Ubuntu with a workspace sidebar and independent split panes.">
+  <meta property="og:image:alt" content="OxiShell for Linux and macOS, with a preview of the terminal workspace.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="OxiShell — Your agents. One terminal.">
   <meta name="twitter:description" content="An open-source terminal for project workspaces, split panes and AI coding agents on Linux and macOS.">
   <meta name="twitter:image" content="https://ajinkyasp99.github.io/oxishell/assets/social-preview.jpg">
-  <meta name="twitter:image:alt" content="OxiShell terminal on Ubuntu with a workspace sidebar and independent split panes.">
+  <meta name="twitter:image:alt" content="OxiShell for Linux and macOS, with a preview of the terminal workspace.">
   <link rel="icon" href="./assets/oxishell.svg" type="image/svg+xml">
   <link rel="preload" href="./assets/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="./styles.css">
@@ -36,8 +37,14 @@
       "operatingSystem": "Linux, macOS",
       "isAccessibleForFree": true,
       "license": "https://spdx.org/licenses/GPL-3.0-or-later.html",
+      "sameAs": "https://github.com/Ajinkyasp99/oxishell",
       "downloadUrl": "https://github.com/Ajinkyasp99/oxishell/releases/latest",
       "screenshot": "https://ajinkyasp99.github.io/oxishell/assets/hero.webp",
+      "featureList": [
+        "Project workspaces and independent split panes",
+        "Agent status and alerts through CLI hooks",
+        "Docker Compose launcher with file and service search"
+      ],
       "author": {
         "@type": "Person",
         "name": "Ajinkya Patil",
@@ -58,9 +65,8 @@
         OxiShell
       </a>
       <nav class="main-nav" id="main-nav" aria-label="Main navigation">
+        <a href="#whats-new">What’s new</a>
         <a href="#features">Features</a>
-        <a href="#quick-start">How it works</a>
-        <a href="#download">Download</a>
         <a href="#docs">Docs</a>
         <a href="https://github.com/Ajinkyasp99/oxishell">GitHub <span aria-hidden="true">↗</span></a>
       </nav>
@@ -74,57 +80,94 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="shell">
         <div class="hero-copy">
-          <p class="hero-platform"><span class="status-dot" aria-hidden="true"></span> Open-source terminal for Linux &amp; macOS</p>
+          <p class="hero-platform"><span class="status-dot" aria-hidden="true"></span> Native terminal for Linux &amp; macOS</p>
           <h1 id="hero-title">Your agents. <span>One terminal.</span></h1>
-          <p class="hero-description">Keep your projects in workspaces. Run coding agents, tests and dev servers in split panes, then jump straight to the pane that needs you.</p>
+          <p class="hero-description">Run Claude Code, Codex, tests and dev servers in split panes. Give each project its own workspace and jump to the agent that needs you.</p>
           <div class="actions hero-actions">
             <a class="button button-primary" href="#download">Download OxiShell <span aria-hidden="true">↓</span></a>
-            <a class="button button-secondary" href="https://github.com/Ajinkyasp99/oxishell">View on GitHub <span aria-hidden="true">↗</span></a>
+            <a class="button button-secondary" href="#quick-start">See the walkthrough <span aria-hidden="true">↓</span></a>
           </div>
         </div>
 
         <figure class="media-frame hero-media">
-          <img src="./assets/hero.webp" srcset="./assets/hero-792.webp 792w, ./assets/hero.webp 1320w" sizes="(min-width: 76rem) 1120px, (max-width: 25rem) calc(100vw - 2rem), 92vw" width="1320" height="820" fetchpriority="high" alt="OxiShell on Ubuntu with projects in the sidebar, separate panes for Git, tests and a dev server, and a Claude Code alert.">
+          <img src="./assets/hero.webp" srcset="./assets/hero-792.webp 792w, ./assets/hero.webp 1430w" sizes="(min-width: 80rem) 1160px, calc(94vw - 1.3rem)" width="1430" height="820" fetchpriority="high" alt="OxiShell on Ubuntu with Claude Code, Codex and an API server in split panes, alongside project workspaces and agent usage meters.">
           <figcaption class="media-caption">
-            <span>OxiShell on Ubuntu</span>
+            <span>OxiShell on Ubuntu · Demo workspace</span>
             <a href="./assets/hero.webp" aria-label="View full size — OxiShell workspace screenshot">View full size <span aria-hidden="true">↗</span></a>
           </figcaption>
         </figure>
-
-        <div class="agent-rail">
-          <a href="#agents">Agent integrations <span aria-hidden="true">↓</span></a>
-          <ul>
-            <li>Claude Code</li>
-            <li>Codex CLI</li>
-            <li>OpenCode</li>
-            <li>Gemini CLI</li>
-            <li>Qoder CLI</li>
-          </ul>
-        </div>
       </div>
     </section>
 
-    <section class="section" id="features" tabindex="-1" aria-labelledby="features-title">
+    <div class="agent-rail">
+      <div class="shell agent-rail-inner">
+        <a href="#agents">Agent integrations <span aria-hidden="true">↓</span></a>
+        <ul>
+          <li>Claude Code</li>
+          <li>Codex CLI</li>
+          <li>Gemini CLI</li>
+          <li>OpenCode</li>
+          <li>Qoder CLI</li>
+        </ul>
+      </div>
+    </div>
+
+    <section class="section release-section" id="whats-new" tabindex="-1" aria-labelledby="release-title">
       <div class="shell">
         <div class="section-heading">
+          <h2 id="release-title">What’s new in OxiShell</h2>
+          <p>Find and restart development stacks faster. See what each agent is doing from the workspace sidebar.</p>
+        </div>
+        <div class="release-grid">
+          <article class="card release-card release-compose">
+            <div class="release-copy">
+              <small class="release-version">v0.6.0</small>
+              <h3>Find and rerun Compose stacks</h3>
+              <p>Type a file path or service name as soon as the picker opens. Repeat one of the last three starts, run actions on the selected file, or restart a stopped stack from its pane.</p>
+            </div>
+            <figure class="media-frame release-art">
+              <img src="./assets/compose-current.webp" width="466" height="354" loading="lazy" decoding="async" alt="The Compose picker filtered by redis, showing recent starts, matching files and actions for the selected file.">
+              <figcaption class="media-caption"><span>Compose picker</span><a href="./assets/compose-current.webp" aria-label="View full size — Compose picker screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
+            </figure>
+            <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/COMPOSE_LAUNCHER.md">Compose launcher guide <span aria-hidden="true">↗</span></a>
+          </article>
+          <article class="card release-card release-workspaces">
+            <div class="release-copy">
+              <small class="release-version">v0.5.0</small>
+              <h3>Read agent status at a glance</h3>
+              <p>See one session per agent pane, grouped by tab when several tabs are active. Segmented 5-hour and weekly meters show usage and reset times for Claude Code and Codex when data is available.</p>
+            </div>
+            <figure class="media-frame release-art">
+              <img src="./assets/usage-current.webp" width="261" height="163" loading="lazy" decoding="async" alt="The sidebar usage footer shows segmented 5-hour and weekly meters for Codex and Claude, with example usage and reset times.">
+              <figcaption class="media-caption"><span>Agent usage meters</span><a href="./assets/usage-current.webp" aria-label="View full size — usage meters screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
+            </figure>
+            <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/AGENTS.md#sidebar-session-lines">Agent sidebar guide <span aria-hidden="true">↗</span></a>
+          </article>
+        </div>
+        <p class="section-note">Check the <a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/RELEASE_NOTES.md">release notes</a> for availability in downloadable packages.</p>
+      </div>
+    </section>
+
+    <section class="section section-border" id="features" tabindex="-1" aria-labelledby="features-title">
+      <div class="shell">
+        <div class="section-heading centered">
           <p class="eyebrow">Inside OxiShell</p>
-          <h2 id="features-title">Keep parallel work in view.</h2>
-          <p>Leave your API server and test watcher running while you move to another project. When an agent needs a decision, use its alert to get back to the right pane.</p>
+          <h2 id="features-title">Keep parallel work in view</h2>
         </div>
 
         <div class="feature-showcase" data-tabs>
           <div class="feature-tabs" data-tab-list="Explore OxiShell features" hidden>
-            <button type="button" id="tab-workspaces" data-panel="feature-workspaces"><strong>Workspaces</strong><span>Keep projects separate</span></button>
-            <button type="button" id="tab-splits" data-panel="feature-splits"><strong>Split panes</strong><span>Work side by side</span></button>
-            <button type="button" id="tab-alerts" data-panel="feature-alerts"><strong>Agent alerts</strong><span>Return when a pane needs you</span></button>
-            <button type="button" id="tab-productivity" data-panel="feature-productivity"><strong>Productivity</strong><span>Find commands and context</span></button>
-            <button type="button" id="tab-themes" data-panel="feature-themes"><strong>Themes</strong><span>Style the whole window</span></button>
+            <button type="button" id="tab-workspaces" data-panel="feature-workspaces">Workspaces</button>
+            <button type="button" id="tab-splits" data-panel="feature-splits">Split panes</button>
+            <button type="button" id="tab-alerts" data-panel="feature-alerts">Agent alerts</button>
+            <button type="button" id="tab-productivity" data-panel="feature-productivity">Productivity</button>
+            <button type="button" id="tab-themes" data-panel="feature-themes">Themes</button>
           </div>
 
           <div class="feature-panels">
             <div class="feature-panel" id="feature-workspaces">
               <figure class="media-frame">
-                <img src="./assets/hero.webp" srcset="./assets/hero-792.webp 792w, ./assets/hero.webp 1320w" sizes="(min-width: 76rem) 740px, (min-width: 51rem) 65vw, 94vw" width="1320" height="820" loading="lazy" decoding="async" alt="The workspace sidebar lists api, agents and web projects, with unread badges and an agent waiting for input.">
+                <img src="./assets/hero.webp" srcset="./assets/hero-792.webp 792w, ./assets/hero.webp 1430w" sizes="(min-width: 80rem) 720px, (min-width: 51rem) 60vw, calc(100vw - 4rem)" width="1430" height="820" loading="lazy" decoding="async" alt="The workspace sidebar lists Atlas API, Atlas Web and Dev Infra, with separate Claude Code and Codex session lines.">
                 <figcaption class="media-caption"><span>Project sidebar</span><a href="./assets/hero.webp" aria-label="View full size — workspace screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
               </figure>
               <div class="panel-copy">
@@ -135,8 +178,8 @@
 
             <div class="feature-panel" id="feature-splits">
               <figure class="media-frame">
-                <img src="./assets/usage.webp" width="1320" height="820" loading="lazy" decoding="async" alt="Codex and Claude Code open in adjacent terminal panes, with usage details in the sidebar.">
-                <figcaption class="media-caption"><span>Independent terminal panes</span><a href="./assets/usage.webp" aria-label="View full size — split panes screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
+                <img src="./assets/splits-current.webp" width="1148" height="755" loading="lazy" decoding="async" alt="Claude Code runs on the left, while Codex and an API server run in stacked panes on the right.">
+                <figcaption class="media-caption"><span>Independent terminal panes</span><a href="./assets/splits-current.webp" aria-label="View full size — split panes screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
               </figure>
               <div class="panel-copy">
                 <h3>Keep the run alongside the edit.</h3>
@@ -184,11 +227,6 @@
 
         <div class="tool-grid">
           <article class="card tool-card">
-            <h3>Start a Compose stack</h3>
-            <p>Find a project’s Compose files, start services or follow logs in a pane, and manage running services from the stack bar.</p>
-            <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/COMPOSE_LAUNCHER.md">Compose launcher guide <span aria-hidden="true">↗</span></a>
-          </article>
-          <article class="card tool-card">
             <h3>Script and restore your setup</h3>
             <p>Use <code>oxi</code> to create workspaces, split panes and send alerts. OxiShell restores layouts and directories on restart and offers to resume agent sessions that reported an ID.</p>
             <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/CLI.md">CLI reference <span aria-hidden="true">↗</span></a>
@@ -199,24 +237,77 @@
             <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/ARCHITECTURE.md">Architecture <span aria-hidden="true">↗</span></a>
           </article>
         </div>
-        <p class="section-note">Features reflect the current project. Check the <a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/RELEASE_NOTES.md">release notes</a> for availability in downloadable packages.</p>
       </div>
     </section>
 
-    <section class="section section-border" id="quick-start" tabindex="-1" aria-labelledby="workflow-title">
+    <section class="section section-border workflow-section" id="quick-start" tabindex="-1" aria-labelledby="workflow-title">
       <div class="shell">
-        <div class="section-heading centered">
-          <p class="eyebrow">How it works</p>
-          <h2 id="workflow-title">Take a project from prompt to test.</h2>
-          <p>Set up a workspace once and keep the tools you need within reach.</p>
+        <div class="section-heading">
+          <h2 id="workflow-title">From prompt to test</h2>
+          <p>See how a project, a coding agent, and a test run fit into one window.</p>
         </div>
-        <ol class="workflow">
-          <li><h3>Open a workspace</h3><p>Start in a project folder with <kbd>Ctrl+Shift+N</kbd> on Linux or <kbd>⌘T</kbd> on macOS.</p></li>
-          <li><h3>Split the terminal</h3><p>Split right with <kbd>Ctrl+Shift+E</kbd> or <kbd>⌘D</kbd>. Add more panes as needed.</p></li>
-          <li><h3>Start an agent</h3><p>Launch your coding agent from its own shell and enable hooks once for status and alerts.</p></li>
-          <li><h3>Run tests or a server</h3><p>Keep a watcher, dev server or Compose stack running in another pane.</p></li>
-          <li><h3>Return to an alert</h3><p>Open a notification to reach its pane and respond when input is needed.</p></li>
-        </ol>
+        <div class="workflow" data-tabs>
+          <div class="workflow-tabs" data-tab-list="Walk through an OxiShell project" hidden>
+            <button type="button" id="step-workspace" data-panel="workflow-workspace">Open a workspace</button>
+            <button type="button" id="step-split" data-panel="workflow-split">Split the terminal</button>
+            <button type="button" id="step-agent" data-panel="workflow-agent">Start an agent</button>
+            <button type="button" id="step-run" data-panel="workflow-run">Run your stack</button>
+            <button type="button" id="step-alert" data-panel="workflow-alert">Respond to an alert</button>
+          </div>
+          <div class="workflow-panels">
+            <div class="workflow-panel feature-panel" id="workflow-workspace">
+              <div class="panel-copy">
+                <h3>Open a workspace</h3>
+                <p>Give your project a place in the sidebar. Open a workspace with <kbd>Ctrl+Shift+N</kbd> on Linux or <kbd>⌘T</kbd> on macOS, then change to your project folder.</p>
+              </div>
+              <figure class="media-frame">
+                <img src="./assets/hero-792.webp" width="792" height="454" loading="lazy" decoding="async" alt="The Atlas API workspace is selected in the OxiShell project sidebar.">
+                <figcaption class="media-caption"><span>Project workspaces</span><a href="./assets/hero.webp" aria-label="View full size — project workspaces screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
+              </figure>
+            </div>
+            <div class="workflow-panel feature-panel" id="workflow-split">
+              <div class="panel-copy">
+                <h3>Split the terminal</h3>
+                <p>Split right with <kbd>Ctrl+Shift+E</kbd> on Linux or <kbd>⌘D</kbd> on macOS. Keep a test watcher or a dev server in a separate shell next to your agent.</p>
+              </div>
+              <figure class="media-frame">
+                <img src="./assets/splits-current.webp" width="1148" height="755" loading="lazy" decoding="async" alt="Independent OxiShell panes for Claude Code, Codex and the Atlas API server.">
+                <figcaption class="media-caption"><span>Split panes</span><a href="./assets/splits-current.webp" aria-label="View full size — split panes workflow screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
+              </figure>
+            </div>
+            <div class="workflow-panel feature-panel" id="workflow-agent">
+              <div class="panel-copy">
+                <h3>Start an agent</h3>
+                <p>Run <code>claude</code> or <code>codex</code> in a pane after installing the CLI. OxiShell can show usage and reset times in the sidebar when the agent reports that data.</p>
+                <a class="text-link" href="#agents">Set up agent hooks <span aria-hidden="true">↓</span></a>
+              </div>
+              <figure class="media-frame workflow-detail">
+                <img src="./assets/usage-current.webp" width="261" height="163" loading="lazy" decoding="async" alt="Example Claude Code and Codex usage meters in the OxiShell sidebar.">
+                <figcaption class="media-caption"><span>Agent usage</span><a href="./assets/usage-current.webp" aria-label="View full size — agent usage workflow screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
+              </figure>
+            </div>
+            <div class="workflow-panel feature-panel" id="workflow-run">
+              <div class="panel-copy">
+                <h3>Run your stack</h3>
+                <p>Open the Compose picker with <kbd>Ctrl+Shift+L</kbd> on Linux or <kbd>⇧⌘L</kbd> on macOS. Type a filename or service name, select the file, and choose <code>up -d</code> to start it in the background.</p>
+              </div>
+              <figure class="media-frame workflow-detail">
+                <img src="./assets/compose-current.webp" width="466" height="354" loading="lazy" decoding="async" alt="The Compose picker lists matching Redis stacks and commands for the selected file.">
+                <figcaption class="media-caption"><span>Compose picker</span><a href="./assets/compose-current.webp" aria-label="View full size — Compose workflow screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
+              </figure>
+            </div>
+            <div class="workflow-panel feature-panel" id="workflow-alert">
+              <div class="panel-copy">
+                <h3>Respond to an alert</h3>
+                <p>When an agent hook reports that it needs input, open the notification to focus its pane and respond.</p>
+              </div>
+              <figure class="media-frame">
+                <img src="./assets/notifications.webp" width="1320" height="820" loading="lazy" decoding="async" alt="The OxiShell Notifications panel shows an agent waiting for permission.">
+                <figcaption class="media-caption"><span>Notifications panel</span><a href="./assets/notifications.webp" aria-label="View full size — notifications workflow screenshot">View full size <span aria-hidden="true">↗</span></a></figcaption>
+              </figure>
+            </div>
+          </div>
+        </div>
         <a class="text-link workflow-link" href="https://github.com/Ajinkyasp99/oxishell#keyboard-shortcuts">See Linux and macOS shortcuts <span aria-hidden="true">↗</span></a>
       </div>
     </section>
@@ -246,7 +337,6 @@
             <button type="button" data-copy="hooks-command" aria-describedby="hooks-command" hidden>Copy</button>
           </div>
         </div>
-        <p class="section-note">Claude Code and Codex can also show local 5-hour and weekly usage when the CLI provides that data.</p>
       </div>
     </section>
 
@@ -256,7 +346,7 @@
           <div class="section-heading theme-heading">
             <p class="eyebrow">Appearance</p>
             <h2 id="themes-title">41 built-in Warp themes.</h2>
-            <p>See how the same workspace looks in a different palette. Customize the font, cursor and background opacity in Settings.</p>
+            <p>Cyber Wave is the default on new setups. Preview other palettes here, or customize the font, cursor and background opacity in Settings.</p>
             <a class="text-link" href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/THEMES.md">Theme documentation <span aria-hidden="true">↗</span></a>
           </div>
           <div class="theme-tabs" data-tab-list="Preview OxiShell themes" hidden>
@@ -298,8 +388,7 @@
     <section class="section download-section" id="download" tabindex="-1" aria-labelledby="download-title">
       <div class="shell">
         <div class="section-heading centered">
-          <p class="eyebrow">Download</p>
-          <h2 id="download-title">Get OxiShell for your desktop.</h2>
+          <h2 id="download-title">Install OxiShell</h2>
           <p>Choose a Linux package or the disk image for your Mac.</p>
         </div>
         <div class="download-grid">
@@ -352,6 +441,33 @@
       </div>
     </section>
 
+    <section class="section section-border faq-section" id="faq" tabindex="-1" aria-labelledby="faq-title">
+      <div class="shell faq-layout">
+        <div class="section-heading">
+          <h2 id="faq-title">OxiShell FAQ</h2>
+          <a class="text-link" href="#download">Download and install <span aria-hidden="true">↑</span></a>
+        </div>
+        <div class="faq-list">
+          <details open>
+            <summary>Which Linux and macOS versions does OxiShell support?</summary>
+            <p>The Linux package supports Ubuntu 24.04+ and Debian 13+ on x86-64. The macOS app requires macOS 15 or later and has separate downloads for Apple silicon and Intel. See the <a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/INSTALL.md">installation guide</a> for Homebrew and source builds.</p>
+          </details>
+          <details>
+            <summary>How do I use Claude Code and Codex in OxiShell?</summary>
+            <p>Install the agent CLIs separately and run each in its own pane. Enable <a href="#agents">agent hooks</a> for status and alerts. For Codex, restart the CLI and review and trust the hooks in <code>/hooks</code>.</p>
+          </details>
+          <details>
+            <summary>What comes back when I restart OxiShell?</summary>
+            <p>With session restore enabled, OxiShell reopens your workspace layouts and working directories. For a pane whose agent reported a session ID, choose its resume action, such as <strong>Resume Codex session</strong>. <a href="https://github.com/Ajinkyasp99/oxishell/blob/main/docs/AGENTS.md#session-resume">See how session resume works.</a></p>
+          </details>
+          <details>
+            <summary>Is OxiShell free and does it require an account?</summary>
+            <p>OxiShell is free and open source under GPL-3.0-or-later. The app runs without an OxiShell account or telemetry. The CLI agents you choose may have their own sign-in requirements.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
     <section class="section section-border" id="docs" tabindex="-1" aria-labelledby="docs-title">
       <div class="shell">
         <div class="section-heading">
@@ -372,17 +488,6 @@
       </div>
     </section>
 
-    <section class="shell final-section" aria-labelledby="final-title">
-      <div class="card final-card">
-        <p class="eyebrow">Free and open source</p>
-        <h2 id="final-title">Make room for your next build.</h2>
-        <p>Keep the shell, the agent and the test run in view. OxiShell works without an account or telemetry and is licensed under GPL-3.0-or-later.</p>
-        <div class="actions">
-          <a class="button button-primary" href="#download">Download OxiShell <span aria-hidden="true">↓</span></a>
-          <a class="button button-secondary" href="https://github.com/Ajinkyasp99/oxishell">View on GitHub <span aria-hidden="true">↗</span></a>
-        </div>
-      </div>
-    </section>
   </main>
 
   <footer class="site-footer">
@@ -392,13 +497,16 @@
           <img src="./assets/oxishell.svg" width="34" height="34" alt="">
           OxiShell
         </a>
+        <p>Open source under GPL-3.0-or-later. Runs without an account or telemetry.</p>
         <p>Created and maintained by <a href="https://github.com/Ajinkyasp99">Ajinkya Patil</a>.</p>
       </div>
       <nav aria-label="Product links">
         <h2>Product</h2>
+        <a href="#whats-new">What’s new</a>
         <a href="#features">Features</a>
         <a href="#quick-start">How it works</a>
         <a href="#download">Download</a>
+        <a href="#faq">FAQ</a>
         <a href="#docs">Documentation</a>
       </nav>
       <nav aria-label="Project links">

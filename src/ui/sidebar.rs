@@ -176,6 +176,8 @@ pub(super) struct Row {
     /// One button per pane running an AI agent (a split tab can have several),
     /// under a header per tab when more than one tab has agents.
     sessions: gtk4::Box,
+    /// Slides the session list open when a workspace gets its first session.
+    sessions_reveal: gtk4::Revealer,
     session_lines: HashMap<PaneId, SessionLine>,
     tab_headers: HashMap<TabId, gtk4::Button>,
     more: gtk4::Label,
@@ -441,7 +443,9 @@ impl Row {
         };
         let sessions = gtk4::Box::new(Orientation::Vertical, 0);
         sessions.add_css_class("ws-sessions");
-        v.append(&sessions);
+        let sessions_reveal = gtk4::Revealer::builder().child(&sessions).build();
+        super::motion::reveal(&sessions_reveal, gtk4::RevealerTransitionType::SlideDown);
+        v.append(&sessions_reveal);
         let more = label("ws-session-more", gtk4::pango::EllipsizeMode::None);
         let attention = label("ws-attention", gtk4::pango::EllipsizeMode::End);
         let stripe = gtk4::Box::new(Orientation::Vertical, 0);
@@ -463,6 +467,7 @@ impl Row {
             glyph,
             glyph_state: Cell::new(Glyph::None),
             sessions,
+            sessions_reveal,
             session_lines: HashMap::new(),
             tab_headers: HashMap::new(),
             more,
@@ -505,7 +510,11 @@ pub fn rebuild(app: &AppRc) {
     });
     let mut active_row = None;
     for (index, ws) in i.state.workspaces.iter().enumerate() {
-        let row = rows.entry(ws.id).or_insert_with(|| Row::new(app, ws.id));
+        let row = rows.entry(ws.id).or_insert_with(|| {
+            let row = Row::new(app, ws.id);
+            super::motion::enter(&row.widget, list);
+            row
+        });
         // Only additions and explicit reordering reparent rows.
         if list.row_at_index(index as i32).as_ref() != Some(&row.widget) {
             if row.widget.parent().is_some() {
@@ -574,7 +583,11 @@ fn sync_sessions(app: &AppRc, row: &mut Row, infos: &[SessionInfo]) {
         keep
     });
     for s in shown {
-        let line = row.session_lines.entry(s.pane).or_insert_with(|| SessionLine::new(app, s.pane));
+        let line = row.session_lines.entry(s.pane).or_insert_with(|| {
+            let line = SessionLine::new(app, s.pane);
+            super::motion::enter(&line.button, &row.widget);
+            line
+        });
         line.update(s);
         if s.tab_header.is_some() {
             line.button.add_css_class("ws-session-grouped");
@@ -640,7 +653,7 @@ fn sync_sessions(app: &AppRc, row: &mut Row, infos: &[SessionInfo]) {
             row.sessions.append(w);
         }
     }
-    row.sessions.set_visible(!shown.is_empty());
+    row.sessions_reveal.set_reveal_child(!shown.is_empty());
     let hidden = infos.len() - shown.len();
     set_optional_label(&row.more, &if hidden > 0 { format!("+{hidden} more") } else { String::new() });
 }

@@ -100,11 +100,11 @@ pub fn update(app: &AppRc, pane: PaneId) {
         s.ghost.set_visible(false);
         *s.suffix.borrow_mut() = None;
     };
-    if !i.config.terminal.suggestions || p.has_running_child() || !at_bottom(&p.term) {
+    if !i.config.terminal.suggestions || !p.term.is_mapped() {
         return hide();
     }
     let tracker = s.tracker.borrow();
-    if !tracker.valid || tracker.line.trim().is_empty() {
+    if !tracker.valid || tracker.line.trim().is_empty() || p.has_running_child() || !at_bottom(&p.term) {
         return hide();
     }
     let Some(full) = i.history.suggest(&tracker.line) else {
@@ -123,8 +123,9 @@ pub fn update(app: &AppRc, pane: PaneId) {
     }
     let cw = p.term.char_width() as i32;
     let ch = p.term.char_height() as i32;
-    s.ghost.set_margin_start(col as i32 * cw + GHOST_PAD_X);
-    s.ghost.set_margin_top(row as i32 * ch + GHOST_PAD_Y);
+    let pad = super::pane::term_pad();
+    s.ghost.set_margin_start(col as i32 * cw + pad);
+    s.ghost.set_margin_top(row as i32 * ch + pad);
     let mut fd = gtk4::pango::FontDescription::from_string(&i.config.appearance.font);
     if fd.size() > 0 {
         fd.set_size((fd.size() as f64 * i.font_scale) as i32);
@@ -136,10 +137,6 @@ pub fn update(app: &AppRc, pane: PaneId) {
     s.ghost.set_visible(true);
     *s.suffix.borrow_mut() = Some(full[tracker.line.len()..].to_string());
 }
-
-/// VTE draws the first cell this many pixels from the widget's edge.
-const GHOST_PAD_X: i32 = 1;
-const GHOST_PAD_Y: i32 = 1;
 
 pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, s: &Suggest) {
     // Follow input sent to the shell.
@@ -173,23 +170,22 @@ pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, s: &Suggest) {
             }
         });
     }
-    // Reposition after the shell echoes (cursor moves / screen changes).
-    for kind in 0..2 {
-        let w = app.weak();
-        let cb = move |_: &vte4::Terminal| {
-            let w = w.clone();
-            glib::idle_add_local_once(move || {
-                if let Some(a) = w.upgrade() {
-                    update(&a, pane);
-                }
-            });
-        };
-        if kind == 0 {
-            term.connect_cursor_moved(cb);
-        } else {
-            term.connect_contents_changed(cb);
+    // The cursor and contents often change together. Use a single update
+    // after the echo and skip background tabs until they are shown again.
+    let w = app.weak();
+    let update = super::once_per_idle(move || {
+        if let Some(a) = w.upgrade() {
+            update(&a, pane);
         }
-    }
+    });
+    let on_change = move |term: &vte4::Terminal| {
+        if term.is_mapped() {
+            update();
+        }
+    };
+    term.connect_cursor_moved(on_change.clone());
+    term.connect_contents_changed(on_change.clone());
+    term.connect_map(on_change);
     // → / End accept the suggestion.
     let keys = gtk4::EventControllerKey::new();
     keys.set_propagation_phase(gtk4::PropagationPhase::Capture);

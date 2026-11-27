@@ -9,6 +9,24 @@
 .pane.focused {
   border-color: alpha(@accent_bg_color, 0.45);
 }
+/* A pane taking focus from a neighbour flashes its rim once, then settles
+   to the normal focused border. */
+.pane.focus-flash {
+  animation: oxi-focus-flash 1500ms ease-out;
+}
+@keyframes oxi-focus-flash {
+  0% { box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.65); }
+  40% { box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.28); }
+  100% { box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0); }
+}
+/* Pane dividers: quiet until hovered, then the accent shows where to drag. */
+.oxishell-root paned > separator {
+  background-color: alpha(currentColor, 0.07);
+  transition: background-color 150ms ease-out;
+}
+.oxishell-root paned > separator:hover {
+  background-color: alpha(@accent_bg_color, 0.55);
+}
 /* Attention ring: an agent or program asked for the user. */
 .pane.attention {
   border-color: #3584e4;
@@ -17,6 +35,58 @@
 
 .sidebar-pane {
   background-color: @sidebar_bg_color;
+}
+.project-files {
+  background-color: @sidebar_bg_color;
+}
+/* Explorer file-type icons (ft-*, see file_icons.rs) and git letters.
+   Colours chosen to read on light and dark themes alike. */
+.project-files .file-icon { color: alpha(currentColor, 0.6); }
+.project-files .file-icon.ft-folder { color: alpha(currentColor, 0.72); }
+.project-files .file-icon.ft-rust { color: #e07a3c; }
+.project-files .file-icon.ft-ts { color: #3b82f6; }
+.project-files .file-icon.ft-js { color: #d4a017; }
+.project-files .file-icon.ft-py { color: #4b8bbe; }
+.project-files .file-icon.ft-go { color: #18a6c9; }
+.project-files .file-icon.ft-code { color: #7c8cde; }
+.project-files .file-icon.ft-web { color: #e4572e; }
+.project-files .file-icon.ft-shell { color: #4caf50; }
+.project-files .file-icon.ft-config { color: #9a7bd1; }
+.project-files .file-icon.ft-doc { color: #6b9bd2; }
+.project-files .file-icon.ft-data { color: #2e9e6b; }
+.project-files .file-icon.ft-image { color: #c062c9; }
+.project-files .file-icon.ft-media { color: #d6577a; }
+.project-files .file-icon.ft-archive { color: #b08850; }
+.project-files .file-icon.ft-lock,
+.project-files .file-icon.ft-dot { color: alpha(currentColor, 0.42); }
+.git-mark {
+  font-family: monospace;
+  font-size: 0.85em;
+  font-weight: 700;
+  margin-right: 4px;
+  min-width: 1em;
+}
+.git-mark.git-modified { color: @warning_color; }
+.git-mark.git-added { color: @success_color; }
+.git-mark.git-deleted { color: @error_color; }
+.git-mark.git-folder { color: alpha(@warning_color, 0.8); }
+.file-diff { font-size: 0.95em; }
+.project-files > box {
+  padding: 2px 6px 0;
+}
+.project-files > box > button {
+  min-width: 26px;
+  padding: 0;
+}
+.project-file-path {
+  font-size: 0.82em;
+  margin: 0 10px 6px;
+}
+.project-files listview {
+  background: transparent;
+}
+.project-files listview row {
+  padding: 3px 8px;
 }
 .sidebar-heading {
   font-size: 0.75em;
@@ -437,6 +507,20 @@
   opacity: 1;
   transform: none;
 }
+/* A newly added row (workspace, session) fades and lifts into place once. */
+.oxi-enter {
+  animation: oxi-enter 150ms ease-out;
+}
+@keyframes oxi-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 .pane.pane-landed {
   animation: oxi-pane-land 380ms ease-out;
 }
@@ -632,6 +716,14 @@ menubutton.island > button > box > arrow {
 }
 .island-dot.present {
   opacity: 0.6;
+}
+/* Pulse only while the window is in front: behind other windows the dot
+   stays steady, so a long agent run in the background costs no frames
+   (about 30% CPU with software rendering). `window-inactive` is set from the
+   window's is-active state; GTK's :backdrop does not stop a running animation. */
+window.window-inactive .island-dot.working,
+window.window-inactive .island-dot.waiting {
+  animation: none;
 }
 @keyframes island-pulse {
   from { opacity: 1; box-shadow: 0 0 0 0 alpha(@accent_color, 0.6); }
