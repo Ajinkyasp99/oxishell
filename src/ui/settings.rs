@@ -62,7 +62,7 @@ pub const SHORTCUT_SECTIONS: &[(&str, &[&str])] = &[
         "Typing and Search",
         &["newline", "newline-alt", "copy", "paste", "search", "command-history"],
     ),
-    ("View", &["toggle-sidebar", "zoom-in", "zoom-out", "zoom-reset"]),
+    ("View", &["toggle-sidebar", "explore-project", "zoom-in", "zoom-out", "zoom-reset"]),
     ("App", &["command-palette", "jump-unread", "notifications", "settings"]),
 ];
 
@@ -363,7 +363,24 @@ fn terminal_page(app: &AppRc, cfg: &Config, ap: &Ap) -> adw::PreferencesPage {
     let editor = group(
         &p,
         "Editor",
-        "Opens file:line links such as src/main.rs:42. Leave empty to use $VISUAL, $EDITOR or an installed editor (VS Code, Zed, …).",
+        "Edit files beside the terminal. The external editor command defaults to $VISUAL, $EDITOR, or an installed editor.",
+    );
+    switch(
+        &editor,
+        ap,
+        "Autosave files",
+        "Save after a pause in typing or when you leave the file editor",
+        cfg.editor.autosave,
+        |c, v| c.editor.autosave = v,
+    );
+    spin(
+        &editor,
+        ap,
+        "Autosave delay (ms)",
+        "How long to wait after your last edit",
+        (250.0, 10_000.0, 250.0),
+        cfg.editor.autosave_delay_ms.clamp(250, 10_000) as f64,
+        |c, v| c.editor.autosave_delay_ms = v as u64,
     );
     let editor_cmd = adw::EntryRow::builder()
         .title("Editor command")

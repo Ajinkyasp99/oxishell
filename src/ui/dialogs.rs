@@ -10,7 +10,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::rc::Rc;
 
-pub fn confirm(app: &AppRc, heading: &str, body: &str, verb: &str, on_yes: impl Fn() + 'static) {
+pub fn confirm(app: &AppRc, heading: &str, body: &str, verb: &str, on_yes: impl Fn() + 'static) -> adw::AlertDialog {
     let d = adw::AlertDialog::new(Some(heading), Some(body));
     d.add_response("cancel", "Cancel");
     d.add_response("yes", verb);
@@ -23,6 +23,7 @@ pub fn confirm(app: &AppRc, heading: &str, body: &str, verb: &str, on_yes: impl 
         }
     });
     d.present(Some(&app.window));
+    d
 }
 
 pub fn rename_workspace(app: &AppRc, wid: WorkspaceId) {

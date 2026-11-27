@@ -39,8 +39,8 @@ which agent is active and, when supported by its hooks, whether it is running, w
   highlights, workspace badges, and desktop notifications. Codex and Claude Code can also show local
   usage limits. See [supported agents](#supported-ai-coding-agents).
 - **Terminal workflow.** Search command history and scrollback, accept inline suggestions, inspect command
-  blocks with exit status and duration, and open URLs or `file:line` locations. Context chips show the
-  active directory, Git branch, and Python environment when available.
+  blocks with exit status and duration, open web links, and [preview files beside the terminal](#project-explorer-and-file-previews).
+  Context chips show the active directory, Git branch, and Python environment when available.
 - **Appearance and navigation.** Pick from 41 bundled Warp themes, import a theme, adjust the font or
   cursor, and remap shortcuts. The command palette searches actions, workspaces, themes, and custom commands.
 - **Local developer tools.** Start a Compose stack from the [launcher](#docker-compose-launcher), inspect
@@ -138,6 +138,22 @@ workspace on API tests and another on a Codex task, then jump back when Codex as
 <summary>Notifications panel screenshot</summary>
 <p><a href="docs/assets/notifications.png"><img src="docs/assets/notifications.png" width="720" alt="OxiShell Notifications panel with a Claude Code request for input and a completed build"></a></p>
 </details>
+
+### Project Explorer and file previews
+
+- Click a local file path in terminal output and choose **Edit File** to start editing at the referenced location.
+  The link menu also offers **Preview**, **Open in External Editor**, and **Copy Path**.
+  Ctrl-click on Linux or Cmd-click on macOS opens the preview directly. Use **Edit** in the preview to start editing.
+- Select the folder button in the header or choose **Explore Project** from the main menu or command palette.
+  Expand folders from the focused terminal's Git worktree root, or from its current folder outside Git.
+  Opening a text file brings up the editor beside the terminal. **Back to Project** returns to your place in the tree. Use
+  **Refresh Project** to pick up files added or removed on disk.
+- The editor supports UTF-8 files up to 1 MiB. Autosave writes after one second of inactivity or when
+  you leave the editor. Choose **Settings → Terminal → Editor** to change the delay or turn autosave off.
+  **Save**, Ctrl+S on Linux, and Cmd+S on macOS still save immediately.
+- When another program changes the file, a clean editor refreshes. An editor with a draft pauses
+  autosave and keeps your edits. **Reload from Disk** reads the latest version after confirming any discard.
+- For binaries, images, and larger files, use **Open with Default App** in the preview header.
 
 ### Docker Compose launcher
 

@@ -128,13 +128,32 @@ pub struct Updates {
     pub check: bool,
 }
 
-/// Editor used for `path:line` links in terminal output.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// Settings for the file panel and external editor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Editor {
     /// Program and arguments, e.g. "code" or "nvim". Empty = `$VISUAL`,
     /// `$EDITOR`, then the first installed graphical editor.
     pub command: String,
+    pub autosave: bool,
+    pub autosave_delay_ms: u64,
+}
+
+impl Default for Editor {
+    fn default() -> Self {
+        Self {
+            command: String::new(),
+            autosave: true,
+            autosave_delay_ms: 1000,
+        }
+    }
+}
+
+impl Editor {
+    pub fn autosave_delay(&self) -> Option<std::time::Duration> {
+        self.autosave
+            .then(|| std::time::Duration::from_millis(self.autosave_delay_ms.clamp(250, 10_000)))
+    }
 }
 
 /// Docker Compose launcher: a pane button that lists the repo's compose files.
@@ -267,6 +286,7 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("command-history", "<Ctrl><Shift>h", "Search command history"),
     ("settings", "<Ctrl>comma", "Settings"),
     ("compose-files", "<Ctrl><Shift>l", "Docker Compose files"),
+    ("explore-project", "", "Explore Project"),
     ("new-tab", "<Ctrl><Shift>t", "New tab"),
     ("next-tab", "<Ctrl>Tab", "Next tab"),
     ("prev-tab", "<Ctrl><Shift>Tab", "Previous tab"),
@@ -303,6 +323,7 @@ pub const DEFAULT_SHORTCUTS: &[(&str, &str, &str)] = &[
     ("command-history", "<Meta><Shift>h", "Search command history"),
     ("settings", "<Meta>comma", "Settings"),
     ("compose-files", "<Meta><Shift>l", "Docker Compose files"),
+    ("explore-project", "", "Explore Project"),
     ("new-tab", "<Meta><Shift>t", "New tab"),
     ("next-tab", "<Ctrl>Tab", "Next tab"),
     ("prev-tab", "<Ctrl><Shift>Tab", "Previous tab"),
@@ -524,14 +545,27 @@ mod tests {
     }
 
     #[test]
-    fn every_action_has_a_unique_default_on_this_platform() {
+    fn default_shortcuts_are_unique_and_project_explorer_is_unbound() {
         let mut seen = std::collections::HashSet::new();
         for (action, accel, _) in DEFAULT_SHORTCUTS {
+            if *action == "explore-project" {
+                assert!(accel.is_empty(), "Project Explorer is unbound by default");
+                continue;
+            }
             assert!(!accel.is_empty(), "{action}");
             assert!(seen.insert(accel.to_lowercase()), "{accel} bound twice");
         }
         assert_eq!(default_shortcut("command-palette"), DEFAULT_SHORTCUTS[17].1);
         assert!(with_shortcut("Split right", "split-right").starts_with("Split right ("));
+    }
+
+    #[test]
+    fn project_explorer_can_get_a_custom_shortcut() {
+        let cfg = Config::parse("[shortcuts]\nexplore-project = \"<Ctrl><Shift>F9\"").unwrap();
+        assert!(cfg
+            .effective_shortcuts()
+            .contains(&("explore-project".into(), "<Ctrl><Shift>F9".into())));
+        assert!(cfg.shortcut_conflicts().is_empty());
     }
 
     #[test]
@@ -549,6 +583,18 @@ mod tests {
         let c = Config::parse("[editor]\ncommand = \"code --new-window\"\n").unwrap();
         assert_eq!(c.editor.command, "code --new-window");
         assert!(Config::parse("[editor]\ncomand = \"zed\"").is_err());
+    }
+
+    #[test]
+    fn editor_autosave_is_enabled_by_default_and_delay_is_bounded() {
+        use std::time::Duration;
+        assert_eq!(Config::default().editor.autosave_delay(), Some(Duration::from_secs(1)));
+        for (configured, expected) in [(0, 250), (750, 750), (25_000, 10_000)] {
+            let cfg = Config::parse(&format!("[editor]\nautosave_delay_ms = {configured}")).unwrap();
+            assert_eq!(cfg.editor.autosave_delay(), Some(Duration::from_millis(expected)));
+        }
+        let cfg = Config::parse("[editor]\nautosave = false").unwrap();
+        assert_eq!(cfg.editor.autosave_delay(), None);
     }
 
     #[test]

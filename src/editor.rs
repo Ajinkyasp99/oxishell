@@ -63,8 +63,16 @@ fn program_name(editor: &str) -> &str {
 /// Command line that opens `file` at `line`/`col` with `editor` (a program
 /// name, optionally followed by arguments, e.g. `code --new-window`).
 pub fn editor_argv(editor: &str, file: &Path, line: u32, col: Option<u32>) -> Vec<String> {
+    editor_argv_at(editor, file, Some((line, col)))
+}
+
+pub(crate) fn editor_argv_at(editor: &str, file: &Path, location: Option<(u32, Option<u32>)>) -> Vec<String> {
     let mut argv: Vec<String> = editor.split_whitespace().map(String::from).collect();
     let f = file.display().to_string();
+    let Some((line, col)) = location else {
+        argv.push(f);
+        return argv;
+    };
     let pos = match col {
         Some(c) => format!("{f}:{line}:{c}"),
         None => format!("{f}:{line}"),
@@ -184,6 +192,8 @@ mod tests {
     #[test]
     fn builds_editor_commands_with_line_syntax() {
         let f = Path::new("/p/a.rs");
+        assert_eq!(editor_argv_at("code --new-window", f, None), ["code", "--new-window", "/p/a.rs"]);
+        assert_eq!(editor_argv_at("vim", f, None), ["vim", "/p/a.rs"]);
         assert_eq!(editor_argv("code", f, 12, Some(3)), ["code", "-g", "/p/a.rs:12:3"]);
         assert_eq!(
             editor_argv("code --new-window", f, 12, None),

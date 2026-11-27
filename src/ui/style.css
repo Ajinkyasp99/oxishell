@@ -18,6 +18,26 @@
 .sidebar-pane {
   background-color: @sidebar_bg_color;
 }
+.project-files {
+  background-color: @sidebar_bg_color;
+}
+.project-files > box {
+  padding: 2px 6px 0;
+}
+.project-files > box > button {
+  min-width: 26px;
+  padding: 0;
+}
+.project-file-path {
+  font-size: 0.82em;
+  margin: 0 10px 6px;
+}
+.project-files listview {
+  background: transparent;
+}
+.project-files listview row {
+  padding: 3px 8px;
+}
 .sidebar-heading {
   font-size: 0.75em;
   font-weight: 800;

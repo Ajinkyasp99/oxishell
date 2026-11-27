@@ -39,9 +39,12 @@ command_min_seconds = 10 # ... that ran at least this long
 usage_alerts = true      # notify once when Codex/Claude Code passes 80% and 95% of a 5-hour or weekly limit
 
 [editor]
-command = ""             # opens file:line links (src/main.rs:42) from terminal output, e.g. "code" or "nvim".
+autosave = true          # Save after a pause in typing or when you leave the file editor.
+autosave_delay_ms = 1000 # Time after the last edit, limited to 250–10,000 ms.
+command = ""             # used by Open in External Editor for terminal file links.
                          # Empty = $VISUAL, then $EDITOR, then the first of code, zed, codium, subl, kate,
                          # gnome-text-editor, gedit that is installed. Terminal editors open in a new pane.
+                         # Ctrl-click (Cmd-click on macOS) opens the built-in preview.
 
 [session]
 restore = true           # restore workspaces, layouts and directories on start

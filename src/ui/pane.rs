@@ -335,6 +335,7 @@ impl App {
             .hexpand(true)
             .vexpand(true)
             .build();
+        super::scroll::attach_history(&term, &scroll);
         super::zoom::attach_scroll(self, &scroll);
 
         let entry = gtk4::SearchEntry::builder()

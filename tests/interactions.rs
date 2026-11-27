@@ -6,7 +6,7 @@ use gtk4::{gio, glib};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use oxishell::ui::{App, AppRc};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
@@ -250,18 +250,56 @@ fn scrollback_uses_pixels_and_preserves_terminal_app_wheel_input() {
         let bottom = adjustment.upper() - adjustment.page_size();
         adjustment.set_value(bottom);
         pump(50);
-        xdo(&["click", "4"]);
-        pump(150);
-        let distance = bottom - adjustment.value();
+        let animated = Rc::new(Cell::new(false));
+        let intermediate = animated.clone();
         let expected = adjustment.page_size().powf(2.0 / 3.0);
+        let scroll = adjustment.connect_value_changed(move |adj| {
+            let moved = bottom - adj.value();
+            if moved > 1.0 && moved < expected - 1.0 {
+                intermediate.set(true);
+            }
+        });
+        xdo(&["click", "4"]);
+        pump(220);
+        adjustment.disconnect(scroll);
+        let distance = bottom - adjustment.value();
+        assert!(animated.get(), "a wheel step should move the viewport over multiple frames");
         assert!(
             (distance - expected).abs() < 1.0,
             "wheel moved {distance}, expected GTK pixel step {expected}"
         );
         assert!((adjustment.page_size() / term.row_count() as f64 - term.char_height() as f64).abs() < 1.0);
         xdo(&["click", "5"]);
-        pump(150);
+        pump(220);
         assert!((adjustment.value() - bottom).abs() < 1.0, "reverse scroll must return to bottom");
+
+        xdo(&["click", "--repeat", "3", "--delay", "0", "4"]);
+        pump(220);
+        assert!(
+            (adjustment.value() - (bottom - 3.0 * expected)).abs() < 1.0,
+            "quick wheel steps must accumulate"
+        );
+        let pinned = adjustment.value();
+        term.feed(b"MORE-OUTPUT\r\n");
+        pump(120);
+        assert!((adjustment.value() - pinned).abs() < 1.0, "output must preserve the reader's position");
+        xdo(&["key", "a"]);
+        pump(100);
+        let bottom = adjustment.upper() - adjustment.page_size();
+        assert!((adjustment.value() - bottom).abs() < 1.0, "typing must return to the live prompt");
+
+        let settings = term.settings();
+        let wheel_updates = Rc::new(Cell::new(0));
+        let updates = wheel_updates.clone();
+        let scroll = adjustment.connect_value_changed(move |_| updates.set(updates.get() + 1));
+        let animations = settings.is_gtk_enable_animations();
+        settings.set_gtk_enable_animations(false);
+        xdo(&["click", "4"]);
+        pump(150);
+        settings.set_gtk_enable_animations(animations);
+        adjustment.disconnect(scroll);
+        assert_eq!(wheel_updates.get(), 1, "reduced motion should scroll in one adjustment");
+        assert!((adjustment.value() - (bottom - expected)).abs() < 1.0);
 
         // Sub-line movement must survive the shared adjustment.
         adjustment.set_value(bottom - 0.5 * term.char_height() as f64);
@@ -289,6 +327,87 @@ fn scrollback_uses_pixels_and_preserves_terminal_app_wheel_input() {
             "alternate screen must retain arrow-key fallback: {committed:?}"
         );
         term.feed(b"\x1b[?1049l");
+    });
+}
+
+#[test]
+fn wheel_can_leave_the_live_view_while_output_is_streaming() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("scroll-stream");
+        let term = h.app.inner.borrow().panes.values().next().unwrap().term.clone();
+        term.feed("Startup output\r\n".repeat(500).as_bytes());
+        pump(150);
+        h.point(&term);
+        let adj = term.vadjustment().unwrap();
+        let step = adj.page_size().powf(2.0 / 3.0);
+        let output = term.clone();
+        let producer = glib::timeout_add_local(Duration::from_millis(3), move || {
+            output.feed(b"Streaming output\r\n");
+            glib::ControlFlow::Continue
+        });
+        let mut distances = Vec::new();
+        for _ in 0..3 {
+            adj.set_value(adj.upper() - adj.page_size());
+            pump(50);
+            xdo(&["click", "--delay", "0", "4"]);
+            pump(220);
+            distances.push(adj.upper() - adj.page_size() - adj.value());
+        }
+        producer.remove();
+        assert!(
+            distances.iter().all(|distance| *distance >= step - 1.0),
+            "each wheel step must leave the live view even during output: {distances:?}"
+        );
+    });
+}
+
+#[test]
+fn terminal_suggestions_batch_signals_and_refresh_when_revealed() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::with_history("suggest-batch", &["echo suggestions-work"]);
+        let pane = h.app.focused_pane().unwrap();
+        let (term, ghost, tab) = {
+            let mut i = h.app.inner.borrow_mut();
+            i.config.terminal.suggestions = true;
+            let p = &i.panes[&pane];
+            (p.term.clone(), p.suggest.ghost.clone(), i.state.active_workspace().unwrap().tab().id)
+        };
+        xdo(&["type", "echo sugg"]);
+        pump(250);
+        assert!(ghost.is_visible(), "typing must show the history suggestion");
+        assert_eq!(ghost.label(), "estions-work");
+
+        let updates = Rc::new(Cell::new(0));
+        let seen = updates.clone();
+        ghost.connect_attributes_notify(move |_| seen.set(seen.get() + 1));
+        for _ in 0..8 {
+            term.emit_by_name::<()>("contents-changed", &[]);
+            term.emit_by_name::<()>("cursor-moved", &[]);
+        }
+        pump(80);
+        assert_eq!(updates.get(), 1, "one terminal signal burst must render one suggestion");
+
+        h.app.new_tab(None, None).unwrap();
+        pump(200);
+        assert!(!term.is_mapped());
+        updates.set(0);
+        term.emit_by_name::<()>("contents-changed", &[]);
+        pump(80);
+        assert_eq!(updates.get(), 0, "hidden terminal output must skip suggestion rendering");
+        h.app.select_tab(tab).unwrap();
+        pump(150);
+        assert!(ghost.is_visible());
+        assert!(updates.get() > 0, "revealing the tab must refresh its suggestion");
+        xdo(&["key", "Right"]);
+        pump(100);
+        let i = h.app.inner.borrow();
+        assert_eq!(i.panes[&pane].suggest.tracker.borrow().line, "echo suggestions-work");
     });
 }
 
@@ -727,7 +846,7 @@ fn cell(term: &vte4::Terminal, col: usize, row: usize) -> (f64, f64) {
 }
 
 #[test]
-fn file_line_references_are_links_that_open_the_editor() {
+fn project_file_links_preview_at_the_location_beside_the_terminal() {
     if !have_input() {
         return;
     }
@@ -735,27 +854,28 @@ fn file_line_references_are_links_that_open_the_editor() {
         let h = Harness::new("file-links");
         // The file the compiler talks about.
         std::fs::create_dir_all(h.root.join("home/src")).unwrap();
-        std::fs::write(h.root.join("home/src/model.rs"), "fn main() {}\n").unwrap();
-        // A stand-in for VS Code that records how it was called.
-        let bin = h.root.join("bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let record = h.root.join("editor-args");
-        let code = bin.join("code");
-        std::fs::write(&code, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", record.display())).unwrap();
-        std::fs::set_permissions(&code, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-        h.app.inner.borrow_mut().config.editor.command = code.display().to_string();
+        std::fs::write(h.root.join("home/src/model.rs"), "fn main() {\n  println!(\"agent\");\n}\n").unwrap();
+        std::fs::write(h.root.join("home/README"), "readme\n").unwrap();
+        let quoted = h.root.join("home/src/log file");
+        std::fs::write(&quoted, "first\nsecond\n").unwrap();
+        let file_uri = glib::filename_to_uri(&quoted, None).unwrap();
 
         // A workspace whose pane runs in that folder.
-        let (_, pane) = h.app.new_workspace(Some("proj"), Some(h.root.join("home"))).unwrap();
+        let (wid, pane) = h.app.new_workspace(Some("proj"), Some(h.root.join("home"))).unwrap();
         let term = h.app.inner.borrow().panes[&pane].term.clone();
         pump(1500);
         term.feed(
-            concat!(
-                "\x1b[2J\x1b[H",
-                "  --> src/model.rs:230:9\r\n",
-                "time 12:30:45 ip 10.0.0.1:8080\r\n",
-                "  File \"app/main.py\", line 12, in <module>\r\n",
-                "see https://example.com/a.rs:12\r\n",
+            format!(
+                concat!(
+                    "\x1b[2J\x1b[H",
+                    "  --> src/model.rs:2:3-3:1\r\n",
+                    "time 12:30:45 ip 10.0.0.1:8080\r\n",
+                    "  File \"app/main.py\", line 12, in <module>\r\n",
+                    "see https://example.com/a.rs:12\r\n",
+                    "See README and `src/log file`\r\n",
+                    "\x1b]8;;{}#L2C2\x07OSC file\x1b]8;;\x07\r\n",
+                ),
+                file_uri
             )
             .as_bytes(),
         );
@@ -765,35 +885,91 @@ fn file_line_references_are_links_that_open_the_editor() {
             let (x, y) = cell(&term, col, row);
             term.check_match_at(x, y).0.map(|s| s.to_string())
         };
-        assert_eq!(at(10, 0).as_deref(), Some("src/model.rs:230:9"));
+        assert_eq!(at(10, 0).as_deref(), Some("src/model.rs:2:3-3:1"));
         assert_eq!(at(7, 1), None, "a clock time is not a file reference");
         assert_eq!(at(20, 1), None, "an IP address and port is not a file reference");
         assert_eq!(at(8, 2).as_deref(), Some("File \"app/main.py\", line 12"));
         assert_eq!(at(10, 3).as_deref(), Some("https://example.com/a.rs:12"), "URLs stay URLs");
 
-        // Ctrl+click opens the editor at the line and column.
-        let (x, y) = cell(&term, 10, 0);
-        let p = term
-            .compute_point(&h.app.window, &gtk4::graphene::Point::new(x as f32, y as f32))
+        assert_eq!(at(5, 4).as_deref(), Some("README"));
+        assert_eq!(at(19, 4).as_deref(), Some("`src/log file`"));
+
+        let page = h.app.stack.visible_child().unwrap();
+        let view = named_widget(&page, "file-preview-text").downcast::<gtk4::TextView>().unwrap();
+        move_to_cell(&h, &term, 7, 0);
+        xdo(&["mousedown", "1"]);
+        move_to_cell(&h, &term, 19, 0);
+        xdo(&["mouseup", "1"]);
+        pump(150);
+        assert!(term.has_selection());
+        assert!(!view.is_mapped(), "dragging across a file link selects terminal text");
+        term.unselect_all();
+
+        click_cell(&h, &term, 10, 0, 1, true);
+        assert!(wait_until(&|| view.is_mapped(), 3));
+        assert!(!view.is_editable());
+        assert!(preview_text(&view).contains("println!"));
+        let buffer = view.buffer();
+        let cursor = buffer.iter_at_mark(&buffer.get_insert());
+        assert_eq!((cursor.line(), cursor.line_offset()), (1, 2));
+        assert_eq!(h.app.inner.borrow().state.workspace(wid).unwrap().panes(), [pane]);
+        assert!(term.is_mapped());
+        assert!(term.has_focus());
+
+        // Resizing the VTE grid can reflow the scrollback, so locate the remaining
+        // references on the resized grid before clicking them.
+        let find_match = |ref_text| {
+            (0..term.row_count() as usize)
+                .flat_map(|row| (0..term.column_count() as usize).map(move |col| (col, row)))
+                .find(|&(col, row)| at(col, row).as_deref() == Some(ref_text))
+                .unwrap_or_else(|| panic!("{ref_text:?} missing on resized terminal ({} columns)", term.column_count()))
+        };
+        let (col, row) = find_match("README");
+        click_cell(&h, &term, col + 1, row, 1, true);
+        assert!(wait_until(&|| preview_text(&view) == "readme\n", 3), "{}", preview_text(&view));
+        let (col, row) = find_match("`src/log file`");
+        click_cell(&h, &term, col + 1, row, 1, true);
+        assert!(wait_until(&|| preview_text(&view) == "first\nsecond\n", 3));
+        let (col, row) = (0..term.row_count() as usize)
+            .flat_map(|row| (0..term.column_count() as usize).map(move |col| (col, row)))
+            .find(|&(col, row)| {
+                let (x, y) = cell(&term, col, row);
+                term.check_hyperlink_at(x, y).is_some_and(|uri| uri.starts_with(file_uri.as_str()))
+            })
+            .expect("OSC 8 file target on resized terminal");
+        let (x, y) = cell(&term, col + 4, row);
+        assert_eq!(term.check_hyperlink_at(x, y).as_deref(), Some(format!("{file_uri}#L2C2").as_str()));
+        let pop = open_link_popover(&h, &term, col + 4, row);
+        let labels = label_texts(&pop);
+        assert!(
+            labels.iter().any(|label| label == &format!("{}:2:2", quoted.display())),
+            "{labels:?}"
+        );
+        let preview = widgets(&pop)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk4::Button>().ok())
+            .find(|b| b.action_name().as_deref() == Some("link.open"))
             .unwrap();
-        xdo(&[
-            "mousemove",
-            "--window",
-            &h.window,
-            &(p.x() as i32).to_string(),
-            &(p.y() as i32).to_string(),
-        ]);
-        pump(50);
-        xdo(&["keydown", "ctrl"]);
-        xdo(&["click", "1"]);
-        xdo(&["keyup", "ctrl"]);
-        let until = Instant::now() + Duration::from_secs(5);
-        while !record.exists() && Instant::now() < until {
-            pump(50);
-        }
-        let args = std::fs::read_to_string(&record).expect("the editor was started");
-        let file = h.root.join("home/src/model.rs");
-        assert_eq!(args, format!("-g\n{}:230:9\n", file.display()));
+        preview.emit_clicked();
+        assert!(
+            wait_until(
+                &|| {
+                    let cursor = buffer.iter_at_mark(&buffer.get_insert());
+                    (cursor.line(), cursor.line_offset()) == (1, 1)
+                },
+                3
+            ),
+            "cursor at {}, {}",
+            buffer.iter_at_mark(&buffer.get_insert()).line(),
+            buffer.iter_at_mark(&buffer.get_insert()).line_offset()
+        );
+
+        let edit = named_widget(&page, "project-editor").downcast::<gtk4::Button>().unwrap();
+        assert_eq!(edit.label().as_deref(), Some("Edit"));
+        click_widget(&h, &edit);
+        assert!(view.is_editable() && view.has_focus());
+        click_widget(&h, &named_widget(&page, "project-close"));
+        assert!(wait_until(&|| term.has_focus() && !view.is_mapped(), 3));
     });
 }
 
@@ -1065,6 +1241,18 @@ fn widgets(root: &impl IsA<gtk4::Widget>) -> Vec<gtk4::Widget> {
     out
 }
 
+fn named_widget(root: &impl IsA<gtk4::Widget>, name: &str) -> gtk4::Widget {
+    widgets(root)
+        .into_iter()
+        .find(|w| w.widget_name() == name)
+        .unwrap_or_else(|| panic!("missing {name}"))
+}
+
+fn preview_text(view: &gtk4::TextView) -> glib::GString {
+    let buffer = view.buffer();
+    buffer.text(&buffer.start_iter(), &buffer.end_iter(), false)
+}
+
 /// Text of every visible label below `root`.
 fn label_texts(root: &impl IsA<gtk4::Widget>) -> Vec<String> {
     widgets(root)
@@ -1085,8 +1273,7 @@ fn fake_program(h: &Harness, name: &str, record: &std::path::Path) -> PathBuf {
     path
 }
 
-/// Real click with `button` on terminal cell (`col`, `row`), optionally holding Ctrl.
-fn click_cell(h: &Harness, term: &vte4::Terminal, col: usize, row: usize, button: u32, ctrl: bool) {
+fn move_to_cell(h: &Harness, term: &vte4::Terminal, col: usize, row: usize) {
     let (x, y) = cell(term, col, row);
     let p = term
         .compute_point(&h.app.window, &gtk4::graphene::Point::new(x as f32, y as f32))
@@ -1099,6 +1286,11 @@ fn click_cell(h: &Harness, term: &vte4::Terminal, col: usize, row: usize, button
         &(p.y() as i32).to_string(),
     ]);
     pump(60);
+}
+
+/// Real click with `button` on terminal cell (`col`, `row`), optionally holding Ctrl.
+fn click_cell(h: &Harness, term: &vte4::Terminal, col: usize, row: usize, button: u32, ctrl: bool) {
+    move_to_cell(h, term, col, row);
     if ctrl {
         xdo(&["keydown", "ctrl"]);
     }
@@ -1148,6 +1340,295 @@ fn wait_until(f: &dyn Fn() -> bool, secs: u64) -> bool {
 }
 
 #[test]
+fn project_editor_autosaves_and_preserves_external_edits() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("project-autosave");
+        let repo = h.root.join("project");
+        std::fs::create_dir(&repo).unwrap();
+        let file = repo.join("main.rs");
+        let second = repo.join("notes.txt");
+        std::fs::write(&file, "initial\n").unwrap();
+        std::fs::write(&second, "notes\n").unwrap();
+        let (_, pane) = h.app.new_workspace(Some("autosave"), Some(repo)).unwrap();
+        let page = h.app.stack.visible_child().unwrap();
+        let tree = named_widget(&page, "project-tree").downcast::<gtk4::ListView>().unwrap();
+        let text = named_widget(&page, "file-preview-text").downcast::<gtk4::TextView>().unwrap();
+        h.app.run_action("explore-project");
+        assert!(wait_until(&|| label_texts(&tree).iter().any(|l| l == "main.rs"), 3));
+        tree.emit_by_name::<()>("activate", &[&0u32]);
+        assert!(wait_until(&|| text.is_editable() && text.has_focus(), 3));
+        let buffer = text.buffer();
+        buffer.insert_at_cursor("first ");
+        pump(400);
+        buffer.insert_at_cursor("second ");
+        pump(700);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "initial\n", "typing resets the idle timer");
+        assert!(wait_until(
+            &|| !buffer.is_modified() && std::fs::read_to_string(&file).unwrap() == "first second initial\n",
+            3
+        ));
+
+        buffer.insert_at_cursor("blur ");
+        h.app.focus_pane(pane);
+        pump(400);
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "first second blur initial\n",
+            "focus loss flushes before the idle deadline"
+        );
+
+        std::fs::write(&file, "agent edit\n").unwrap();
+        assert!(wait_until(&|| preview_text(&text) == "agent edit\n", 3));
+        text.grab_focus();
+        buffer.insert_at_cursor("draft");
+        std::fs::write(&file, "newer agent edit\n").unwrap();
+        let status = named_widget(&page, "project-edit-status").downcast::<gtk4::Label>().unwrap();
+        assert!(wait_until(&|| status.label().contains("changed on disk"), 3));
+        pump(1100);
+        assert!(buffer.is_modified() && preview_text(&text).contains("draft"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "newer agent edit\n");
+        h.app.run_action("explore-project");
+        assert!(text.is_mapped(), "a conflict keeps the draft open");
+
+        click_widget(&h, &named_widget(&page, "project-reload"));
+        let dialog = h.app.window.visible_dialog().unwrap();
+        let discard = widgets(&dialog)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk4::Button>().ok())
+            .find(|b| b.label().as_deref() == Some("Discard and Reload"))
+            .unwrap();
+        click_widget(&h, &discard);
+        assert!(wait_until(
+            &|| h.app.window.visible_dialog().is_none() && text.is_editable() && preview_text(&text) == "newer agent edit\n",
+            3
+        ));
+
+        buffer.insert_at_cursor("before ");
+        named_widget(&page, "project-save")
+            .downcast::<gtk4::Button>()
+            .unwrap()
+            .emit_clicked();
+        // This edit lands after the first snapshot was taken.
+        buffer.insert_at_cursor("back ");
+        h.app.run_action("explore-project");
+        assert!(wait_until(&|| tree.is_mapped(), 3));
+        assert!(std::fs::read_to_string(&file).unwrap().contains("before back "));
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "notes\n");
+
+        tree.emit_by_name::<()>("activate", &[&1u32]);
+        assert!(wait_until(&|| text.is_editable() && preview_text(&text) == "notes\n", 3));
+        buffer.insert_at_cursor("before close ");
+        h.app.window.close();
+        assert!(wait_until(&|| !h.app.window.is_mapped(), 3));
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "before close notes\n");
+    });
+}
+
+#[test]
+fn project_explorer_edits_and_saves_beside_the_running_terminal() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("project-edit");
+        let repo = h.root.join("project");
+        std::fs::create_dir(&repo).unwrap();
+        let file = repo.join("main.rs");
+        std::fs::write(&file, "fn main() {}\n").unwrap();
+        let external_log = h.root.join("external-editor");
+        let external = fake_program(&h, "code", &external_log);
+        {
+            let mut i = h.app.inner.borrow_mut();
+            i.config.editor.command = external.display().to_string();
+            i.config.editor.autosave = false;
+        }
+        let (wid, pane) = h.app.new_workspace(Some("edit"), Some(repo)).unwrap();
+        let page = h.app.stack.visible_child().unwrap();
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        let tree = named_widget(&page, "project-tree").downcast::<gtk4::ListView>().unwrap();
+        let text = named_widget(&page, "file-preview-text").downcast::<gtk4::TextView>().unwrap();
+        h.app.run_action("explore-project");
+        assert!(wait_until(&|| label_texts(&tree).iter().any(|t| t == "main.rs"), 3));
+        let file_row = widgets(&tree)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk4::Label>().ok())
+            .find(|label| label.label() == "main.rs")
+            .unwrap();
+        click_widget(&h, &file_row);
+        assert!(wait_until(&|| text.is_mapped() && preview_text(&text) == "fn main() {}\n", 3));
+        assert!(wait_until(&|| text.is_editable() && text.has_focus(), 2), "opening a file from Explorer must focus the in-app editor");
+        assert!(!external_log.exists(), "the configured external editor must stay closed");
+        xdo(&["key", "ctrl+End"]);
+        xdo(&["type", "// edited here"]);
+        pump(1200);
+        assert!(text.buffer().is_modified());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "fn main() {}\n");
+        xdo(&["key", "ctrl+s"]);
+        assert!(wait_until(&|| {
+            !text.buffer().is_modified() && std::fs::read_to_string(&file).unwrap().ends_with("// edited here")
+        }, 3));
+        assert!(term.is_mapped());
+        assert_eq!(h.app.inner.borrow().state.workspace(wid).unwrap().panes(), [pane]);
+
+        // Simulate a coding agent writing the file while the editor has it open.
+        xdo(&["type", " and a draft"]);
+        pump(100);
+        std::fs::write(&file, "// agent edit\n").unwrap();
+        click_widget(&h, &named_widget(&page, "project-save"));
+        let status = named_widget(&page, "project-edit-status").downcast::<gtk4::Label>().unwrap();
+        assert!(wait_until(&|| status.label().contains("changed on disk"), 3));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "// agent edit\n");
+        assert!(preview_text(&text).ends_with(" and a draft"));
+
+        click_widget(&h, &named_widget(&page, "project-back"));
+        assert!(text.is_mapped() && text.buffer().is_modified());
+        assert!(h.app.close_pane(pane, true, false).is_err());
+        assert!(h.app.close_workspace(wid, true, false).is_err());
+        h.app.window.close();
+        assert!(h.app.window.is_mapped());
+
+        let reload = named_widget(&page, "project-reload");
+        click_widget(&h, &reload);
+        let dialog = h.app.window.visible_dialog().unwrap().downcast::<adw::AlertDialog>().unwrap();
+        let discard = widgets(&dialog)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk4::Button>().ok())
+            .find(|b| b.label().as_deref() == Some("Discard and Reload"))
+            .unwrap();
+        click_widget(&h, &discard);
+        assert!(wait_until(&|| h.app.window.visible_dialog().is_none(), 3));
+        assert!(wait_until(&|| !text.buffer().is_modified() && preview_text(&text) == "// agent edit\n", 3));
+        assert!(text.is_editable());
+
+        click_widget(&h, &named_widget(&page, "project-close"));
+        assert!(wait_until(&|| term.has_focus(), 3));
+        term.feed(b"\x1b[2J\x1b[H  --> main.rs:1:4\r\n");
+        pump(300);
+        let pop = open_link_popover(&h, &term, 9, 0);
+        let edit = widgets(&pop)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk4::Button>().ok())
+            .find(|b| b.action_name().as_deref() == Some("link.edit"))
+            .unwrap();
+        edit.emit_clicked();
+        assert!(wait_until(&|| text.is_mapped() && text.is_editable() && text.has_focus(), 3));
+        let buffer = text.buffer();
+        assert_eq!(buffer.iter_at_mark(&buffer.get_insert()).line_offset(), 3);
+        xdo(&["type", "accepted "]);
+        xdo(&["key", "ctrl+s"]);
+        assert!(wait_until(&|| {
+            !buffer.is_modified() && std::fs::read_to_string(&file).unwrap() == "// accepted agent edit\n"
+        }, 3));
+        assert!(!external_log.exists());
+    });
+}
+
+#[test]
+fn project_explorer_browses_and_previews_with_workspace_local_state() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("project-tree");
+        let repo = h.root.join("home/project");
+        let src = repo.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo)
+            .status()
+            .unwrap()
+            .success());
+        std::os::unix::fs::symlink(&repo, repo.join("linked")).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".ignored\n").unwrap();
+        std::fs::write(repo.join(".ignored"), "ignored\n").unwrap();
+        std::fs::write(src.join("binary"), b"\xff\0").unwrap();
+        std::fs::write(src.join("large"), vec![b'a'; 1024 * 1024 + 1]).unwrap();
+        for i in 0..40 {
+            std::fs::write(src.join(format!("row-{i:02}")), format!("file {i}\n")).unwrap();
+        }
+
+        let (workspace, pane) = h.app.new_workspace(Some("project"), Some(src.clone())).unwrap();
+        let page = h.app.stack.visible_child().unwrap();
+        let list = named_widget(&page, "project-tree").downcast::<gtk4::ListView>().unwrap();
+        let selection = list.model().and_downcast::<gtk4::SingleSelection>().unwrap();
+        let tree = selection.model().and_downcast::<gtk4::TreeListModel>().unwrap();
+        let view = named_widget(&page, "file-preview-text").downcast::<gtk4::TextView>().unwrap();
+        let status = named_widget(&page, "file-preview-status").downcast::<gtk4::Label>().unwrap();
+        let back = named_widget(&page, "project-back");
+        let editor = named_widget(&page, "project-editor");
+        let header_button = widgets(&h.app.window)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk4::Button>().ok())
+            .find(|b| b.action_name().as_deref() == Some("app.explore-project"))
+            .unwrap();
+        click_widget(&h, &header_button);
+        assert!(wait_until(&|| tree.n_items() == 5 && list.is_mapped(), 4));
+        let labels = label_texts(&list);
+        assert!(labels.iter().any(|text| text == ".ignored"), "{labels:?}");
+        assert!(labels.iter().any(|text| text == ".git"), "{labels:?}");
+        assert!(!tree.row(1).unwrap().is_expandable(), "linked folders stay leaf rows");
+
+        let enter = |position| {
+            list.scroll_to(position, gtk4::ListScrollFlags::FOCUS | gtk4::ListScrollFlags::SELECT, None);
+            pump(150);
+            xdo(&["key", "Return"]);
+        };
+        enter(2);
+        assert!(wait_until(&|| tree.n_items() == 47, 4));
+        assert!(tree.row(2).unwrap().is_expanded());
+        enter(44);
+        assert!(wait_until(&|| view.is_mapped() && preview_text(&view) == "file 39\n", 3));
+        let scroll = list.parent().and_downcast::<gtk4::ScrolledWindow>().unwrap().vadjustment();
+        let previous_scroll = scroll.value();
+        assert!(previous_scroll > 0.0);
+        click_widget(&h, &back);
+        assert!(list.is_mapped() && tree.row(2).unwrap().is_expanded());
+        assert_eq!(selection.selected(), 44);
+        assert!((scroll.value() - previous_scroll).abs() < 2.0);
+
+        enter(3);
+        assert!(wait_until(&|| status.is_mapped() && status.label().contains("binary"), 3));
+        assert!(!editor.is_sensitive());
+        assert!(named_widget(&page, "project-default-app").is_sensitive());
+        click_widget(&h, &back);
+        enter(4);
+        assert!(wait_until(&|| status.is_mapped() && status.label().contains("1 MiB"), 3));
+        click_widget(&h, &back);
+        std::fs::remove_file(src.join("row-00")).unwrap();
+        enter(5);
+        assert!(wait_until(&|| status.is_mapped() && status.label().contains("no longer exists"), 3));
+        assert!(!editor.is_sensitive());
+
+        let elsewhere = h.root.join("home/elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("different"), "other workspace\n").unwrap();
+        let (other, _) = h.app.new_workspace(Some("other"), Some(elsewhere)).unwrap();
+        assert_ne!(other, workspace);
+        let other_page = h.app.stack.visible_child().unwrap();
+        let other_tree = named_widget(&other_page, "project-tree");
+        assert!(!other_tree.is_mapped(), "new workspaces start closed");
+        h.app.run_action("explore-project");
+        assert!(wait_until(&|| label_texts(&other_tree).iter().any(|l| l == "different"), 4));
+        h.app.select_workspace(workspace);
+        assert!(status.is_mapped() && status.label().contains("no longer exists"));
+
+        h.app.window.set_default_size(480, 400);
+        pump(350);
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        assert!(term.is_mapped() && term.width() >= page.width() / 2);
+        assert!(status.is_mapped() && status.width() > 0);
+        assert!(h.app.window.width() <= 480);
+        screenshot(&h.app.window, "project-preview-narrow");
+        click_widget(&h, &back);
+        screenshot(&h.app.window, "project-tree-narrow");
+    });
+}
+
+#[test]
 fn deep_t1_file_link_popover_menus_copy_and_open_keep_url_links_unchanged() {
     if !have_input() {
         return;
@@ -1168,13 +1649,15 @@ fn deep_t1_file_link_popover_menus_copy_and_open_keep_url_links_unchanged() {
         let location = format!("{}:230:9", file.display());
         let popover = || find_by_class(term.upcast_ref(), "link-popover").expect("link popover");
 
-        // Plain click on a file position: the popover offers the editor.
+        // Plain click on a file position offers both preview and editor.
         let texts = label_texts(&open_link_popover(&h, &term, 10, 0));
         for want in [
-            "Open in Editor",
+            "Edit File",
+            "Preview",
+            "Open in External Editor",
             "Copy Path",
             location.as_str(),
-            "Tip: Ctrl+Click opens the file directly",
+            "Tip: Ctrl+Click previews the file",
         ] {
             assert!(texts.iter().any(|t| t == want), "missing {want:?} in {texts:?}");
         }
@@ -1201,7 +1684,7 @@ fn deep_t1_file_link_popover_menus_copy_and_open_keep_url_links_unchanged() {
 
         // Right-click menus put the matching actions on top.
         click_cell(&h, &term, 10, 0, 3, false);
-        assert_eq!(context_menu_head(&term), ["Open in Editor", "Copy Path"]);
+        assert_eq!(context_menu_head(&term), ["Edit File", "Preview", "Open in External Editor", "Copy Path"]);
         screenshot(&h.app.window, "t1-3-file-link-context-menu");
         xdo(&["key", "Escape"]);
         pump(200);
@@ -1231,12 +1714,12 @@ fn deep_t1_file_link_popover_menus_copy_and_open_keep_url_links_unchanged() {
         assert!(wait_until(&|| copied.borrow().is_some(), 3));
         assert_eq!(copied.borrow().as_deref(), Some(location.as_str()));
 
-        // "Open in Editor" in the popover. The popover is its own X window,
+        // "Open in External Editor" in the popover. The popover is its own X window,
         // which xdotool cannot address, so its button is clicked directly.
         let open = widgets(&open_link_popover(&h, &term, 10, 0))
             .into_iter()
             .filter_map(|w| w.downcast::<gtk4::Button>().ok())
-            .find(|b| label_texts(b).iter().any(|t| t == "Open in Editor"))
+            .find(|b| label_texts(b).iter().any(|t| t == "Open in External Editor"))
             .unwrap();
         open.emit_clicked();
         assert!(wait_until(&|| record.exists(), 5), "the editor was started");
@@ -1265,7 +1748,13 @@ fn deep_t1_terminal_editors_open_in_a_new_pane() {
         pump(300);
         let panes = || h.app.inner.borrow().state.workspace(wid).unwrap().tab().layout.panes().len();
         assert_eq!(panes(), 1);
-        click_cell(&h, &term, 3, 0, 1, true);
+        let popover = open_link_popover(&h, &term, 3, 0);
+        let editor = widgets(&popover)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk4::Button>().ok())
+            .find(|b| b.action_name().as_deref() == Some("link.editor"))
+            .unwrap();
+        editor.emit_clicked();
         assert!(wait_until(&|| panes() == 2, 3), "vim gets its own pane");
         assert!(wait_until(&|| record.exists(), 8), "the command ran in the new pane");
         let file = h.root.join("home/src/model.rs");
@@ -1398,10 +1887,14 @@ fn deep_settings_rows_for_the_new_options_work_with_the_keyboard() {
 
         // Every new option has its row, with the documented defaults.
         let editor: adw::EntryRow = settings_row(&dialog, "Editor command");
+        let autosave: adw::SwitchRow = settings_row(&dialog, "Autosave files");
+        let autosave_delay: adw::SpinRow = settings_row(&dialog, "Autosave delay (ms)");
         let alerts: adw::SwitchRow = settings_row(&dialog, "Usage limit alerts");
         let updates: adw::SwitchRow = settings_row(&dialog, "Check for updates");
         let opacity: adw::SpinRow = settings_row(&dialog, "Background opacity (%)");
         assert_eq!(editor.text(), "");
+        assert!(autosave.is_active());
+        assert_eq!(autosave_delay.value(), 1000.0);
         assert!(alerts.is_active());
         assert!(!updates.is_active());
         assert_eq!(opacity.value(), 100.0);
@@ -1420,6 +1913,12 @@ fn deep_settings_rows_for_the_new_options_work_with_the_keyboard() {
         pump(300);
         assert_eq!(h.app.inner.borrow().config.editor.command, "nano");
         assert!(config_file().contains("command = \"nano\""), "{}", config_file());
+        autosave.set_active(false);
+        autosave_delay.set_value(750.0);
+        assert!(!h.app.inner.borrow().config.editor.autosave);
+        assert_eq!(h.app.inner.borrow().config.editor.autosave_delay_ms, 750);
+        assert!(config_file().contains("autosave = false"));
+        assert!(config_file().contains("autosave_delay_ms = 750"));
         screenshot(&dialog, "settings-2-terminal-editor");
 
         // Usage limit alerts: Space toggles it off and it is saved.

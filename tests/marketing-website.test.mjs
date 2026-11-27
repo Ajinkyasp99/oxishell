@@ -7,6 +7,27 @@ import { runInNewContext } from "node:vm";
 
 const script = readFileSync(new URL("../marketing-website/site.js", import.meta.url), "utf8");
 const page = readFileSync(new URL("../marketing-website/index.html", import.meta.url), "utf8");
+const sitemap = readFileSync(new URL("../marketing-website/sitemap.xml", import.meta.url), "utf8");
+
+test("publishes indexable product metadata and a canonical sitemap with local screenshots", () => {
+  const canonical = page.match(/<link rel="canonical" href="([^"]+)">/)?.[1];
+  assert.equal(canonical, "https://ajinkyasp99.github.io/oxishell/");
+  assert.match(page, /<meta name="robots" content="max-image-preview:large">/);
+  const app = JSON.parse(page.match(/<script type="application\/ld\+json">([\s\S]+?)<\/script>/)[1]);
+  assert.equal(app["@type"], "SoftwareApplication");
+  assert.equal(app.url, canonical);
+  assert.equal(app.sameAs, "https://github.com/Ajinkyasp99/oxishell");
+  assert.deepEqual([...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map(([, url]) => url), [canonical]);
+
+  const images = [...sitemap.matchAll(/<image:loc>([^<]+)<\/image:loc>/g)].map(([, url]) => url);
+  assert.ok(images.includes(app.screenshot));
+  for (const url of images) {
+    assert.ok(url.startsWith(canonical + "assets/"), `image is outside the Pages project: ${url}`);
+    const file = url.slice(canonical.length);
+    assert.ok(page.includes(`src="./${file}"`), `image is not visible on the landing page: ${file}`);
+    assert.ok(existsSync(new URL(`../marketing-website/${file}`, import.meta.url)), `missing sitemap image: ${file}`);
+  }
+});
 
 test("links to the Medium article and identifies release-dependent features", () => {
   assert.match(page, /href="https:\/\/medium\.com\/@ajinkya_Patil\/linux-terminal-for-claude-code-codex-gemini-221546a50632"/);
@@ -16,7 +37,7 @@ test("links to the Medium article and identifies release-dependent features", ()
 
 test("preserves published anchors and installer links", () => {
   const ids = new Set(Array.from(page.matchAll(/\bid="([^"]+)"/g), ([, id]) => id));
-  for (const id of ["top", "main", "features", "quick-start", "download", "docs"]) {
+  for (const id of ["top", "main", "whats-new", "features", "quick-start", "download", "faq", "docs"]) {
     assert.ok(ids.has(id), `missing published anchor ${id}`);
   }
   for (const [, anchor] of page.matchAll(/href="#([^"]+)"/g)) {
@@ -25,6 +46,26 @@ test("preserves published anchors and installer links", () => {
   for (const name of ["oxishell_amd64.deb", "oxishell_macos_arm64.dmg", "oxishell_macos_x86_64.dmg"]) {
     assert.ok(page.includes(`href="https://github.com/Ajinkyasp99/oxishell/releases/latest/download/${name}"`));
   }
+});
+
+test("shows the Compose and agent usage release highlights without JavaScript", () => {
+  const highlights = page.match(/<section\b[^>]+id="whats-new"[^>]*>([\s\S]+?)<\/section>/)?.[1];
+  assert.ok(highlights, "missing release highlights");
+  assert.match(page, /<nav\b[^>]+id="main-nav"[\s\S]+?href="#whats-new"/);
+  assert.match(highlights, /v0\.6\.0[\s\S]+?compose-current\.webp/);
+  assert.match(highlights, /v0\.5\.0[\s\S]+?usage-current\.webp/);
+  assert.doesNotMatch(highlights, /\shidden\b/);
+});
+
+test("keeps the walkthrough and FAQ answers in the source HTML", () => {
+  const steps = [...page.matchAll(/data-panel="(workflow-[^"]+)"/g)].map(([, id]) => id);
+  assert.equal(steps.length, 5);
+  for (const id of steps) {
+    assert.ok(page.includes(`class="workflow-panel feature-panel" id="${id}">`), `step is missing or hidden: ${id}`);
+  }
+  const faq = page.match(/<section\b[^>]+id="faq"[^>]*>([\s\S]+?)<\/section>/)?.[1];
+  assert.ok(faq, "missing FAQ");
+  assert.equal([...faq.matchAll(/<summary>[^<]+<\/summary>\s*<p>[^<]/g)].length, 4);
 });
 
 test("ships local assets under the Pages path", () => {
