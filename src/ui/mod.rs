@@ -8,6 +8,7 @@ mod corner_resize;
 mod desktop_notify;
 mod dialogs;
 mod edge_reveal;
+mod file_icons;
 mod fonts;
 mod history_panel;
 mod icons;
@@ -15,6 +16,7 @@ mod ipc_handler;
 mod island;
 mod links;
 mod meta_worker;
+mod motion;
 mod pane;
 mod project_files;
 mod scroll;
@@ -139,6 +141,9 @@ fn window_hidden(w: &gtk4::Window) -> bool {
             .is_some_and(|t| t.state().contains(gdk::ToplevelState::MINIMIZED))
 }
 
+/// Length of the `.focus-flash` animation in style.css.
+const FOCUS_FLASH_MS: u64 = 1500;
+
 /// Below this window width the sidebar is hidden automatically.
 const NARROW_WIDTH: i32 = 640;
 
@@ -183,6 +188,7 @@ impl App {
             eprintln!("oxishell: bundled icons unavailable: {e}");
         }
 
+        motion::follow_os();
         let css = gtk4::CssProvider::new();
         css.load_from_string(include_str!("style.css"));
         gtk4::style_context_add_provider_for_display(
@@ -256,7 +262,12 @@ impl App {
         let edge = edge_reveal::EdgeReveal::new(
             &header,
             &[sidebar_btn.upcast_ref(), new_ws.upcast_ref()],
-            &[split_r.upcast_ref(), split_d.upcast_ref(), explorer.upcast_ref(), menu_btn.upcast_ref()],
+            &[
+                split_r.upcast_ref(),
+                split_d.upcast_ref(),
+                explorer.upcast_ref(),
+                menu_btn.upcast_ref(),
+            ],
             vec![menu_btn.clone()],
         );
 
@@ -281,6 +292,9 @@ impl App {
         let stack = gtk4::Stack::new();
         stack.set_hexpand(true);
         stack.set_vexpand(true);
+        // Workspaces switch at once. A crossfade was measured at about 7 MB more
+        // memory with 5 workspaces (GTK keeps rendered copies of each page's
+        // terminals), over the memory budget for this polish.
         stack.set_transition_type(gtk4::StackTransitionType::None);
         // Size to the visible workspace only, not the largest hidden one.
         stack.set_hhomogeneous(false);
@@ -297,13 +311,24 @@ impl App {
             .build();
         watermark.add_css_class("ws-watermark");
         let split = gtk4::Paned::new(Orientation::Horizontal);
-        split.set_start_child(Some(&sidebar_box));
+        // The sidebar fades in and out; once faded out it leaves the split.
+        let sidebar_reveal = gtk4::Revealer::builder()
+            .child(&sidebar_box)
+            .visible(config.appearance.sidebar_visible)
+            .reveal_child(config.appearance.sidebar_visible)
+            .build();
+        motion::reveal(&sidebar_reveal, gtk4::RevealerTransitionType::Crossfade);
+        sidebar_reveal.connect_child_revealed_notify(|r| {
+            if !r.reveals_child() && !r.is_child_revealed() {
+                r.set_visible(false);
+            }
+        });
+        split.set_start_child(Some(&sidebar_reveal));
         split.set_end_child(Some(&stack));
         split.set_shrink_start_child(false);
         split.set_resize_start_child(false);
         split.set_position(config.appearance.sidebar_width);
         split.set_vexpand(true);
-        sidebar_box.set_visible(config.appearance.sidebar_visible);
 
         let status = gtk4::Label::builder()
             .xalign(0.0)
@@ -472,9 +497,11 @@ impl App {
             let w = Rc::downgrade(&app);
             app.window.connect_close_request(move |_| {
                 if let Some(a) = w.upgrade() {
-                    let pending = a.file_panels.borrow().iter().find_map(|(wid, panel)| {
-                        panel.pending_edits().map(|message| (*wid, panel.clone(), message))
-                    });
+                    let pending = a
+                        .file_panels
+                        .borrow()
+                        .iter()
+                        .find_map(|(wid, panel)| panel.pending_edits().map(|message| (*wid, panel.clone(), message)));
                     if let Some((wid, panel, message)) = pending {
                         let app = a.weak();
                         if !panel.after_autosave(move |_| {
@@ -521,8 +548,17 @@ impl App {
         {
             let w = Rc::downgrade(&app);
             app.window.connect_is_active_notify(move |win| {
+                // Pause looping animations (the island pulse) while behind other windows.
+                set_class(win, "window-inactive", !win.is_active());
                 if let Some(a) = w.upgrade() {
                     if win.is_active() {
+                        // The OS motion setting may have changed while away (macOS only).
+                        motion::follow_os();
+                        // Files may have changed outside oxishell meanwhile.
+                        let workspace = a.inner.borrow().state.active;
+                        if let Some(panel) = workspace.and_then(|wid| a.file_panels.borrow().get(&wid).cloned()) {
+                            panel.refresh_git_if_shown();
+                        }
                         // Coming back to the window counts as seeing the focused pane.
                         if let Some(p) = a.focused_pane() {
                             a.mark_read(p);
@@ -853,7 +889,9 @@ impl App {
         let panes = self.inner.borrow().state.tab_panes(tab).map_err(|e| e.to_string())?;
         let closing_workspace = {
             let i = self.inner.borrow();
-            panes.first().and_then(|pane| i.state.workspace_of(*pane))
+            panes
+                .first()
+                .and_then(|pane| i.state.workspace_of(*pane))
                 .filter(|wid| i.state.workspace(*wid).is_some_and(|w| w.tabs.len() == 1))
         };
         if let Some(wid) = closing_workspace {
@@ -944,8 +982,9 @@ impl App {
         // the pane widget itself needs, or GTK pushes the last panes off-screen.
         let (frame_min_w, _, _, _) = p.frame.measure(Orientation::Horizontal, -1);
         let (frame_min_h, _, _, _) = p.frame.measure(Orientation::Vertical, -1);
-        let min_w = ((p.term.char_width() * MIN_PANE_COLS) as f64 + 24.0).max(frame_min_w as f64);
-        let min_h = ((p.term.char_height() * MIN_PANE_ROWS) as f64 + 44.0).max(frame_min_h as f64);
+        let pad = 2.0 * f64::from(pane::term_pad());
+        let min_w = ((p.term.char_width() * MIN_PANE_COLS) as f64 + 24.0 + pad).max(frame_min_w as f64);
+        let min_h = ((p.term.char_height() * MIN_PANE_ROWS) as f64 + 44.0 + pad).max(frame_min_h as f64);
         let Some(tab) = ws.tab_index_of(pane).map(|t| &ws.tabs[t]) else {
             return Ok(());
         };
@@ -1508,6 +1547,12 @@ impl App {
             }
             worked
         };
+        // A finished turn usually changed files: update the explorer's git letters.
+        if matches!(state, AgentState::Idle | AgentState::Ended) {
+            if let Some(panel) = self.file_panel_of_pane(pane) {
+                panel.refresh_git_if_shown();
+            }
+        }
         if state.notifies() {
             let name = crate::agents::display_name(agent);
             let (title, kind) = match state {
@@ -1539,8 +1584,18 @@ impl App {
         usage_footer::refresh(self);
         let i = self.inner.borrow();
         let focused = i.state.active_workspace().map(|w| w.focused());
+        // Flash the rim of a pane that takes focus from another pane of the
+        // same tab (not at startup, not when switching workspace or tab).
+        let flash = i.state.active_workspace().and_then(|ws| {
+            let now = focused?;
+            let before = i.panes.iter().find(|(_, p)| p.frame.has_css_class("focused")).map(|(id, _)| *id)?;
+            (before != now && ws.tab_index_of(before).is_some() && ws.tab_index_of(before) == ws.tab_index_of(now)).then_some(now)
+        });
         for (id, p) in &i.panes {
             set_class(&p.frame, "focused", Some(*id) == focused);
+            if flash == Some(*id) {
+                motion::once(&p.frame, "focus-flash", FOCUS_FLASH_MS);
+            }
             set_class(&p.frame, "attention", i.notes.unread_for_pane(*id) > 0);
             p.chips
                 .update(p.python_env.as_deref(), p.cwd.as_deref(), p.git.as_ref(), i.config.appearance.chips);
@@ -1600,18 +1655,38 @@ impl App {
 
     fn fit_sidebar_to_width(&self) {
         let want = self.inner.borrow().config.appearance.sidebar_visible && self.window.default_width() >= NARROW_WIDTH;
-        if let Some(s) = self.split.start_child() {
-            // get_visible() is the property; is_visible() also needs visible parents.
-            if s.get_visible() != want {
-                s.set_visible(want);
+        if self.sidebar_shown() != want {
+            self.show_sidebar(want);
+        }
+    }
+
+    /// The file panel of the workspace holding `pane`.
+    fn file_panel_of_pane(&self, pane: PaneId) -> Option<Rc<project_files::Panel>> {
+        let workspace = self.inner.borrow().state.workspace_of(pane)?;
+        self.file_panels.borrow().get(&workspace).cloned()
+    }
+
+    /// The sidebar's fade revealer, the split's start child.
+    fn sidebar_reveal(&self) -> Option<gtk4::Revealer> {
+        self.split.start_child().and_downcast()
+    }
+
+    /// Whether the sidebar is shown or fading in (not whether it is mapped).
+    fn sidebar_shown(&self) -> bool {
+        self.sidebar_reveal().is_some_and(|r| r.reveals_child())
+    }
+
+    fn show_sidebar(&self, show: bool) {
+        if let Some(r) = self.sidebar_reveal() {
+            if show {
+                r.set_visible(true);
             }
+            r.set_reveal_child(show);
         }
     }
 
     pub fn set_sidebar_visible(self: &Rc<Self>, v: bool) {
-        if let Some(s) = self.split.start_child() {
-            s.set_visible(v);
-        }
+        self.show_sidebar(v);
         let changed = {
             let mut i = self.inner.borrow_mut();
             let c = i.config.appearance.sidebar_visible != v;
@@ -1659,8 +1734,12 @@ impl App {
             });
             theme
         };
-        let opacity = self.inner.borrow().config.appearance.opacity;
-        self.theme_css.load_from_string(&(theme.css() + &theme.opacity_css(opacity)));
+        let (opacity, padding) = {
+            let i = self.inner.borrow();
+            (i.config.appearance.opacity, pane::padding_css(&i.config))
+        };
+        self.theme_css
+            .load_from_string(&(theme.css() + &theme.opacity_css(opacity) + &padding));
         self.inner.borrow_mut().theme = theme;
         {
             let w = self.weak();
@@ -2058,7 +2137,7 @@ impl App {
             }
             "toggle-sidebar" => {
                 // Toggle what is on screen (it may be auto-hidden in a narrow window).
-                let shown = self.split.start_child().is_some_and(|s| s.get_visible());
+                let shown = self.sidebar_shown();
                 self.set_sidebar_visible(!shown);
             }
             "newline" | "newline-alt" => {

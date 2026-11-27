@@ -41,8 +41,11 @@ which agent is active and, when supported by its hooks, whether it is running, w
 - **Terminal workflow.** Search command history and scrollback, accept inline suggestions, inspect command
   blocks with exit status and duration, open web links, and [preview files beside the terminal](#project-explorer-and-file-previews).
   Context chips show the active directory, Git branch, and Python environment when available.
-- **Appearance and navigation.** Pick from 41 bundled Warp themes, import a theme, adjust the font or
-  cursor, and remap shortcuts. The command palette searches actions, workspaces, themes, and custom commands.
+- **Appearance and navigation.** Pick from 41 bundled Warp themes, import a theme, adjust the font,
+  cursor, line spacing and padding, and remap shortcuts. The sidebar and the file panel fade, session
+  lists slide open, and new rows fade in (120–160 ms) instead of jumping. A pane that takes focus flashes
+  its border once. All motion follows GNOME's "Reduce animation" on Linux and "Reduce motion" on macOS.
+  The command palette searches actions, workspaces, themes, and custom commands.
 - **Local developer tools.** Start a Compose stack from the [launcher](#docker-compose-launcher), inspect
   listening ports and CPU and memory usage in the status bar, or drive the running app with the `oxi` CLI.
 
@@ -148,6 +151,12 @@ workspace on API tests and another on a Codex task, then jump back when Codex as
   Expand folders from the focused terminal's Git worktree root, or from its current folder outside Git.
   Opening a text file brings up the editor beside the terminal. **Back to Project** returns to your place in the tree. Use
   **Refresh Project** to pick up files added or removed on disk.
+- Files show a coloured icon for their type and a Git letter when they changed: **M** modified, **A** added,
+  **U** untracked, **D** deleted, **R** renamed. A dot marks folders with changes inside. Letters refresh when the
+  explorer opens or refreshes, after a save, when an agent finishes its turn, and when the window comes back to the
+  front. Git never runs in the background.
+- **Diff** in the header of a changed file shows its changes since the last commit, with added and removed lines
+  highlighted. Select it again to return to the editor.
 - The editor supports UTF-8 files up to 1 MiB. Autosave writes after one second of inactivity or when
   you leave the editor. Choose **Settings → Terminal → Editor** to change the delay or turn autosave off.
   **Save**, Ctrl+S on Linux, and Cmd+S on macOS still save immediately.

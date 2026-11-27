@@ -84,7 +84,10 @@ fn open(app: &AppRc, pane: PaneId, panel: &OnceCell<Rc<Panel>>) -> bool {
     let ch = term.char_height() as i32;
     let width = term.width();
     panel.pop.set_size_request((width - 16).max(320), -1);
-    panel.pop.set_pointing_to(Some(&gdk::Rectangle::new(0, row as i32 * ch, width, ch)));
+    let pad = super::pane::term_pad();
+    panel
+        .pop
+        .set_pointing_to(Some(&gdk::Rectangle::new(0, row as i32 * ch + pad, width, ch)));
     panel.pop.popup();
     true
 }

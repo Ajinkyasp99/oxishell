@@ -36,8 +36,6 @@ struct Placed {
 
 /// Blocks kept per pane (older ones scroll out of the scrollback anyway).
 const MAX_BLOCKS: usize = 5000;
-/// VTE draws the first cell this many pixels from the widget's top edge.
-const PAD_Y: f64 = 1.0;
 
 /// Where the prompt line is on the screen.
 #[derive(Debug, PartialEq, Eq)]
@@ -420,7 +418,8 @@ impl Blocks {
             return Vec::new();
         };
         let value = adj.value();
-        let y_of = |row: i64| (row - offset) as f64 * ch - value + PAD_Y;
+        let pad = f64::from(super::pane::term_pad());
+        let y_of = |row: i64| (row - offset) as f64 * ch - value + pad;
         let (_, cursor) = term.cursor_position();
         let list = self.list.borrow();
         let mut out = Vec::new();

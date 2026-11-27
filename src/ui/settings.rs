@@ -311,6 +311,25 @@ fn appearance_page(app: &AppRc, d: &adw::PreferencesDialog, cfg: &Config, ap: &A
     switch(&text, ap, "Blinking cursor", "", cfg.terminal.cursor_blink, |c, v| {
         c.terminal.cursor_blink = v
     });
+    spin(
+        &text,
+        ap,
+        "Line spacing",
+        "Space between lines of text, as a multiple of the font's line height",
+        (1.0, 2.0, 0.05),
+        cfg.terminal.line_height,
+        |c, v| c.terminal.line_height = (v * 100.0).round() / 100.0,
+    )
+    .set_digits(2);
+    spin(
+        &text,
+        ap,
+        "Padding",
+        "Space between the pane edge and the text, in pixels",
+        (0.0, 32.0, 1.0),
+        f64::from(cfg.terminal.padding),
+        |c, v| c.terminal.padding = v as i32,
+    );
     p
 }
 

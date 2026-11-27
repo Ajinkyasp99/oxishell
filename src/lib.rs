@@ -6,6 +6,7 @@ pub mod agents;
 pub mod compose;
 pub mod config;
 pub mod editor;
+pub mod gitfiles;
 pub mod history;
 pub mod ipc;
 pub mod meta;

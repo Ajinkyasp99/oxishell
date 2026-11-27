@@ -78,9 +78,40 @@ pub fn extract_marked<'a>(out: &'a str, mark: &str) -> Option<&'a str> {
     (!value.is_empty()).then_some(value)
 }
 
+/// Output of `defaults read <domain> <bool key>`: `1` when the setting is on.
+pub fn parse_defaults_bool(out: &str) -> bool {
+    matches!(out.trim(), "1" | "true" | "YES")
+}
+
+/// The OS asks apps to reduce motion. Blocking: may start a process.
+///
+/// Linux: always false here, because GNOME's "Reduce animation" already reaches
+/// GTK as `gtk-enable-animations`. macOS: System Settings > Accessibility >
+/// Display > Reduce motion, which GTK does not read by itself.
+pub fn reduce_motion() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::reduce_motion()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn defaults_bool_reads_only_true_values() {
+        for on in ["1", "1\n", "true", "YES"] {
+            assert!(parse_defaults_bool(on), "{on:?}");
+        }
+        for off in ["0", "0\n", "", "false", "NO", "The domain/default pair does not exist"] {
+            assert!(!parse_defaults_bool(off), "{off:?}");
+        }
+    }
 
     fn procargs(argc: i32, body: &[u8]) -> Vec<u8> {
         let mut v = argc.to_ne_bytes().to_vec();

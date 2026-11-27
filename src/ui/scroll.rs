@@ -83,7 +83,7 @@ pub fn attach_history(term: &vte4::Terminal, scroll: &gtk4::ScrolledWindow) {
                 if let Some(mut motion) = step.get().filter(|s| s.last == adj.value()) {
                     let elapsed = (clock.frame_time() - motion.started).max(0);
                     let progress = (elapsed as f64 / HISTORY_SCROLL_US as f64).min(1.0);
-                    let eased = 1.0 - (1.0 - progress).powi(3);
+                    let eased = super::motion::ease_out_cubic(progress);
                     let value = motion.from + (motion.to - motion.from) * eased;
                     adj.set_value(value);
                     if progress < 1.0 && value == adj.value() {

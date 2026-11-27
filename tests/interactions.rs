@@ -282,7 +282,10 @@ fn scrollback_uses_pixels_and_preserves_terminal_app_wheel_input() {
         let pinned = adjustment.value();
         term.feed(b"MORE-OUTPUT\r\n");
         pump(120);
-        assert!((adjustment.value() - pinned).abs() < 1.0, "output must preserve the reader's position");
+        assert!(
+            (adjustment.value() - pinned).abs() < 1.0,
+            "output must preserve the reader's position"
+        );
         xdo(&["key", "a"]);
         pump(100);
         let bottom = adjustment.upper() - adjustment.page_size();
@@ -376,7 +379,11 @@ fn terminal_suggestions_batch_signals_and_refresh_when_revealed() {
             let mut i = h.app.inner.borrow_mut();
             i.config.terminal.suggestions = true;
             let p = &i.panes[&pane];
-            (p.term.clone(), p.suggest.ghost.clone(), i.state.active_workspace().unwrap().tab().id)
+            (
+                p.term.clone(),
+                p.suggest.ghost.clone(),
+                i.state.active_workspace().unwrap().tab().id,
+            )
         };
         xdo(&["type", "echo sugg"]);
         pump(250);
@@ -1459,7 +1466,10 @@ fn project_explorer_edits_and_saves_beside_the_running_terminal() {
             .unwrap();
         click_widget(&h, &file_row);
         assert!(wait_until(&|| text.is_mapped() && preview_text(&text) == "fn main() {}\n", 3));
-        assert!(wait_until(&|| text.is_editable() && text.has_focus(), 2), "opening a file from Explorer must focus the in-app editor");
+        assert!(
+            wait_until(&|| text.is_editable() && text.has_focus(), 2),
+            "opening a file from Explorer must focus the in-app editor"
+        );
         assert!(!external_log.exists(), "the configured external editor must stay closed");
         xdo(&["key", "ctrl+End"]);
         xdo(&["type", "// edited here"]);
@@ -1467,9 +1477,10 @@ fn project_explorer_edits_and_saves_beside_the_running_terminal() {
         assert!(text.buffer().is_modified());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "fn main() {}\n");
         xdo(&["key", "ctrl+s"]);
-        assert!(wait_until(&|| {
-            !text.buffer().is_modified() && std::fs::read_to_string(&file).unwrap().ends_with("// edited here")
-        }, 3));
+        assert!(wait_until(
+            &|| { !text.buffer().is_modified() && std::fs::read_to_string(&file).unwrap().ends_with("// edited here") },
+            3
+        ));
         assert!(term.is_mapped());
         assert_eq!(h.app.inner.borrow().state.workspace(wid).unwrap().panes(), [pane]);
 
@@ -1500,7 +1511,10 @@ fn project_explorer_edits_and_saves_beside_the_running_terminal() {
             .unwrap();
         click_widget(&h, &discard);
         assert!(wait_until(&|| h.app.window.visible_dialog().is_none(), 3));
-        assert!(wait_until(&|| !text.buffer().is_modified() && preview_text(&text) == "// agent edit\n", 3));
+        assert!(wait_until(
+            &|| !text.buffer().is_modified() && preview_text(&text) == "// agent edit\n",
+            3
+        ));
         assert!(text.is_editable());
 
         click_widget(&h, &named_widget(&page, "project-close"));
@@ -1519,9 +1533,10 @@ fn project_explorer_edits_and_saves_beside_the_running_terminal() {
         assert_eq!(buffer.iter_at_mark(&buffer.get_insert()).line_offset(), 3);
         xdo(&["type", "accepted "]);
         xdo(&["key", "ctrl+s"]);
-        assert!(wait_until(&|| {
-            !buffer.is_modified() && std::fs::read_to_string(&file).unwrap() == "// accepted agent edit\n"
-        }, 3));
+        assert!(wait_until(
+            &|| { !buffer.is_modified() && std::fs::read_to_string(&file).unwrap() == "// accepted agent edit\n" },
+            3
+        ));
         assert!(!external_log.exists());
     });
 }
@@ -1629,6 +1644,171 @@ fn project_explorer_browses_and_previews_with_workspace_local_state() {
 }
 
 #[test]
+fn project_explorer_shows_file_kinds_git_letters_and_a_diff_of_the_open_file() {
+    if !have_input() {
+        return;
+    }
+    gtk4::test_synced(|| {
+        let h = Harness::new("project-git");
+        let repo = h.root.join("home/gitproj");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@example.com")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@example.com")
+                .status()
+                .unwrap()
+                .success());
+        };
+        git(&["init", "-q"]);
+        std::fs::write(repo.join("app.rs"), "one\ntwo\n-- kept comment\nfour\n").unwrap();
+        git(&["add", "app.rs"]);
+        git(&["commit", "-q", "-m", "init"]);
+        std::fs::write(repo.join("app.rs"), "one\nTWO\nfour\n").unwrap();
+        std::fs::write(repo.join("notes.md"), "new\n").unwrap();
+
+        let (_workspace, pane) = h.app.new_workspace(Some("gitproj"), Some(repo.clone())).unwrap();
+        let page = h.app.stack.visible_child().unwrap();
+        let list = named_widget(&page, "project-tree").downcast::<gtk4::ListView>().unwrap();
+        h.app.run_action("explore-project");
+        let marks = || {
+            let mut found = Vec::new();
+            all_by_class(&list.clone().upcast(), "git-mark", &mut found);
+            found
+                .into_iter()
+                .filter(|w| w.is_visible())
+                .filter_map(|w| w.downcast::<gtk4::Label>().ok())
+                .map(|l| l.label().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            wait_until(&|| marks().contains(&"M".to_string()) && marks().contains(&"U".to_string()), 5),
+            "{:?}",
+            marks()
+        );
+        let mut icons = Vec::new();
+        all_by_class(&list.clone().upcast(), "ft-rust", &mut icons);
+        assert_eq!(icons.len(), 1, "app.rs gets the Rust icon colour");
+        let mut docs = Vec::new();
+        all_by_class(&list.clone().upcast(), "ft-doc", &mut docs);
+        assert_eq!(docs.len(), 1, "notes.md gets the document icon colour");
+
+        // Open app.rs (rows: .git, app.rs, notes.md) and show its diff.
+        list.scroll_to(1, gtk4::ListScrollFlags::FOCUS | gtk4::ListScrollFlags::SELECT, None);
+        pump(150);
+        xdo(&["key", "Return"]);
+        let view = named_widget(&page, "file-preview-text").downcast::<gtk4::TextView>().unwrap();
+        assert!(wait_until(&|| view.is_mapped() && preview_text(&view) == "one\nTWO\nfour\n", 3));
+        let diff_button = named_widget(&page, "project-diff").downcast::<gtk4::ToggleButton>().unwrap();
+        assert!(wait_until(&|| diff_button.is_mapped(), 3), "a changed file offers its diff");
+        click_widget(&h, &diff_button);
+        let diff = named_widget(&page, "file-diff-text").downcast::<gtk4::TextView>().unwrap();
+        assert!(wait_until(&|| diff.is_mapped(), 3));
+        let text = preview_text(&diff);
+        assert!(text.contains("-two\n") && text.contains("+TWO\n"), "{text}");
+        assert!(
+            text.contains("--- kept comment\n"),
+            "a removed `-- comment` line is content: {text}"
+        );
+        assert!(
+            !text.contains("diff --git") && !text.contains("+++ b/"),
+            "file headers are hidden: {text}"
+        );
+        let buffer = diff.buffer();
+        let line_with = |needle: &str| {
+            let line = text.lines().position(|l| l == needle).unwrap() as i32;
+            buffer.iter_at_line(line).unwrap()
+        };
+        let added = buffer.tag_table().lookup("added").unwrap();
+        let removed = buffer.tag_table().lookup("removed").unwrap();
+        assert!(line_with("+TWO").has_tag(&added));
+        assert!(line_with("-two").has_tag(&removed));
+        assert!(!line_with(" one").has_tag(&added) && !line_with(" one").has_tag(&removed));
+        assert!(
+            !named_widget(&page, "project-editor").is_mapped(),
+            "no editing while the diff shows"
+        );
+        screenshot(&h.app.window, "project-diff");
+
+        click_widget(&h, &diff_button);
+        assert!(wait_until(&|| view.is_mapped() && !diff.is_mapped(), 3));
+
+        // Closing fades the panel out; afterwards the terminal has the whole width.
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        let narrow = term.width();
+        click_widget(&h, &named_widget(&page, "project-close"));
+        assert!(wait_until(&|| !list.is_mapped() && !view.is_mapped() && term.width() > narrow, 3));
+    });
+}
+
+#[test]
+fn terminal_padding_and_line_spacing_follow_the_settings() {
+    gtk4::test_synced(|| {
+        let h = Harness::new("term-pad");
+        let (_, pane) = h.app.new_workspace(Some("pad"), Some(h.root.join("home"))).unwrap();
+        pump(800);
+        let term = h.app.inner.borrow().panes[&pane].term.clone();
+        let set = |padding: i32, line_height: f64| {
+            {
+                let mut i = h.app.inner.borrow_mut();
+                i.config.terminal.padding = padding;
+                i.config.terminal.line_height = line_height;
+            }
+            h.app.apply_config();
+            pump(400);
+            (term.column_count(), term.row_count())
+        };
+        let (cols_tight, rows_tight) = set(0, 1.0);
+        let (cols_wide, rows_wide) = set(32, 1.0);
+        assert!(
+            cols_wide < cols_tight,
+            "more padding leaves fewer columns ({cols_wide} vs {cols_tight})"
+        );
+        assert!(rows_wide < rows_tight);
+        assert!((term.cell_height_scale() - 1.0).abs() < 1e-9);
+        let (_, rows_spaced) = set(32, 1.5);
+        assert!((term.cell_height_scale() - 1.5).abs() < 1e-9);
+        assert!(rows_spaced < rows_wide, "taller lines leave fewer rows");
+    });
+}
+
+#[test]
+fn a_pane_taking_focus_from_its_neighbour_flashes_once() {
+    gtk4::test_synced(|| {
+        let h = Harness::new("focus-flash");
+        let (_, first) = h.app.new_workspace(Some("flash"), Some(h.root.join("home"))).unwrap();
+        pump(500);
+        let second = h.app.split(Some(first), oxishell::model::Orient::Horizontal, None).unwrap();
+        pump(300);
+        let frame = |p| h.app.inner.borrow().panes[&p].frame.clone();
+        // Splitting moves focus to the new pane, which flashes once.
+        assert!(frame(second).has_css_class("focus-flash"));
+        assert!(
+            wait_until(&|| !frame(second).has_css_class("focus-flash"), 3),
+            "the flash runs once"
+        );
+        h.app.focus_pane(first);
+        pump(100);
+        assert!(frame(first).has_css_class("focus-flash"));
+        assert!(!frame(second).has_css_class("focus-flash"));
+        assert!(wait_until(&|| !frame(first).has_css_class("focus-flash"), 3));
+
+        let settings = frame(first).settings();
+        let animations = settings.is_gtk_enable_animations();
+        settings.set_gtk_enable_animations(false);
+        h.app.focus_pane(second);
+        pump(100);
+        assert!(!frame(second).has_css_class("focus-flash"), "no flash with animations off");
+        settings.set_gtk_enable_animations(animations);
+    });
+}
+
+#[test]
 fn deep_t1_file_link_popover_menus_copy_and_open_keep_url_links_unchanged() {
     if !have_input() {
         return;
@@ -1684,7 +1864,10 @@ fn deep_t1_file_link_popover_menus_copy_and_open_keep_url_links_unchanged() {
 
         // Right-click menus put the matching actions on top.
         click_cell(&h, &term, 10, 0, 3, false);
-        assert_eq!(context_menu_head(&term), ["Edit File", "Preview", "Open in External Editor", "Copy Path"]);
+        assert_eq!(
+            context_menu_head(&term),
+            ["Edit File", "Preview", "Open in External Editor", "Copy Path"]
+        );
         screenshot(&h.app.window, "t1-3-file-link-context-menu");
         xdo(&["key", "Escape"]);
         pump(200);
@@ -2069,10 +2252,12 @@ fn command_block_headers_stay_put_when_a_running_program_clears_the_scrollback()
             .lines()
             .position(|l| l.contains("echo after-clear"))
             .expect("command on screen") as f64;
+        // The first row starts below the terminal's padding.
+        let pad = f64::from(h.app.inner.borrow().config.terminal.padding);
         let headers = on_screen();
         assert!(
-            headers.iter().any(|(y, _)| (*y - (row - 1.0) * ch).abs() <= 2.0),
-            "header on the row above the command (row {row}, {ch}px rows): {headers:?}"
+            headers.iter().any(|(y, _)| (*y - ((row - 1.0) * ch + pad)).abs() <= 2.0),
+            "header on the row above the command (row {row}, {ch}px rows, {pad}px padding): {headers:?}"
         );
     });
 }

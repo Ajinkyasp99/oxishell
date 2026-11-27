@@ -2,6 +2,7 @@
 
 use super::links::{self, FileTarget};
 use super::AppRc;
+use crate::gitfiles::{self, DiffLine};
 use crate::model::{PaneId, WorkspaceId};
 use gtk4::prelude::*;
 use gtk4::{gio, glib, Orientation};
@@ -102,27 +103,84 @@ fn child_model(item: &glib::Object) -> Option<gio::ListModel> {
     Some(store.upcast())
 }
 
-fn tree_factory() -> gtk4::SignalListItemFactory {
+/// Git letters (M, A, U…) of the explorer rows on screen. Rows register their
+/// letter label when bound, so a new status repaints only what is visible.
+#[derive(Default)]
+struct GitMarks {
+    status: RefCell<gitfiles::Status>,
+    rows: RefCell<Vec<(glib::WeakRef<gtk4::Label>, PathBuf, bool)>>,
+}
+
+impl GitMarks {
+    fn paint(&self, label: &gtk4::Label, path: &Path, folder: bool) {
+        let status = self.status.borrow();
+        for class in gitfiles::CSS_CLASSES.iter().chain(["git-folder"].iter()) {
+            label.remove_css_class(class);
+        }
+        let (text, class) = match status.file(path) {
+            Some(mark) => (mark.letter(), mark.css_class()),
+            None if folder && status.folder_changed(path) => ("•", "git-folder"),
+            None => ("", ""),
+        };
+        label.set_label(text);
+        label.set_visible(!text.is_empty());
+        if !class.is_empty() {
+            label.add_css_class(class);
+        }
+    }
+
+    fn bind(&self, label: &gtk4::Label, path: &Path, folder: bool) {
+        self.unbind(label);
+        self.rows.borrow_mut().push((label.downgrade(), path.to_path_buf(), folder));
+        self.paint(label, path, folder);
+    }
+
+    fn unbind(&self, label: &gtk4::Label) {
+        self.rows.borrow_mut().retain(|(w, _, _)| w.upgrade().is_some_and(|l| &l != label));
+    }
+
+    fn set(&self, status: gitfiles::Status) {
+        if *self.status.borrow() == status {
+            return;
+        }
+        self.status.replace(status);
+        for (label, path, folder) in self.rows.borrow().iter() {
+            if let Some(label) = label.upgrade() {
+                self.paint(&label, path, *folder);
+            }
+        }
+    }
+}
+
+fn tree_factory(marks: Rc<GitMarks>) -> gtk4::SignalListItemFactory {
     let factory = gtk4::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
         let item = item.downcast_ref::<gtk4::ListItem>().unwrap();
         let row = gtk4::Box::new(Orientation::Horizontal, 6);
-        row.append(&gtk4::Image::new());
+        let icon = gtk4::Image::new();
+        icon.add_css_class("file-icon");
+        row.append(&icon);
         let label = header_label();
         label.set_hexpand(true);
         row.append(&label);
+        let mark = gtk4::Label::new(None);
+        mark.add_css_class("git-mark");
+        mark.set_visible(false);
+        row.append(&mark);
         let expander = gtk4::TreeExpander::new();
         expander.set_child(Some(&row));
         item.set_child(Some(&expander));
     });
-    factory.connect_bind(|_, item| {
+    let bind_marks = marks.clone();
+    factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk4::ListItem>().unwrap();
         let row = item.item().and_downcast::<gtk4::TreeListRow>().unwrap();
         let entry = row.item().and_downcast::<glib::BoxedAnyObject>().unwrap();
         let expander = item.child().and_downcast::<gtk4::TreeExpander>().unwrap();
         let children = expander.child().unwrap();
         let icon = children.first_child().and_downcast::<gtk4::Image>().unwrap();
-        let label = children.last_child().and_downcast::<gtk4::Label>().unwrap();
+        let label = icon.next_sibling().and_downcast::<gtk4::Label>().unwrap();
+        let mark = children.last_child().and_downcast::<gtk4::Label>().unwrap();
         expander.set_list_row(Some(&row));
         let entry = entry.borrow::<Item>();
         match &*entry {
@@ -135,12 +193,14 @@ fn tree_factory() -> gtk4::SignalListItemFactory {
                     path.display().to_string()
                 };
                 label.set_tooltip_text(Some(&tooltip));
-                icon.set_icon_name(Some(if *kind == Kind::File {
-                    "text-x-generic-symbolic"
-                } else {
-                    "folder-symbolic"
-                }));
+                let (name, class) = super::file_icons::for_path(path, *kind != Kind::File);
+                icon.set_icon_name(Some(name));
+                for c in super::file_icons::CLASSES {
+                    icon.remove_css_class(c);
+                }
+                icon.add_css_class(class);
                 icon.set_visible(true);
+                bind_marks.bind(&mark, path, *kind != Kind::File);
                 item.set_selectable(true);
                 item.set_activatable(*kind != Kind::LinkedDirectory);
             }
@@ -149,14 +209,19 @@ fn tree_factory() -> gtk4::SignalListItemFactory {
                 label.set_tooltip_text(Some(message));
                 label.add_css_class("dim-label");
                 icon.set_visible(false);
+                bind_marks.unbind(&mark);
+                mark.set_visible(false);
                 item.set_selectable(false);
                 item.set_activatable(false);
             }
         }
     });
-    factory.connect_unbind(|_, item| {
+    factory.connect_unbind(move |_, item| {
         let item = item.downcast_ref::<gtk4::ListItem>().unwrap();
         if let Some(expander) = item.child().and_downcast::<gtk4::TreeExpander>() {
+            if let Some(mark) = expander.child().and_then(|c| c.last_child()).and_downcast::<gtk4::Label>() {
+                marks.unbind(&mark);
+            }
             expander.set_list_row(None);
         }
     });
@@ -304,6 +369,9 @@ pub(super) struct Panel {
     pub terminal_area: gtk4::Overlay,
     views: gtk4::Stack,
     panel: gtk4::Box,
+    /// Fades the panel in and out. Its region of the split is fixed, so the
+    /// terminal resizes once instead of reflowing on every animation frame.
+    reveal: gtk4::Revealer,
     title: gtk4::Label,
     path_label: gtk4::Label,
     back: gtk4::Button,
@@ -317,6 +385,11 @@ pub(super) struct Panel {
     list: gtk4::ListView,
     content: gtk4::Stack,
     text: gtk4::TextView,
+    /// Read-only diff of the open file against the last commit.
+    diff_view: gtk4::TextView,
+    diff_button: gtk4::ToggleButton,
+    git: Rc<GitMarks>,
+    git_request: Cell<u64>,
     status: gtk4::Label,
     edit_status: gtk4::Label,
     cwd: RefCell<Option<PathBuf>>,
@@ -363,12 +436,21 @@ impl Panel {
         save.set_label("Save");
         let reload = header_button("document-revert-symbolic", "Reload from Disk", "project-reload");
         let default_app = header_button("document-open-symbolic", "Open with Default App", "project-default-app");
+        let diff_button = gtk4::ToggleButton::builder()
+            .label("Diff")
+            .tooltip_text("Show changes since the last commit")
+            .focus_on_click(false)
+            .visible(false)
+            .build();
+        diff_button.set_widget_name("project-diff");
+        diff_button.add_css_class("flat");
         let close = header_button("window-close-symbolic", "Close File Panel", "project-close");
         let header = gtk4::Box::new(Orientation::Horizontal, 2);
         for child in [&back, &refresh] {
             header.append(child);
         }
         header.append(&title);
+        header.append(&diff_button);
         for child in [&editor, &save, &reload, &default_app, &close] {
             header.append(child);
         }
@@ -377,7 +459,8 @@ impl Panel {
         let tree = gtk4::TreeListModel::new(directory.clone(), false, false, child_model);
         let selection = gtk4::SingleSelection::new(Some(tree.clone()));
         selection.set_autoselect(false);
-        let list = gtk4::ListView::new(Some(selection), Some(tree_factory()));
+        let git = Rc::new(GitMarks::default());
+        let list = gtk4::ListView::new(Some(selection), Some(tree_factory(git.clone())));
         list.set_widget_name("project-tree");
         list.set_single_click_activate(true);
         list.update_property(&[gtk4::accessible::Property::Label("Project files and folders")]);
@@ -402,10 +485,24 @@ impl Panel {
         status.add_css_class("dim-label");
         status.set_widget_name("file-preview-status");
         let content = gtk4::Stack::new();
+        super::motion::crossfade(&content);
         content.set_vhomogeneous(false);
         content.set_hhomogeneous(false);
         content.add_named(&status, Some("status"));
         content.add_named(&text_scroll, Some("text"));
+        let diff_view = gtk4::TextView::builder()
+            .editable(false)
+            .cursor_visible(false)
+            .monospace(true)
+            .left_margin(10)
+            .right_margin(10)
+            .top_margin(8)
+            .bottom_margin(8)
+            .build();
+        diff_view.set_widget_name("file-diff-text");
+        diff_view.add_css_class("file-diff");
+        add_diff_tags(&diff_view.buffer());
+        content.add_named(&gtk4::ScrolledWindow::builder().child(&diff_view).build(), Some("diff"));
         let edit_status = gtk4::Label::builder()
             .xalign(0.0)
             .wrap(true)
@@ -418,6 +515,8 @@ impl Panel {
         edit_status.set_visible(false);
 
         let views = gtk4::Stack::new();
+        views.set_transition_type(gtk4::StackTransitionType::SlideLeftRight);
+        views.set_transition_duration(super::motion::SLIDE_MS);
         views.set_vexpand(true);
         views.set_hhomogeneous(false);
         views.set_vhomogeneous(false);
@@ -426,7 +525,6 @@ impl Panel {
         let panel = gtk4::Box::new(Orientation::Vertical, 0);
         panel.add_css_class("project-files");
         panel.set_size_request(156, -1);
-        panel.set_visible(false);
         panel.append(&header);
         panel.append(&path_label);
         panel.append(&edit_status);
@@ -436,7 +534,15 @@ impl Panel {
         terminal_area.set_child(Some(page));
         let split = gtk4::Paned::new(Orientation::Horizontal);
         split.set_start_child(Some(&terminal_area));
-        split.set_end_child(Some(&panel));
+        let reveal = gtk4::Revealer::builder().child(&panel).visible(false).build();
+        super::motion::reveal(&reveal, gtk4::RevealerTransitionType::Crossfade);
+        // Leave the split once faded out, so the terminal takes the whole width.
+        reveal.connect_child_revealed_notify(|r| {
+            if !r.reveals_child() && !r.is_child_revealed() {
+                r.set_visible(false);
+            }
+        });
+        split.set_end_child(Some(&reveal));
         split.set_resize_start_child(true);
         split.set_resize_end_child(true);
 
@@ -445,6 +551,7 @@ impl Panel {
             terminal_area,
             views,
             panel,
+            reveal,
             title,
             path_label,
             back,
@@ -458,6 +565,10 @@ impl Panel {
             list,
             content,
             text,
+            diff_view,
+            diff_button,
+            git,
+            git_request: Cell::new(0),
             status,
             edit_status,
             cwd: RefCell::new(None),
@@ -555,6 +666,14 @@ impl Panel {
         }
         {
             let weak = Rc::downgrade(self);
+            self.diff_button.connect_toggled(move |b| {
+                if let Some(panel) = weak.upgrade() {
+                    panel.show_diff(b.is_active());
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
             self.save.connect_clicked(move |_| {
                 if let Some(panel) = weak.upgrade() {
                     panel.save_file();
@@ -604,7 +723,7 @@ impl Panel {
                 panel.leave(&app, move |panel| {
                     panel.cancel_preview();
                     stop_scrolling(&panel.list);
-                    panel.panel.set_visible(false);
+                    panel.reveal.set_reveal_child(false);
                     if let Some(app) = app_weak.upgrade() {
                         if let Some(pane) = panel_pane(&app, workspace) {
                             app.focus_pane(pane);
@@ -636,7 +755,8 @@ impl Panel {
         self.back.set_visible(preview);
         self.refresh.set_visible(!preview);
         self.sync_edit_actions();
-        self.panel.set_visible(true);
+        self.reveal.set_visible(true);
+        self.reveal.set_reveal_child(true);
         let width = self.split.width();
         if width > 0 && !self.positioned.replace(true) {
             self.split.set_position(width - (width * 2 / 5).clamp(156, 520));
@@ -659,6 +779,8 @@ impl Panel {
         self.text.set_editable(false);
         stop_scrolling(&self.text);
         self.set_text("");
+        self.diff_button.set_active(false);
+        self.diff_view.buffer().set_text("");
     }
 
     fn set_text(&self, text: &str) {
@@ -751,11 +873,15 @@ impl Panel {
 
     fn sync_edit_actions(&self) {
         let preview = self.views.visible_child_name().as_deref() == Some("preview");
-        let editing = preview && self.text.is_editable();
+        let diffing = preview && self.diff_button.is_active();
+        let editing = preview && self.text.is_editable() && !diffing;
         let modified = self.text.buffer().is_modified();
-        self.editor.set_visible(preview && !editing);
+        let changed = self.open_file_mark().is_some();
+        self.diff_button
+            .set_visible(diffing || (preview && changed && !modified && self.loaded.borrow().is_some()));
+        self.editor.set_visible(preview && !editing && !diffing);
         self.editor.set_sensitive(self.loaded.borrow().is_some());
-        self.default_app.set_visible(preview && !editing);
+        self.default_app.set_visible(preview && !editing && !diffing);
         self.save.set_visible(editing);
         self.save.set_sensitive(modified && !self.saving.get());
         self.reload.set_visible(editing);
@@ -810,6 +936,7 @@ impl Panel {
             panel.saving.set(false);
             match result {
                 Ok(document) => {
+                    panel.refresh_git();
                     let current = buffer.text(&buffer.start_iter(), &buffer.end_iter(), true);
                     let modified = current.as_str() != document.text;
                     panel.loaded.replace(Some(document));
@@ -956,6 +1083,84 @@ impl Panel {
         self.sync_edit_actions();
     }
 
+    /// The git mark of the open file, if it has changes.
+    fn open_file_mark(&self) -> Option<gitfiles::Mark> {
+        let target = self.target.borrow();
+        let (_, target) = target.as_ref()?;
+        self.git.status.borrow().file(&target.path)
+    }
+
+    /// Re-read the git status of the explorer root (one `git status`, off the
+    /// GTK thread) and repaint the letters on screen.
+    fn refresh_git(self: &Rc<Self>) {
+        let Some(root) = self.root.borrow().clone() else { return };
+        let request = self.git_request.get().wrapping_add(1);
+        self.git_request.set(request);
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let status = gio::spawn_blocking(move || {
+                let canonical = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+                gitfiles::status(&root).rebase(&canonical, &root)
+            })
+            .await
+            .unwrap_or_default();
+            if let Some(panel) = weak.upgrade().filter(|p| p.git_request.get() == request) {
+                panel.git.set(status);
+                panel.sync_edit_actions();
+            }
+        });
+    }
+
+    /// Refresh git letters if the panel is on screen (after an agent's turn,
+    /// or when the window comes back to the front). Hidden panels wait until
+    /// they are opened.
+    pub(super) fn refresh_git_if_shown(self: &Rc<Self>) {
+        if self.reveal.reveals_child() && self.reveal.is_mapped() {
+            self.refresh_git();
+        }
+    }
+
+    fn show_diff(self: &Rc<Self>, on: bool) {
+        if !on {
+            let child = if self.loaded.borrow().is_some() { "text" } else { "status" };
+            self.content.set_visible_child_name(child);
+            self.sync_edit_actions();
+            return;
+        }
+        let Some(path) = self.target.borrow().as_ref().map(|(_, t)| t.path.clone()) else {
+            return;
+        };
+        let untracked = self.open_file_mark() == Some(gitfiles::Mark::Untracked);
+        self.flush_autosave();
+        self.text.set_editable(false);
+        self.status.set_label("Loading changes…");
+        self.content.set_visible_child_name("status");
+        self.sync_edit_actions();
+        let request = self.file_request.get();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || gitfiles::diff(&path, untracked, MAX_PREVIEW_BYTES as usize))
+                .await
+                .unwrap_or_else(|_| Err("Diff was interrupted.".into()));
+            let Some(panel) = weak
+                .upgrade()
+                .filter(|p| p.file_request.get() == request && p.diff_button.is_active())
+            else {
+                return;
+            };
+            match result {
+                Ok(diff) if diff.trim().is_empty() => {
+                    panel.status.set_label("No changes since the last commit.");
+                }
+                Ok(diff) => {
+                    fill_diff(&panel.diff_view.buffer(), &diff);
+                    panel.content.set_visible_child_name("diff");
+                }
+                Err(message) => panel.status.set_label(&message),
+            }
+        });
+    }
+
     fn open_explorer(self: &Rc<Self>, cwd: Option<PathBuf>, refresh: bool) {
         self.cancel_preview();
         self.title.set_label("Project Explorer");
@@ -1004,6 +1209,7 @@ impl Panel {
             match result {
                 Ok((root, entries)) => {
                     panel.root.replace(Some(root.clone()));
+                    panel.refresh_git();
                     if panel.views.visible_child_name().as_deref() == Some("explorer") {
                         panel.set_path(&root);
                     }
@@ -1107,6 +1313,53 @@ impl Drop for Panel {
         self.cancel_autosave();
         self.stop_file_watch();
     }
+}
+
+/// Full-width line backgrounds for added and removed lines, a dim hunk
+/// header. Tints work on light and dark themes alike.
+fn add_diff_tags(buffer: &gtk4::TextBuffer) {
+    let tags = buffer.tag_table();
+    let rgba = |r: f32, g: f32, b: f32, a: f32| gtk4::gdk::RGBA::new(r, g, b, a);
+    tags.add(
+        &gtk4::TextTag::builder()
+            .name("added")
+            .paragraph_background_rgba(&rgba(0.18, 0.63, 0.26, 0.20))
+            .build(),
+    );
+    tags.add(
+        &gtk4::TextTag::builder()
+            .name("removed")
+            .paragraph_background_rgba(&rgba(0.97, 0.32, 0.29, 0.20))
+            .build(),
+    );
+    tags.add(
+        &gtk4::TextTag::builder()
+            .name("hunk")
+            .foreground_rgba(&rgba(0.5, 0.5, 0.55, 1.0))
+            .pixels_above_lines(6)
+            .build(),
+    );
+}
+
+/// Show a unified diff without its file headers, tagging each line.
+fn fill_diff(buffer: &gtk4::TextBuffer, diff: &str) {
+    buffer.set_text("");
+    let mut end = buffer.end_iter();
+    for (kind, line) in gitfiles::classify(diff) {
+        let tag = match kind {
+            DiffLine::Meta => continue,
+            DiffLine::Hunk => Some("hunk"),
+            DiffLine::Added => Some("added"),
+            DiffLine::Removed => Some("removed"),
+            DiffLine::Context => None,
+        };
+        let text = format!("{line}\n");
+        match tag {
+            Some(tag) => buffer.insert_with_tags_by_name(&mut end, &text, &[tag]),
+            None => buffer.insert(&mut end, &text),
+        }
+    }
+    buffer.place_cursor(&buffer.start_iter());
 }
 
 /// GTK 4.14 can disconnect the scroll animation's frame-clock handler twice

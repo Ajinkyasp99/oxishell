@@ -75,6 +75,10 @@ pub struct Terminal {
     /// Warp-style command blocks: a separator and a header (folder, branch,
     /// exit status, duration) above every command. Applies to new terminals.
     pub command_blocks: bool,
+    /// Line spacing as a multiple of the font's line height (1.0 to 2.0).
+    pub line_height: f64,
+    /// Space between the pane edge and the text, in pixels (0 to 32).
+    pub padding: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -211,6 +215,8 @@ impl Default for Terminal {
             highlight_commands: true,
             history_panel: true,
             command_blocks: true,
+            line_height: 1.0,
+            padding: 8,
         }
     }
 }
@@ -443,6 +449,12 @@ impl Config {
         }
         if !(0..=1_000_000).contains(&self.terminal.scrollback_lines) {
             return Err("terminal.scrollback_lines must be between 0 and 1000000".into());
+        }
+        if !(1.0..=2.0).contains(&self.terminal.line_height) {
+            return Err("terminal.line_height must be between 1.0 and 2.0".into());
+        }
+        if !(0..=32).contains(&self.terminal.padding) {
+            return Err("terminal.padding must be between 0 and 32".into());
         }
         if !COMPOSE_ACTIONS.contains(&self.compose.default_action.as_str()) {
             return Err(format!(
@@ -745,6 +757,18 @@ mod tests {
         let conflicts = c.shortcut_conflicts();
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].1, vec!["split-right".to_string(), "split-down".to_string()]);
+    }
+
+    #[test]
+    fn terminal_line_height_and_padding_have_defaults_and_bounds() {
+        let c = Config::default();
+        assert_eq!(c.terminal.line_height, 1.0, "today's line spacing stays the default");
+        assert_eq!(c.terminal.padding, 8);
+        let c = Config::parse("[terminal]\nline_height = 1.25\npadding = 12\n").unwrap();
+        assert_eq!((c.terminal.line_height, c.terminal.padding), (1.25, 12));
+        for bad in ["line_height = 0.9", "line_height = 2.5", "padding = -1", "padding = 33"] {
+            assert!(Config::parse(&format!("[terminal]\n{bad}\n")).is_err(), "{bad}");
+        }
     }
 
     #[test]

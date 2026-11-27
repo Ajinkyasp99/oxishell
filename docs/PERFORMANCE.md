@@ -97,3 +97,30 @@ number of helper processes, which dropped by 79 % and 90 %.
 - GPU-accelerated sessions on real hardware, multi-monitor and fractional scaling (no physical display
   was available to this test run).
 - Long-running (hours) leak testing.
+
+## Motion and explorer polish (2026-11-27)
+
+Measured on Linux only (same host, Xvfb, software rendering), release builds of the previous commit and
+of this change, one run each unless noted. Nothing here was measured on macOS.
+
+| Metric | Before | After |
+|---|---|---|
+| Startup to control socket, median of 5 | 249 ms | 228 ms |
+| Idle CPU, 1 / 10 / 20 panes | 2.10 / 1.70 / 2.00 % | 1.60 / 1.50 / 1.60 % |
+| App RSS private anon, 1 / 10 / 20 panes | 115 / 122 / 129 MB | 114 / 122 / 129 MB |
+| Private anon, 20 panes in 5 workspaces, two runs | 123.9 / 124.3 MB | 126.5 MB (final build) |
+| Agent working, window in front | 40.9 % | 43.3 % |
+| Agent working, window behind another window | 31.4 % | **0.8 %** |
+| Binary size (release, stripped) | 6.33 MB | 6.40 MB |
+
+- **Island pulse.** The "working" / "waiting" dot in the header pulses with an endless CSS animation, which
+  keeps GTK drawing every frame: about 30 points of CPU with software rendering. It now stops while the
+  window is behind other windows (`window-inactive` class, set from the window's is-active state; GTK's
+  `:backdrop` did not stop the running animation). While the window is in front it still costs the same.
+- **Workspace crossfade was tried and dropped.** It cost about 7 MB of private memory with 5 workspaces
+  (125.1 MB without, 132.3 MB with, two runs each), because GTK keeps rendered copies of each page's
+  terminals. Workspaces switch at once; the sidebar and the file panel fade instead.
+- **Pane-tab crossfade was dropped** too: it kept the previous tab's terminal drawing during the fade.
+- **Git letters in the explorer** run one `git status` when the explorer opens or refreshes, after a save,
+  when an agent finishes a turn and when the window becomes active, never on a timer. The child-process
+  count of an idle pane in a git repository is unchanged (3 per minute).

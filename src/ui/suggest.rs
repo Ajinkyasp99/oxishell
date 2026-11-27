@@ -123,8 +123,9 @@ pub fn update(app: &AppRc, pane: PaneId) {
     }
     let cw = p.term.char_width() as i32;
     let ch = p.term.char_height() as i32;
-    s.ghost.set_margin_start(col as i32 * cw + GHOST_PAD_X);
-    s.ghost.set_margin_top(row as i32 * ch + GHOST_PAD_Y);
+    let pad = super::pane::term_pad();
+    s.ghost.set_margin_start(col as i32 * cw + pad);
+    s.ghost.set_margin_top(row as i32 * ch + pad);
     let mut fd = gtk4::pango::FontDescription::from_string(&i.config.appearance.font);
     if fd.size() > 0 {
         fd.set_size((fd.size() as f64 * i.font_scale) as i32);
@@ -136,10 +137,6 @@ pub fn update(app: &AppRc, pane: PaneId) {
     s.ghost.set_visible(true);
     *s.suffix.borrow_mut() = Some(full[tracker.line.len()..].to_string());
 }
-
-/// VTE draws the first cell this many pixels from the widget's edge.
-const GHOST_PAD_X: i32 = 1;
-const GHOST_PAD_Y: i32 = 1;
 
 pub fn attach(app: &AppRc, pane: PaneId, term: &vte4::Terminal, s: &Suggest) {
     // Follow input sent to the shell.

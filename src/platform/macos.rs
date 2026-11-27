@@ -289,3 +289,15 @@ fn pixbuf_loaders_cache(res: &std::path::Path) -> Option<PathBuf> {
     }
     Some(path)
 }
+
+/// System Settings > Accessibility > Display > Reduce motion. Starts
+/// `defaults`, so call it off the GTK thread. False when it cannot be read.
+pub fn reduce_motion() -> bool {
+    std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "com.apple.universalaccess", "reduceMotion"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .is_some_and(|o| crate::platform::parse_defaults_bool(&String::from_utf8_lossy(&o.stdout)))
+}
